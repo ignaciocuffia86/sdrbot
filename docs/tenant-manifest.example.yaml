@@ -1,0 +1,263 @@
+# Manifiesto de tenant · SDR BOT (Biguá)
+# ------------------------------------------------------------
+# Es la ÚNICA entrada del proceso de alta. Reemplaza al config.json de
+# PasQAlito y a la Sheet de tenants. De acá se derivan las filas de
+# clients, client_config, members, client_members, mailboxes,
+# channel_seats y do_not_contact, y los secretos de la cuenta de Grok Bot.
+#
+# Convención: lo que completa el CLIENTE está marcado [cliente];
+# lo que completa BIGUÁ está marcado [bigua]. Nada de este archivo es un
+# secreto: credenciales, contraseñas y claves van por el canal seguro de
+# alta y nunca acá.
+#
+# El ejemplo usa BairesQA como cliente modelo. Es un placeholder.
+
+schema_version: 1
+
+tenant:
+  slug: bairesqa                      # [bigua] inmutable, minúsculas, sin espacios
+  name: BairesQA                      # [cliente]
+  timezone: America/Argentina/Buenos_Aires   # [cliente]
+  status: onboarding                  # [bigua] onboarding | active | paused | offboarding
+  primary_domain: bairesqa.com        # [cliente] dominio principal (nunca se usa para enviar)
+  internal_domains:                   # [cliente] remitentes que no cuentan como respuesta
+    - bairesqa.com
+    - bairesqa.net
+  languages: [es, en]                 # [cliente]
+
+people:                               # [cliente] quién hace qué. email es el identificador.
+  - name: Augusto Apellido
+    email: augusto@bairesqa.com
+    org: cliente
+    roles: [aprobador, ae]            # aprobador: leads calientes/tibios y tandas · ae: toma reuniones
+    notify_via: [email]               # email | whatsapp
+    whatsapp_e164: "+5491100000000"   # opcional, sólo si notify_via incluye whatsapp
+  - name: Nicolás Elizarraga
+    email: nicolas@bigua.lat
+    org: bigua
+    roles: [operador]
+  - name: Ignacio Cuffia
+    email: ignacio@bigua.lat
+    org: bigua
+    roles: [operador]
+
+approvals:                            # [cliente] quién aprueba qué y en cuánto tiempo
+  whatsapp_batch:
+    approver: augusto@bairesqa.com
+    channel: email                    # email | ui (fase 2)
+    sla_hours: 2
+  reply_hot:                          # urgente (demo, precios)
+    approver: augusto@bairesqa.com
+    sla_hours: 2
+    on_sla_breach: courtesy_reply     # none | remind | courtesy_reply (texto en templates.courtesy_reply)
+  reply_warm:                         # interesado, pedir_info, derivación, tibio de LinkedIn
+    approver: augusto@bairesqa.com
+    sla_hours: 24
+    on_sla_breach: remind
+  sequences:
+    approver: augusto@bairesqa.com    # aprueba textos base antes del primer envío
+  credits:
+    approver: nicolas@bigua.lat       # aprueba seguir gastando cerca del tope
+
+offer:                                # [cliente] lo que vende y para quién
+  value_points:
+    - "QA funcional y automatizado como servicio, equipo dedicado en 2 semanas"
+    - "Reducción de regresión manual del 60 % en 90 días (caso X)"
+    - "Cobertura mobile y API con reportes integrados al pipeline"
+  anchor_cases:
+    - name: "Caso banco regional"
+      one_liner: "Automatizamos la regresión del home banking: de 5 días a 6 horas"
+  forbidden_phrases: ["sin compromiso", "líder en", "solución integral"]
+  tone: "directo, técnico, sin superlativos; tratamiento según país"
+  signature:
+    name: Augusto Apellido
+    title: Director Comercial
+    company: BairesQA
+    linkedin: https://www.linkedin.com/in/augusto-ejemplo/
+
+icp:                                  # [cliente] con ayuda de Biguá
+  markets:                            # cada mercado define fuente de señal, idioma y horario
+    - country: Argentina
+      language: es
+      formality: vos
+      signal_sources: [asci, apify_jobs]
+      send_window_local: "09:00-17:00"
+    - country: Chile
+      language: es
+      formality: usted
+      signal_sources: [asci, apify_jobs]
+      send_window_local: "09:00-17:00"
+    - country: Spain
+      language: es
+      formality: usted
+      signal_sources: [apify_jobs]    # ASCI no cubre España
+      send_window_local: "09:00-17:00"
+    - country: United States
+      language: en
+      formality: first_name
+      signal_sources: [apify_jobs]
+      send_window_local: "09:00-16:00"
+  industries: [banca, seguros, retail_consumo, salud, software]   # verticales de ASCI
+  company_size: { min: 200, max: null }
+  target_roles:                       # rol_id del catálogo de ASCI + títulos a mano
+    asci_roles: [ti, modernizacion, operaciones]
+    titles: ["Head of QA", "QA Manager", "Gerente de Calidad", "VP Engineering", "CTO"]
+    seniority: [c_suite, vp, head, director, manager]
+  decision_maker_rules:               # primera pasada programática (decisor.py)
+    exclude_title_patterns: ["open to work", "ex ", "former", "estudiante", "junior", "recruiter", "docente", "profesor"]
+    exclude_departments: [rrhh, comercial]
+    max_contacts_per_account: 2
+  competitors: ["Competidor QA 1", "Competidor QA 2"]   # se tratan como no contactar (company_domain)
+
+signal_playbook:                      # [bigua] qué se consulta, cada cuánto y qué dispara
+  - id: qa_job_postings
+    type: job_posting
+    source: apify_jobs
+    schedule: weekly_monday_0700
+    query:
+      titles: ["QA", "Tester", "SDET", "Test Automation", "Quality Engineer"]
+      countries_from: icp.markets
+    triggers: { sequence: seq_job_posting, tier: 1 }
+  - id: asci_dev_capacity
+    type: stack
+    source: asci.prospectar
+    schedule: weekly_monday_0730
+    query:
+      categorias: [Desarrollo]
+      ordenar_por: avisos
+      industrias_from: icp.industries
+      tamano_min_from: icp.company_size.min
+      firmeza_min: vigente
+    triggers: { sequence: seq_stack, tier: 2 }
+  - id: new_decision_maker
+    type: mgmt_change
+    source: asci.rotacion
+    schedule: daily_0745
+    query:
+      scope: accounts_in_sequence_or_engaged   # sólo cuentas que ya trabajamos
+      roles_from: icp.target_roles.asci_roles
+      window_days: 60
+    triggers: { sequence: seq_new_dm, tier: 1, priority: high }
+  - id: account_news
+    type: other
+    source: asci.novedades
+    schedule: weekly_wednesday_0800
+    query:
+      scope: accounts_in_sequence_or_engaged
+      window_days: 90
+    triggers: { sequence: null, task: review_icp }   # sólo informa; no dispara envío
+
+channels:                             # [cliente] qué canales se usan y con qué topes
+  email:
+    enabled: true
+    sending_domain: bairesqa.net      # dominio alternativo, distinto del principal
+    dns_owner: cliente                # cliente | bigua (Biguá gestiona DNS y casillas)
+    mailboxes:                        # las credenciales SMTP/IMAP van por el canal seguro, no acá
+      - email: augusto@bairesqa.net
+        role: primary
+        target_cap: 55
+      - email: contacto@bairesqa.net
+        target_cap: 40
+      - email: equipo@bairesqa.net
+        target_cap: 40
+      - email: hola@bairesqa.net
+        target_cap: 40
+      - email: info@bairesqa.net
+        target_cap: 40
+    warmup_steps: [[1, 3, 10], [4, 7, 20], [8, 14, 30], [15, null, 40]]   # [día desde, día hasta, cap]
+    batch_size: 6
+    seconds_between_mails: 20
+    unsubscribe_keyword: BAJA
+    forward_replies_to: augusto@bairesqa.com     # opcional
+  linkedin:
+    enabled: true
+    seat_owner: augusto@bairesqa.com  # el vendedor; login y 2FA los hace él
+    profile_url: https://www.linkedin.com/in/augusto-ejemplo/
+    sales_navigator: true
+    dripify: true
+    daily_cap: { invitations: 20, messages: 25, inmails: 5 }
+  whatsapp:
+    enabled: true
+    line_e164: "+5491100000001"
+    line_owner: pascual@bairesqa.com  # quien tiene el teléfono y escanea el QR
+    daily_cap: 12
+    ramp: { start: 10, step: 2, max: 25 }
+    seconds_between_messages: [45, 90]
+    passes_local: ["11:30", "16:00"]
+    first_touch_allowed: false        # true sólo con base legal declarada en legal.whatsapp_basis
+    max_unanswered_followups: 1
+
+followups:                            # [bigua] con defaults de BairesQA
+  max_unanswered_per_contact: 1
+  reminder_after_business_days: 4     # mismo hilo, misma casilla
+  second_contact_after_business_days: 7   # segunda persona de la cuenta (nuevo enrollment)
+  stop_all_channels_on_any_reply: true
+  revisit_no_por_ahora_days: 90
+
+schedule:                             # [bigua] hora local del tenant, días hábiles
+  sessions_check: "07:30"
+  run_latam_es: "08:30"
+  run_us: "10:30"
+  inbox_monitor: ["09:00", "13:00", "17:30"]
+  whatsapp_batch: "09:52"
+  followups: "11:00"
+  linkedin: "12:00"
+  cap_fill: "17:00"
+  daily_summary: "18:50"
+  holidays_calendar: AR               # calendario de feriados
+
+reply_handling:                       # [bigua] con el criterio del cliente
+  confidence_threshold: 0.7           # debajo: revisión de un operador de Biguá
+  no_por_ahora: ask_vendor_registration   # pide alta como proveedor
+  job_seeker_misread: clarify_vendor_and_close
+  courtesy_reply_enabled: true
+
+crm:                                  # [cliente]
+  provider: hubspot                   # hubspot | none
+  portal_id: "12345678"
+  owner_email: augusto@bairesqa.com
+  mapping_profile: default            # perfil de propiedades en el repo
+
+do_not_contact:                       # [cliente] se cargan como filas por tenant
+  company_domains_file: dnc/bairesqa_company_domains.csv   # clientes actuales, pipeline, excluidos
+  emails_file: dnc/bairesqa_emails.csv                      # bajas previas
+  reasons_default: client_exclusion
+
+legal:                                # [cliente] con revisión de Biguá
+  dpa_signed: false                   # acuerdo de tratamiento de datos firmado
+  bases:
+    Argentina: ley_25326_interes_legitimo
+    Chile: ley_19628_interes_legitimo
+    Spain: gdpr_interes_legitimo_b2b
+    United States: can_spam
+  unsubscribe_text:
+    es: "Si preferís no recibir más mensajes, respondé BAJA."
+    en: "Reply STOP to opt out."
+  whatsapp_basis: none                # none | opt_in | prior_relationship
+  retention_months: { bodies: 12, ledger: 24 }
+
+credits:                              # [bigua] presupuesto de ASCI/Apollo para este tenant
+  asci_daily_reveals: 40
+  asci_monthly_credits: 600
+  warn_at_percent: 80
+  mobile_reveals_allowed: false       # 5 créditos cada uno, asíncrono
+
+box:                                  # [bigua] kit estándar
+  provider: bigua_vps                 # bigua_vps | client_machine
+  os: windows_11
+  hostname: sdr-bairesqa-01
+  scripts_tag: v1.0.0                 # tag del repo sdrbot fijado para este tenant
+  heartbeat_minutes: 5
+
+grokbot:                              # [bigua]
+  account_ref: grokbot:bairesqa       # referencia, no credencial
+  owner: bigua                        # bigua | cliente
+  client_members: [augusto@bairesqa.com]
+  template_version: v1.0.0
+
+asci:                                 # [bigua]
+  bot_user_email: sdr.bairesqa@bigua.lat
+  bot_role: sdr_bot                   # hasta que exista: operador (ver 01-revision §2)
+  key_name: "SDR BOT · bairesqa · box"
+  key_validity_days: 365
+  usage_cliente_label: bairesqa       # valor de `cliente` del usuario en ASCI para atribución
