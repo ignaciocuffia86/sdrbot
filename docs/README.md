@@ -9,8 +9,9 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [01-revision-diseno-v1.1.md](01-revision-diseno-v1.1.md) | Revisión del documento "SDR BOT · Gestión centralizada multicliente" v1.1: qué está sólido, hallazgos verificados contra el estado real de ASCI, problemas y vacíos, propuesta para cada punto abierto y deltas al modelo de datos |
 | [02-arquitectura.md](02-arquitectura.md) | Arquitectura objetivo: plano de control y plano de ejecución, identidad y secretos por tenant, integración con ASCI (rol, reveal, uso, playbook de señales), contratos de routines, aprobaciones, observabilidad, cumplimiento, decisión RPC vs MCP, qué cambia con la escala |
 | [03-onboarding-y-prerrequisitos.md](03-onboarding-y-prerrequisitos.md) | Qué entrega el cliente, qué construye y decide Biguá, runbook de alta y baja, plan por fases y decisiones pendientes |
+| [04-rol-sdr-bot-asci.md](04-rol-sdr-bot-asci.md) | Especificación del rol `sdr_bot` en ASCI: definición, tools permitidas, presupuesto, alta y rotación, tools nuevas propuestas, borrador de migración y pruebas |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
-Orden de lectura sugerido: revisión → arquitectura → onboarding → manifiesto.
+Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → manifiesto.
 
 Estado: diseño. No hay implementación en este repositorio todavía.

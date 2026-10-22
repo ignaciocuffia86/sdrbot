@@ -41,23 +41,37 @@ people:                               # [cliente] quién hace qué. email es el 
     org: bigua
     roles: [operador]
 
-approvals:                            # [cliente] quién aprueba qué y en cuánto tiempo
+approvals:                            # [cliente] quién aprueba qué, en cuánto tiempo y qué pasa si no llega
+  # on_sla_breach: none | remind | escalate | courtesy_reply
+  #   remind: recordatorio al aprobador por su canal de aviso
+  #   escalate: recordatorio + pedido a escalate_to (que puede aprobar en su lugar)
+  #   courtesy_reply: lo anterior + a las courtesy_after_hours sale el texto fijo
+  #     reply_handling.courtesy_reply_text (aprobado de antemano) y la tarea sigue abierta
+  # Las horas corren en días hábiles del calendario del tenant (schedule.holidays_calendar).
   whatsapp_batch:
     approver: augusto@bairesqa.com
     channel: email                    # email | ui (fase 2)
     sla_hours: 2
+    on_sla_breach: remind             # la tanda vence sola al final del día: no se manda al día siguiente sin re-aprobar
   reply_hot:                          # urgente (demo, precios)
     approver: augusto@bairesqa.com
     sla_hours: 2
-    on_sla_breach: courtesy_reply     # none | remind | courtesy_reply (texto en templates.courtesy_reply)
+    on_sla_breach: courtesy_reply
+    escalate_to: nicolas@bigua.lat
+    courtesy_after_hours: 24
   reply_warm:                         # interesado, pedir_info, derivación, tibio de LinkedIn
     approver: augusto@bairesqa.com
     sla_hours: 24
-    on_sla_breach: remind
+    on_sla_breach: escalate
+    escalate_to: nicolas@bigua.lat
   sequences:
     approver: augusto@bairesqa.com    # aprueba textos base antes del primer envío
+    sla_hours: 72
+    on_sla_breach: remind
   credits:
     approver: nicolas@bigua.lat       # aprueba seguir gastando cerca del tope
+    sla_hours: 24
+    on_sla_breach: none               # sin aprobación el bot no revela más hasta el próximo período
 
 offer:                                # [cliente] lo que vende y para quién
   value_points:
@@ -207,10 +221,14 @@ schedule:                             # [bigua] hora local del tenant, días há
   holidays_calendar: AR               # calendario de feriados
 
 reply_handling:                       # [bigua] con el criterio del cliente
-  confidence_threshold: 0.7           # debajo: revisión de un operador de Biguá
+  confidence_threshold: 0.7           # debajo: revisión de un operador de Biguá (nunca del cliente)
+  low_confidence_reviewer: nicolas@bigua.lat
   no_por_ahora: ask_vendor_registration   # pide alta como proveedor
   job_seeker_misread: clarify_vendor_and_close
   courtesy_reply_enabled: true
+  courtesy_reply_text:
+    es: "Gracias por tu respuesta. Augusto te contesta en el día con el detalle."
+    en: "Thanks for getting back. Augusto will follow up today with details."
 
 crm:                                  # [cliente]
   provider: hubspot                   # hubspot | none
@@ -236,28 +254,38 @@ legal:                                # [cliente] con revisión de Biguá
   whatsapp_basis: none                # none | opt_in | prior_relationship
   retention_months: { bodies: 12, ledger: 24 }
 
-credits:                              # [bigua] presupuesto de ASCI/Apollo para este tenant
-  asci_daily_reveals: 40
-  asci_monthly_credits: 600
+credits:                              # [bigua] tope que hace cumplir la base de control, además del de ASCI
+  asci_daily_reveals: 40              # igual o menor que el del rol sdr_bot en ASCI (creditos_dia)
+  asci_monthly_credits: 600           # ASCI no tiene tope mensual todavía: lo valida el script antes de revelar
   warn_at_percent: 80
   mobile_reveals_allowed: false       # 5 créditos cada uno, asíncrono
 
-box:                                  # [bigua] kit estándar
-  provider: bigua_vps                 # bigua_vps | client_machine
-  os: windows_11
-  hostname: sdr-bairesqa-01
-  scripts_tag: v1.0.0                 # tag del repo sdrbot fijado para este tenant
-  heartbeat_minutes: 5
-
 grokbot:                              # [bigua]
   account_ref: grokbot:bairesqa       # referencia, no credencial
-  owner: bigua                        # bigua | cliente
-  client_members: [augusto@bairesqa.com]
+  ownership_model: bigua_operated     # bigua_operated | client_owned (modelo fábrica, ver 02-arquitectura §5.1)
+  bigua_members: [nicolas@bigua.lat, ignacio@bigua.lat]   # administradores (operado) o soporte (fábrica)
+  client_members: [augusto@bairesqa.com]                  # aprobador; dueño en el modelo fábrica
   template_version: v1.0.0
+  box:                                # la computadora virtual de Grok Bot de esta cuenta; no hay VPS aparte
+    scripts_tag: v1.0.0               # tag del repo sdrbot fijado para este tenant (secreto SCRIPTS_TAG)
+    timezone: America/Argentina/Buenos_Aires
+    heartbeat_minutes: 15             # routine corta; si el box no la permite, sólo detección de corridas ausentes
+    desktop_access: [augusto@bairesqa.com, pascual@bairesqa.com]   # quién entra al escritorio para QR y 2FA
 
 asci:                                 # [bigua]
   bot_user_email: sdr.bairesqa@bigua.lat
-  bot_role: sdr_bot                   # hasta que exista: operador (ver 01-revision §2)
+  bot_role: sdr_bot                   # hasta que exista: operador (ver 04-rol-sdr-bot-asci)
+  cliente: bairesqa                   # valor de `cliente` del usuario en ASCI: atribuye el uso al tenant
   key_name: "SDR BOT · bairesqa · box"
   key_validity_days: 365
-  usage_cliente_label: bairesqa       # valor de `cliente` del usuario en ASCI para atribución
+  key_expires_at: 2027-10-22          # se copia a clients.asci_key_expires_at para el chequeo de 07:30
+  budget_override:                    # sólo cuando exista ops.presupuesto_usuario (04 §4.2); si no, rige el del rol
+    busquedas_dia: null
+    creditos_dia: null
+    telefonos_dia: 0
+    creditos_mes: 600
+
+secrets:                              # [bigua] dónde vive cada secreto; acá nunca hay valores
+  runtime: grokbot_account_secrets    # ASCI_KEY, SDR_BOT_EMAIL, SDR_BOT_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, TENANT_SLUG, SCRIPTS_TAG, HUBSPOT_TOKEN
+  mailboxes: box_env_files            # .env por casilla, cargados por el cliente en el box
+  bigua_vault: supabase_vault         # proyecto sdrbot: contraseña del usuario Auth del bot y clave_id de ASCI

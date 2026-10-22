@@ -61,11 +61,14 @@ flowchart LR
 | **Plantilla SDR BOT** | Los seis bots y sus routines, exportables a una cuenta nueva | Grok Bot (`export-bot-template`) | A construir; se mantiene **fina**: cada bot carga su skill desde el repo clonado en el box |
 | **Cuenta Grok Bot de Biguá** | Resumen consolidado 19:00, alertas críticas, mantenimiento con MCP admin de Supabase, sincronización de uso de ASCI | Grok Bot | A construir |
 | **Tablero** | Vistas `v_*` consultadas por operadores; fase 2: app web mínima para Biguá y para aprobaciones del cliente | Fase 1: vistas + resumen por mail. Fase 2: app en Vercel sobre Supabase con magic link | Fase 1 / Fase 2 |
-| **Bóveda de secretos** | Entrega y rotación de credenciales por tenant (SMTP/IMAP, Supabase bot user, clave ASCI) | Gestor de contraseñas con bóveda por tenant; los secretos operativos se copian a Grok Bot | A definir el proveedor |
+| **Secretos** | Runtime: los secretos de la cuenta de Grok Bot de cada tenant. Plano de control: Supabase Vault del proyecto `sdrbot` (ASCI ya lo usa para las claves del MCP en `radar.usuario_mcp`) | Grok Bot secrets + Supabase Vault. Sin gestor de contraseñas externo | Decidido (ver §5.2) |
 
 ### 3.1 Supabase: decisiones de infraestructura
 
-- **Un proyecto compartido**, esquema `sdr`, RLS en todas las tablas, vistas `security_invoker`. Separar a un proyecto por tenant sólo por exigencia contractual; el esquema ya lo permite.
+- **Un proyecto propio, `sdrbot`, separado del proyecto `locasci` de ASCI**, en la misma organización y región (sa-east-1), con el esquema `sdr`, RLS en todas las tablas y vistas `security_invoker`. Un solo proyecto para todos los tenants; separar a un proyecto por tenant sólo por exigencia contractual.
+  - Por qué no el mismo proyecto que ASCI: el corpus de ASCI pesa más de 3 GB y tiene refrescos y cargas que ya dejaron el pooler trabado 25 minutos y la base colgada 6 horas (documentado en `locasci/docs/00-mapa.md`). La ruta de envío del SDR no puede depender de la salud del corpus. Además son datos de distinta clase: ASCI es un universo compartido sin datos de cliente; `sdr` guarda datos personales por cliente con retención y borrado por tenant. Y `consultar` ejecuta SQL libre del admin sobre esa base; aunque el rol `locasci_consulta` sólo ve `core`, conviene que el esquema con datos de clientes no esté en el mismo servidor.
+  - Qué se comparte igual: el eje de tenencia. `sdr.clients.asci_cliente_id` guarda el `cliente_id` de `ops.cliente` de ASCI, así `uso` de ASCI y la base de control hablan del mismo tenant. En fase 2, el servidor MCP de ASCI abre un segundo pool hacia `sdrbot` y expone las RPC como tools `sdr.*` autenticadas con la clave de ASCI del tenant.
+  - Alternativa si se quiere minimizar operación en fase 1: esquema `sdr` dentro de `locasci`, con un rol de base propio sin acceso a `core` ni `ops`. Es reversible mientras todo pase por RPC, pero hereda los riesgos de arriba.
 - **Auth:** alta pública desactivada. Un usuario por tenant (`sdr.<slug>@bigua.lat`) creado por API admin con `app_metadata.client_id`. Los operadores de Biguá entran con su mail y ven lo que dice `client_members`. Los aprobadores de los clientes **no** necesitan usuario en fase 1 (aprueban por mail); en fase 2 entran por magic link.
 - **pg_cron** para lo determinístico; cada job itera tenants activos y calcula "hoy" con `clients.timezone`.
 - **pg_net / Edge Functions** para salir hacia el notificador. Nunca llamadas a ASCI ni a LLM desde la base.
@@ -84,22 +87,34 @@ Lo que se instancia por cliente, siempre igual.
 | Pieza | Contenido | Dueño | Provisión |
 |---|---|---|---|
 | **Cuenta de Grok Bot** | Seis bots desde la plantilla, routines con los horarios del manifiesto, secretos (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `ASCI_KEY`, `TENANT_SLUG`, `SCRIPTS_TAG`), el cliente como miembro aprobador | Biguá durante el contrato | Biguá |
-| **Box** | Máquina dedicada: Windows 11 o Linux con escritorio; Python 3.12; clon del repo en el tag; `.env` de casillas con permisos de archivo restringidos; perfil de Chrome con WhatsApp Web, LinkedIn/Sales Nav y Dripify; agente de heartbeat | Biguá (VPS de Biguá) o el cliente (su máquina) | Biguá, con instalador del repo |
+| **Box** | La computadora virtual que Grok Bot da a cada cuenta: clon del repo en el tag; `.env` de casillas con permisos de archivo restringidos; perfil de Chrome con WhatsApp Web, LinkedIn/Sales Nav y Dripify; Python para los scripts. No hay VPS aparte ni equipo del cliente | Viene con la cuenta de Grok Bot del tenant | Biguá, con el instalador del repo |
 | **Infra de mail** | Dominio alternativo, SPF/DKIM/DMARC (`p=quarantine` mínimo), 3 a 5 casillas, warm-up por escalones | Cliente (o Biguá como servicio gestionado) | Según `channels.email.dns_owner` |
 | **Seat de LinkedIn** | Perfil del vendedor + Sales Navigator + Dripify, login y 2FA hechos por el dueño en el box | Cliente | Cliente |
 | **Línea de WhatsApp** | Número dedicado, teléfono físico disponible para el QR, persona que aprueba tandas | Cliente | Cliente |
 | **CRM** | HubSpot (adaptador) o ninguno | Cliente | Cliente |
 
-### 4.1 El box como entidad monitoreada
+### 4.1 El box es la computadora de Grok Bot
 
-El box es la pieza con más fallas probables (Chrome minimizado, QR vencido, máquina apagada, scripts viejos). Se lo trata como un servicio:
+El box es la máquina virtual que Grok Bot asigna a cada cuenta, la misma que el documento v1.1 llama "la computadora del Grok Bot del cliente". Una cuenta por tenant implica un box por tenant, y eso es lo que aísla sesiones de navegador y archivos. No hay VPS de Biguá ni equipo del cliente: la mención a un VPS en la primera versión de este diseño era un respaldo por si el box no sostenía sesiones persistentes, y se descarta.
 
-- **Heartbeat** cada 5 minutos a `boxes` (hostname, tag de scripts, estado de cada sesión: ok / vencida / desconocida, Chrome adelante o no).
-- **Chequeo de sesiones 07:30** lee `boxes` y la fecha de vencimiento de la clave de ASCI; si algo falla, frena el canal (`channel_seats.status = paused` o `mailboxes.status = paused`), levanta `connector_down` y crea la tarea `login_2fa` para el dueño de la sesión.
-- **Sin heartbeat por 30 minutos en horario hábil** → `run_stale` crítico a Biguá.
+Lo que hay que **verificar con Grok Bot** antes de la fase 1, porque el diseño lo asume:
+
+| Supuesto | Si no se cumple |
+|---|---|
+| Las sesiones de Chrome (WhatsApp Web, LinkedIn, Dripify) sobreviven a reinicios del box | El QR y los logins se repiten cada día; el canal WhatsApp deja de ser viable |
+| Los archivos persisten (clon del repo, `.env`, perfil de Chrome) | Los scripts tienen que reinstalarse en cada corrida desde un secreto |
+| Una routine puede ejecutar un script de Python con acceso saliente a SMTP (587) e IMAP (993), a `mcp.bigua.lat` y a Supabase | Los envíos de mail pasan al conector de Gmail de Grok Bot y los scripts se achican |
+| El dueño de cada sesión puede entrar al escritorio del box (RDP, VNC o equivalente) para el QR y el 2FA | Los logins los hace Biguá con el cliente al lado, por pantalla compartida |
+| El reloj del box puede fijarse en la zona del tenant, o el script convierte | Horarios de envío corridos |
+| El box puede correr una routine corta cada 5 a 15 minutos | El heartbeat se reemplaza por detección de corridas ausentes (abajo) |
+
+Se lo trata como un servicio igual:
+
+- **Heartbeat** por routine corta (cada 5 a 15 minutos si Grok Bot lo permite; si no, al inicio de cada routine) a `boxes`: tag de scripts, estado de cada sesión (ok, vencida, desconocida) y si Chrome está adelante.
+- **Chequeo de sesiones 07:30** lee `boxes` y el vencimiento de la clave de ASCI; si algo falla, frena el canal (`channel_seats.status = paused` o `mailboxes.status = paused`), levanta `connector_down` y crea la tarea `login_2fa` para el dueño de la sesión.
+- **Corrida ausente**: pg_cron compara `schedule` del tenant con `run_log`; una routine que no abrió corrida 30 minutos después de su hora es `run_stale` crítico a Biguá. Esto no depende del box.
 - **Actualización de scripts** = `git fetch && git checkout <tag>` ejecutado por una routine de mantenimiento, con el tag leído del secreto `SCRIPTS_TAG`. Cambiar la versión de un tenant es cambiar un secreto.
-
-Spec mínima recomendada para el VPS: 2 vCPU, 8 GB RAM, 60 GB disco, escritorio persistente (RDP o VNC), reloj en la zona del tenant, sin credenciales de Biguá ni de otros tenants.
+- **Sin credenciales de Biguá ni de otros tenants** en el box. Lo único de Biguá que hay en un box es el clon del repo, que es público para el tenant.
 
 ## 5. Identidad, tenancy y secretos
 
@@ -107,9 +122,9 @@ Quién tiene qué, por tenant `A`:
 
 | Sistema | Identidad del tenant | Alcance | Dónde vive el secreto | Rotación |
 |---|---|---|---|---|
-| ASCI | Usuario `sdr.A@bigua.lat`, rol `sdr_bot` (hasta que exista: `operador`), `cliente = A`, clave nombrada `SDR BOT · A · box` | Lectura del universo, reveal con presupuesto, sin curación ni ingesta ni SQL | Secreto `ASCI_KEY` en Grok Bot de A; copia en la bóveda | Anual o ante incidente: `crear_clave` nueva → actualizar secreto → `revocar_clave` vieja. Sin corte |
+| ASCI | Usuario `sdr.A@bigua.lat`, rol `sdr_bot` (hasta que exista: `operador`), `cliente = A`, clave nombrada `SDR BOT · A · box` | Lectura del universo, reveal con presupuesto, sin curación ni ingesta ni SQL | Secreto `ASCI_KEY` en Grok Bot de A; el `clave_id` (no la clave) en Supabase Vault | Anual o ante incidente: `crear_clave` nueva → actualizar secreto → `revocar_clave` vieja. Sin corte |
 | Supabase | Usuario Auth `sdr.A@bigua.lat` con `app_metadata.client_id = A` | Sólo filas con `client_id = A`, vía RLS; sólo RPC | `SDR_BOT_EMAIL` y `SDR_BOT_PASSWORD` en Grok Bot de A | Semestral por API admin |
-| Grok Bot | Cuenta `A`, propiedad de Biguá, miembro aprobador del cliente | Bots, routines, box, secretos de A | n/a | Según producto |
+| Grok Bot | Cuenta `A`: propiedad de Biguá durante el contrato (modelo operado) o del cliente (modelo fábrica), ver §5.1 | Bots, routines, box, secretos de A | n/a | Según producto |
 | Casillas | `.env` por casilla en el box | SMTP/IMAP de ese dominio | Box de A, permisos 600, cargado por el cliente | Cuando el cliente lo decida |
 | LinkedIn / Dripify / WhatsApp | Sesiones de navegador | Perfil de Chrome del box de A | Box de A; el agente nunca ve contraseñas | La hace el dueño |
 | CRM | Token privado de HubSpot con scopes mínimos | Portal del cliente | Secreto `HUBSPOT_TOKEN` en Grok Bot de A | Según el cliente |
@@ -117,18 +132,49 @@ Quién tiene qué, por tenant `A`:
 Reglas:
 
 - `service_role` de Supabase, la clave admin de ASCI y el MCP admin de Supabase existen **sólo** en la cuenta de Grok Bot de Biguá y en CI.
-- Ningún secreto en el repo, en prompts, en Sheets ni en mails. Los secretos se entregan por la bóveda y se cargan como secretos de Grok Bot.
+- Ningún secreto en el repo, en prompts, en Sheets ni en mails. Los secretos se cargan como secretos de Grok Bot; lo que Biguá necesita conservar va a Supabase Vault (§5.2).
 - Cada tenant tiene su propio usuario en ASCI aunque el cliente ya tenga usuarios humanos ahí (como Tacco hoy). El uso del bot no se mezcla con el uso de una persona.
+
+### 5.1 Dos modelos de propiedad de la cuenta de Grok Bot
+
+El diseño soporta los dos porque todo el estado del servicio está en el plano de control y todos los secretos del tenant están en su cuenta de Grok Bot. Cambiar de modelo es cambiar quién administra la cuenta, no rehacer nada.
+
+| | **Operado por Biguá** (default) | **Fábrica de implementación** |
+|---|---|---|
+| Dueño de la cuenta y del box | Biguá, durante el contrato | El cliente desde el alta (o por transferencia después) |
+| Quién paga Grok Bot | Biguá, dentro del servicio | El cliente |
+| Rol de Biguá en la cuenta | Administrador | Miembro con permiso de administración mientras dure el soporte; se retira a la baja |
+| Rol del cliente en la cuenta | Miembro aprobador | Dueño; aprueba y además opera |
+| Quién carga los secretos | Biguá (los de Biguá) y el cliente (casillas) | Igual: la clave de ASCI y la credencial de Supabase las emite Biguá y las carga como secretos; las casillas, el cliente |
+| Lo que sigue siendo de Biguá | ASCI, la base de control, la plantilla, el repo y los playbooks | Lo mismo. La clave de ASCI y la credencial de Supabase son revocables por Biguá: es el corte de servicio |
+| Releases de la plantilla | Biguá cambia `SCRIPTS_TAG` y corre mantenimiento | Biguá propone el tag; el cliente o Biguá con su permiso lo aplica |
+| Baja | Biguá exporta, revoca y cierra o entrega la cuenta | Biguá exporta y revoca; la cuenta queda del cliente con los bots inertes |
+| Estándar | La plantilla, el manifiesto y el runbook son los mismos | Igual. Lo único que agrega es el checklist de transferencia |
+
+Condiciones para que el modelo fábrica funcione sin romper el aislamiento: la cuenta de Biguá nunca comparte box ni secretos con la del cliente; el cliente no recibe `service_role`, clave admin de ASCI ni acceso a la base de control fuera de su `client_id`; y el soporte de Biguá se da como miembro de la cuenta del cliente, con el permiso mínimo que Grok Bot permita (punto a confirmar con producto, igual que el scope de conectores).
+
+### 5.2 Dónde viven los secretos
+
+No hace falta un gestor de contraseñas externo. Dos lugares, con un rol cada uno:
+
+| Lugar | Qué guarda | Por qué ahí |
+|---|---|---|
+| **Secretos de la cuenta de Grok Bot del tenant** | `ASCI_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TENANT_SLUG`, `SCRIPTS_TAG`, token de CRM. Las credenciales SMTP/IMAP van como `.env` en el box, cargadas por el cliente | Es lo que los scripts leen. Viaja con la cuenta si se transfiere (modelo fábrica). Biguá no guarda copia de las casillas del cliente: no son suyas |
+| **Supabase Vault del proyecto `sdrbot`** | Por tenant: la contraseña del usuario Auth del bot (para reemitir sin resetear) y el `clave_id` de ASCI (no la clave). De Biguá: clave admin de ASCI para la sincronización de uso, `service_role` para CI y offboarding | ASCI ya usa Vault para las claves del MCP de Radar; es el mismo mecanismo y el mismo equipo. Acceso sólo desde funciones `security definer` del esquema `sdr` y desde CI |
+
+Qué no se guarda en ningún lado de Biguá: contraseñas de LinkedIn, Dripify, WhatsApp ni de las casillas. Las sesiones viven en el box y las credenciales las carga el cliente. La clave de ASCI se muestra una sola vez al crearla y se carga directo como secreto; si se pierde, se rota.
+
+Entrega de la clave de ASCI al tenant: Biguá la crea y la carga en la cuenta de Grok Bot del tenant en el mismo paso del alta. En el modelo fábrica, si la cuenta ya es del cliente, Biguá la carga como miembro administrador o la entrega por un enlace de un solo uso, nunca por mail ni chat.
 
 ## 6. Integración con ASCI
 
 ### 6.1 Rol `sdr_bot` (pedido a ASCI)
 
-Tools: `prospectar`, `novedades`, `rotacion`, `presencia`, `evidencia`, `productos`, `roles_objetivo`, `resolver_cuentas`, `tomadores_de_decision`, `buscar_contactos`, `revelar_contacto`, `revelar_lote`, `hallazgos`. Sin restricción de cartera. Sin `confirmar_cuenta`, `cargar_archivo`, `consultar`, `exportar_consulta`, `guardar_contactos` (el estado vive en Supabase).
+Especificación completa en `04-rol-sdr-bot-asci.md`. Resumen: una fila en `ops.rol` con `requiere_cliente = true` y `ve_todas_las_cuentas = true`; 14 tools en `ops.permiso` (lectura, prospección, decisores, reveal, `personas_por_mail` con cupo); una fila en `ops.presupuesto_apollo` (100 búsquedas, 40 créditos, 0 teléfonos por día). Sin curación, ingesta, administración ni SQL.
 
-Además, por usuario: **presupuesto** diario y mensual de créditos de Apollo, y tope diario de reveals de móvil (0 por defecto). Cuando se agota, las tools devuelven `con_aviso: presupuesto agotado` y el script lo registra como motivo, no como error. ASCI ya emite ese aviso; lo que falta es que el tope sea configurable por usuario desde `crear_usuario` / `actualizar_usuario`.
+El presupuesto de ASCI ya se aplica **por usuario y por día** (`ops.apollo_presupuesto()` cuenta `ops.apollo_llamada` del usuario en contexto), así que con un usuario por tenant el tope del rol ya es un tope por tenant. Cada tool de Apollo devuelve `presupuesto` en su respuesta; el script lee `puede_gastar` y, si es `false`, registra el motivo y sigue. El tope mensual y el override por tenant son el cambio chico propuesto en 04 §4.2; hasta que exista, el tope mensual lo hace cumplir la base de control (`credits` del manifiesto).
 
-Mientras el rol no exista: `operador` con clave nombrada y presupuesto espejado en Supabase (`credits` del manifiesto), que el script valida **antes** de llamar a reveal. Es una barrera de software, no de ASCI; aceptable para los dos primeros tenants.
+Mientras el rol no exista: `operador` con clave nombrada y el tope diario y mensual espejados en Supabase, que el script valida **antes** de llamar a reveal. Es una barrera de software, no de ASCI; aceptable para los dos primeros tenants.
 
 ### 6.2 Política de reveal programático
 
@@ -146,7 +192,7 @@ Cada reveal queda atado a la calificación que lo justificó. Es lo que permite 
 
 Corre en la **cuenta de Biguá** (clave admin), no en los tenants: una vez por día, `uso(desde = primer día del mes)` → por cada `cliente` del resultado, `sync_asci_usage(client_id, day, raw jsonb)` con `service_role`. El umbral de aviso (`credits.warn_at_percent`) genera `credit_threshold` y la tarea `approve_credits` al aprobador de créditos del tenant. El resumen de las 18:50 del tenant lee `asci_usage`, no ASCI.
 
-Si ASCI agrega una tool `mi_uso` para no-admin, la routine puede moverse al tenant sin cambiar la tabla.
+Si ASCI agrega `mi_uso` (04 §6.2), la routine puede moverse al tenant sin cambiar la tabla. Para el vencimiento de la clave hace falta `mi_clave` (04 §6.1); hasta entonces, `clients.asci_key_expires_at` se carga en el alta y lo lee el chequeo de las 07:30.
 
 ### 6.4 Playbook de señales estándar
 
@@ -256,5 +302,5 @@ SLOs de operación propuestos para arrancar: routines a horario ≥ 98 % de los 
 |---|---|---|
 | 1 a 2 (BairesQA, Tacco) | Todo lo de fase 1: base, RPC, scripts, plantilla, manifiesto, aprobaciones por mail, resumen 19:00, rol `operador` en ASCI con presupuesto en software | Nada más. Objetivo: probar el contrato y la migración |
 | 3 a 5 | Rol `sdr_bot` y presupuesto en ASCI; capa MCP `sdr.*`; tablero web; página de aprobación; notificador por WhatsApp | Un operador de Biguá no puede leer N resúmenes: el tablero y las alertas en el momento pasan a ser necesarios |
-| 6 a 15 | Boxes como VPS gestionados por Biguá con instalador; release automatizado por API de Grok Bot; adaptadores de CRM | Playbooks de incidentes probados; segundo operador; soporte al cliente con SLA |
+| 6 a 15 | Instalador del box sin manos; release automatizado por API de Grok Bot; adaptadores de CRM | Playbooks de incidentes probados; segundo operador; soporte al cliente con SLA |
 | 15+ | Evaluar proyecto de Supabase por región o por tenant enterprise; cola de trabajo centralizada en vez de routines por cuenta | Rediseño del plano de ejecución si Grok Bot ofrece scope por bot y boxes aislados |
