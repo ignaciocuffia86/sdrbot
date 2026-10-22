@@ -166,7 +166,11 @@ channels:                             # [cliente] qué canales se usan y con qu�
     enabled: true
     sending_domain: bairesqa.net      # dominio alternativo, distinto del principal
     dns_owner: cliente                # cliente | bigua (Biguá gestiona DNS y casillas)
-    mailboxes:                        # las credenciales SMTP/IMAP van por el canal seguro, no acá
+    provider: google_workspace        # google_workspace | microsoft_365 (el box no deja salir SMTP ni IMAP)
+    api_auth: domain_wide_delegation  # google: domain_wide_delegation · microsoft: graph_app_only · respaldo: grokbot_connector
+    api_credential_secret: MAIL_CREDENTIAL   # nombre del secreto en la cuenta de Grok Bot; el valor nunca va acá
+    delegation_authorized_by: ti@bairesqa.com   # administrador del dominio que autorizó la delegación
+    mailboxes:                        # cada casilla es una identidad del dominio; se accede por la credencial de aplicación
       - email: augusto@bairesqa.net
         role: primary
         target_cap: 55
@@ -183,6 +187,7 @@ channels:                             # [cliente] qué canales se usan y con qu�
     seconds_between_mails: 20
     unsubscribe_keyword: BAJA
     forward_replies_to: augusto@bairesqa.com     # opcional
+    read_every_minutes: 15            # lectura de respuestas y aprobaciones en horario hábil (mínimo de Grok Bot: 5)
   linkedin:
     enabled: true
     seat_owner: augusto@bairesqa.com  # el vendedor; login y 2FA los hace él
@@ -208,16 +213,19 @@ followups:                            # [bigua] con defaults de BairesQA
   stop_all_channels_on_any_reply: true
   revisit_no_por_ahora_days: 90
 
-schedule:                             # [bigua] hora local del tenant, días hábiles
-  sessions_check: "07:30"
-  run_latam_es: "08:30"
-  run_us: "10:30"
-  inbox_monitor: ["09:00", "13:00", "17:30"]
-  whatsapp_batch: "09:52"
-  followups: "11:00"
-  linkedin: "12:00"
-  cap_fill: "17:00"
-  daily_summary: "18:50"
+schedule:                             # [bigua] hora local del tenant, días hábiles (cron de Grok Bot, 1-5)
+  # timing: exact (puede arrancar unos minutos tarde) | flexible (±15 min). Los feriados los decide el script.
+  sessions_check:  { at: "07:30", timing: flexible, bot: sdr-lead }
+  run_latam_es:    { at: "08:30", timing: flexible, bot: qualify }
+  run_us:          { at: "10:30", timing: flexible, bot: qualify }
+  inbox_monitor:   { every_minutes: 15, window_local: "08:00-19:00", timing: flexible, bot: handoff-desk }
+  heartbeat:       { every_minutes: 15, window_local: "07:00-20:00", timing: flexible, bot: sdr-lead }
+  whatsapp_batch:  { at: "09:52", timing: exact, bot: whatsapp }
+  followups:       { at: "11:00", timing: flexible, bot: outreach }
+  whatsapp_send:   { at: ["11:30", "16:00"], timing: exact, bot: whatsapp }
+  linkedin:        { at: "12:00", timing: flexible, bot: linkedin }
+  cap_fill:        { at: "17:00", timing: flexible, bot: outreach }
+  daily_summary:   { at: "18:50", timing: exact, bot: sdr-lead }
   holidays_calendar: AR               # calendario de feriados
 
 reply_handling:                       # [bigua] con el criterio del cliente
@@ -265,12 +273,24 @@ grokbot:                              # [bigua]
   ownership_model: bigua_operated     # bigua_operated | client_owned (modelo fábrica, ver 02-arquitectura §5.1)
   bigua_members: [nicolas@bigua.lat, ignacio@bigua.lat]   # administradores (operado) o soporte (fábrica)
   client_members: [augusto@bairesqa.com]                  # aprobador; dueño en el modelo fábrica
+  team: bigua                       # equipo de Grok Bot donde viven las plantillas (privadas)
   template_version: v1.0.0
+  timezone: America/Argentina/Buenos_Aires   # Ajustes > General; rige el reloj del box y el cron de las routines
+  bots:                               # siete plantillas, una por bot; sólo dos abren Chrome
+    - { name: sdr-lead,     browser: false }
+    - { name: signals,      browser: false }
+    - { name: qualify,      browser: false }
+    - { name: outreach,     browser: false }   # redacción y mail por API (absorbe a message)
+    - { name: handoff-desk, browser: false }
+    - { name: whatsapp,     browser: true, owns: whatsapp_web }
+    - { name: linkedin,     browser: true, owns: [linkedin, sales_navigator, dripify] }
+  mcp_connectors:
+    - { name: asci, url: "https://mcp.bigua.lat/mcp", auth: bearer_in_connector_config, key_from: asci.key_name }
   box:                                # la computadora virtual de Grok Bot de esta cuenta; no hay VPS aparte
     scripts_tag: v1.0.0               # tag del repo sdrbot fijado para este tenant (secreto SCRIPTS_TAG)
-    timezone: America/Argentina/Buenos_Aires
-    heartbeat_minutes: 15             # routine corta; si el box no la permite, sólo detección de corridas ausentes
-    desktop_access: [augusto@bairesqa.com, pascual@bairesqa.com]   # quién entra al escritorio para QR y 2FA
+    heartbeat_minutes: 15             # mínimo de Grok Bot: 5
+    sessions_via: video_call          # video_call (fase 1: Biguá abre la vista en vivo y el dueño escanea) | app_access (cuando soporte confirme roles)
+    session_owners: { whatsapp_web: pascual@bairesqa.com, linkedin: augusto@bairesqa.com }
 
 asci:                                 # [bigua]
   bot_user_email: sdr.bairesqa@bigua.lat
@@ -286,6 +306,6 @@ asci:                                 # [bigua]
     creditos_mes: 600
 
 secrets:                              # [bigua] dónde vive cada secreto; acá nunca hay valores
-  runtime: grokbot_account_secrets    # ASCI_KEY, SDR_BOT_EMAIL, SDR_BOT_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, TENANT_SLUG, SCRIPTS_TAG, HUBSPOT_TOKEN
-  mailboxes: box_env_files            # .env por casilla, cargados por el cliente en el box
+  runtime: grokbot_account_secrets    # ASCI_KEY, SDR_BOT_EMAIL, SDR_BOT_PASSWORD, SUPABASE_URL, SUPABASE_ANON_KEY, MAIL_CREDENTIAL, TENANT_SLUG, SCRIPTS_TAG, HUBSPOT_TOKEN; llegan a los scripts como variables de entorno
+  asci_connector: grokbot_mcp_connector_config   # la clave de ASCI también vive en la configuración del conector; la rotación toca los dos lugares
   bigua_vault: supabase_vault         # proyecto sdrbot: contraseña del usuario Auth del bot y clave_id de ASCI
