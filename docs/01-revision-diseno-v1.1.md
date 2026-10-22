@@ -71,9 +71,9 @@ Orden por impacto. Cada uno tiene su propuesta en `02-arquitectura.md`.
 
 | # | Punto | Propuesta |
 |---|---|---|
-| 1 | Limitar una cuenta de conector a un bot o equipo | Mantener una cuenta de Grok Bot por cliente aunque producto lo resuelva: el aislamiento del box lo exige igual. Si producto lo habilita, usarlo sólo para la cuenta de Biguá (varios tenants de solo lectura para el tablero) |
+| 1 | Limitar una cuenta de conector a un bot o equipo | Confirmado el 22/10 que no se puede: los conectores son de la cuenta. Una cuenta de Grok Bot por cliente, que además es lo que exige el box compartido entre bots (`06-respuestas-grokbot.md`) |
 | 2 | Regla de seguimiento | Dos niveles en `client_config.followups`: `max_unanswered_per_contact: 1` y `second_contact_after_days: 7` (nuevo enrollment, no follow-up). Ver §3.2.8 |
-| 3 | Acceso de Biguá a las cuentas de los clientes | Default: Biguá **crea y es dueña** de la cuenta de Grok Bot del tenant durante el contrato; el cliente es miembro aprobador. El diseño también soporta el modelo **fábrica de implementación**, con la cuenta a nombre del cliente y Biguá como miembro administrador durante el soporte (`02-arquitectura.md` §5.1). Decidido el 22/10 |
+| 3 | Acceso de Biguá a las cuentas de los clientes | Default: Biguá **crea y es dueña** de la cuenta de Grok Bot del tenant durante el contrato. El modelo **fábrica de implementación** se hace importando las plantillas en una cuenta del cliente (Grok Bot no transfiere cuentas) y queda a confirmar con soporte qué roles de miembro existen (`02-arquitectura.md` §5.1). Decidido el 22/10 |
 | 4 | Propagación de versiones | Todo como código en el repo, tag por tenant, `template_version` en cada corrida, checklist de release por tenant. Automatizar cuando Grok Bot exponga API |
 | 5 | Un proyecto de Supabase compartido o uno por cliente | Compartido con RLS hasta que un cliente exija aislamiento físico. Y **separado del proyecto `locasci` de ASCI**: proyecto propio `sdrbot` en la misma organización y región, por salud operativa del corpus y por clase de datos (`02-arquitectura.md` §3.1). Decidido el 22/10 |
 | 6 | Migración del histórico de BairesQA | Script de migración único (JSON + CRM de Claude → `send_ledger`, `send_counters`, `do_not_contact`, `contacts`), corrida en seco con diff de duplicados, y congelar PasQAlito un día antes del corte |

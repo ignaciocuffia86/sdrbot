@@ -32,15 +32,17 @@ flowchart LR
   end
 
   subgraph T1["Tenant A (cuenta Grok Bot + box)"]
-    B1[bots: sdr-lead · signals · qualify<br/>message · outreach · handoff-desk]
-    BOX1[box A: scripts@tag · .env casillas<br/>Chrome: LinkedIn · Dripify · WhatsApp Web]
+    B1[bots: sdr-lead · signals · qualify · outreach<br/>handoff-desk · whatsapp · linkedin]
+    BOX1[box A: scripts@tag · skills · credencial de mail<br/>Chrome: whatsapp → WhatsApp Web · linkedin → Sales Nav, Dripify]
     B1 --- BOX1
   end
   subgraph T2["Tenant B"]
     B2[bots] --- BOX2[box B]
   end
 
+  GMAIL[(Gmail API / Graph<br/>casillas del tenant)]
   REPO -. git tag .-> BOX1 & BOX2
+  BOX1 -- HTTPS --> GMAIL
   ASCI -- clave sdr.A --> BOX1
   ASCI -- clave sdr.B --> BOX2
   BOX1 -- JWT client_id=A · RPC --> SB
@@ -58,7 +60,8 @@ flowchart LR
 | **Base de control** | Estado operativo por tenant: cuentas, contactos, secuencias, envíos, respuestas, aprobaciones, tareas, corridas, alertas | Supabase (Postgres 15+, Auth, pg_cron, Edge Functions, Storage) | A construir (sección 7 del documento + deltas de la revisión §5) |
 | **Notificador** | Convierte filas de `notifications` y `alerts` en mails, WhatsApp o Slack; registra `external_ref` | Edge Function disparada por pg_cron cada minuto o por `pg_net` desde triggers | A construir |
 | **Repo `sdrbot`** | Fuente única de scripts, skills (prompts como archivos), definición de routines, migraciones, esquema del manifiesto, playbooks, tests de aislamiento | Git + CI (lint, tests de RLS con pgTAP, corrida en seco contra una base efímera) | Este repo |
-| **Plantilla SDR BOT** | Los seis bots y sus routines, exportables a una cuenta nueva | Grok Bot (`export-bot-template`) | A construir; se mantiene **fina**: cada bot carga su skill desde el repo clonado en el box |
+| **Plantilla SDR BOT** | Siete plantillas de bot (una por bot) más un skill de primeros pasos, en un **equipo** de Grok Bot de Biguá para que sean privadas. No llevan secretos ni el conector MCP de ASCI: eso lo agrega el alta | Grok Bot (plantillas por bot) | A construir; se mantiene **fina**: cada bot carga su skill desde el repo clonado en el box |
+| **Módulo de mail por API** | Envío y lectura de las casillas del tenant por HTTPS (Gmail API con delegación de dominio; Microsoft Graph como alternativa), con rotación, cupos, lotes y deduplicación en el script. Reemplaza a SMTP/IMAP, que el box no puede usar | Python en el repo, credencial de aplicación por tenant | A construir (`06-respuestas-grokbot.md` A.3) |
 | **Cuenta Grok Bot de Biguá** | Resumen consolidado 19:00, alertas críticas, mantenimiento con MCP admin de Supabase, sincronización de uso de ASCI | Grok Bot | A construir |
 | **Tablero** | Vistas `v_*` consultadas por operadores; fase 2: app web mínima para Biguá y para aprobaciones del cliente | Fase 1: vistas + resumen por mail. Fase 2: app en Vercel sobre Supabase con magic link | Fase 1 / Fase 2 |
 | **Secretos** | Runtime: los secretos de la cuenta de Grok Bot de cada tenant. Plano de control: Supabase Vault del proyecto `sdrbot` (ASCI ya lo usa para las claves del MCP en `radar.usuario_mcp`) | Grok Bot secrets + Supabase Vault. Sin gestor de contraseñas externo | Decidido (ver §5.2) |
@@ -86,35 +89,58 @@ Lo que se instancia por cliente, siempre igual.
 
 | Pieza | Contenido | Dueño | Provisión |
 |---|---|---|---|
-| **Cuenta de Grok Bot** | Seis bots desde la plantilla, routines con los horarios del manifiesto, secretos (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `ASCI_KEY`, `TENANT_SLUG`, `SCRIPTS_TAG`), el cliente como miembro aprobador | Biguá durante el contrato | Biguá |
-| **Box** | La computadora virtual que Grok Bot da a cada cuenta: clon del repo en el tag; `.env` de casillas con permisos de archivo restringidos; perfil de Chrome con WhatsApp Web, LinkedIn/Sales Nav y Dripify; Python para los scripts. No hay VPS aparte ni equipo del cliente | Viene con la cuenta de Grok Bot del tenant | Biguá, con el instalador del repo |
-| **Infra de mail** | Dominio alternativo, SPF/DKIM/DMARC (`p=quarantine` mínimo), 3 a 5 casillas, warm-up por escalones | Cliente (o Biguá como servicio gestionado) | Según `channels.email.dns_owner` |
+| **Cuenta de Grok Bot** | Siete bots desde las plantillas (`sdr-lead`, `signals`, `qualify`, `outreach`, `handoff-desk`, `whatsapp`, `linkedin`), routines con los horarios del manifiesto, conector MCP de ASCI con la clave del tenant, secretos (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `ASCI_KEY`, `MAIL_CREDENTIAL`, `TENANT_SLUG`, `SCRIPTS_TAG`), zona horaria del tenant | Biguá durante el contrato | Biguá, por checklist (no hay API) |
+| **Box** | La computadora virtual que Grok Bot da a cada cuenta (Debian, 8 núcleos, 15 GB de RAM, 125 GB de disco, Python, Node, git y Chrome): clon del repo en el tag, skills copiados a la biblioteca de la cuenta, sesiones de Chrome de WhatsApp Web (bot `whatsapp`) y de LinkedIn, Sales Navigator y Dripify (bot `linkedin`). Compartido por todos los bots de la cuenta; nada compartido entre cuentas. No hay VPS aparte ni equipo del cliente | Viene con la cuenta de Grok Bot del tenant | Biguá, con el instalador idempotente del repo |
+| **Infra de mail** | Dominio alternativo en **Google Workspace** (o Microsoft 365), SPF/DKIM/DMARC (`p=quarantine` mínimo), 3 a 5 casillas, warm-up por escalones, y una credencial de aplicación del tenant (cuenta de servicio con delegación de dominio, o permisos de aplicación en Graph) que los scripts usan por HTTPS. Sin SMTP ni IMAP: el box no los deja salir | Cliente (o Biguá como servicio gestionado) | Según `channels.email.dns_owner`; la delegación la autoriza el administrador del Workspace |
 | **Seat de LinkedIn** | Perfil del vendedor + Sales Navigator + Dripify, login y 2FA hechos por el dueño en el box | Cliente | Cliente |
 | **Línea de WhatsApp** | Número dedicado, teléfono físico disponible para el QR, persona que aprueba tandas | Cliente | Cliente |
 | **CRM** | HubSpot (adaptador) o ninguno | Cliente | Cliente |
 
 ### 4.1 El box es la computadora de Grok Bot
 
-El box es la máquina virtual que Grok Bot asigna a cada cuenta, la misma que el documento v1.1 llama "la computadora del Grok Bot del cliente". Una cuenta por tenant implica un box por tenant, y eso es lo que aísla sesiones de navegador y archivos. No hay VPS de Biguá ni equipo del cliente: la mención a un VPS en la primera versión de este diseño era un respaldo por si el box no sostenía sesiones persistentes, y se descarta.
+El box es la máquina virtual que Grok Bot asigna a cada cuenta, la misma que el documento v1.1 llama "la computadora del Grok Bot del cliente". Lo verificado el 22/10 (`06-respuestas-grokbot.md`):
 
-Lo que hay que **verificar con Grok Bot** antes de la fase 1, porque el diseño lo asume:
-
-| Supuesto | Si no se cumple |
+| Hecho | Consecuencia en el diseño |
 |---|---|
-| Las sesiones de Chrome (WhatsApp Web, LinkedIn, Dripify) sobreviven a reinicios del box | El QR y los logins se repiten cada día; el canal WhatsApp deja de ser viable |
-| Los archivos persisten (clon del repo, `.env`, perfil de Chrome) | Los scripts tienen que reinstalarse en cada corrida desde un secreto |
-| Una routine puede ejecutar un script de Python con acceso saliente a SMTP (587) e IMAP (993), a `mcp.bigua.lat` y a Supabase | Los envíos de mail pasan al conector de Gmail de Grok Bot y los scripts se achican |
-| El dueño de cada sesión puede entrar al escritorio del box (RDP, VNC o equivalente) para el QR y el 2FA | Los logins los hace Biguá con el cliente al lado, por pantalla compartida |
-| El reloj del box puede fijarse en la zona del tenant, o el script convierte | Horarios de envío corridos |
-| El box puede correr una routine corta cada 5 a 15 minutos | El heartbeat se reemplaza por detección de corridas ausentes (abajo) |
+| Un box por cuenta, compartido por todos los bots de la cuenta; nada compartido entre cuentas | Una cuenta por cliente aísla. Los bots de un tenant comparten archivos, secretos y sesiones: el aislamiento es entre tenants, no entre bots |
+| Sesiones de Chrome y archivos persisten entre corridas y sobreviven a "Update Bot's Computer"; el software instalado no | Instalador idempotente; el heartbeat verifica dependencias y lo vuelve a correr |
+| Un agente de navegador a la vez por bot; dos bots en la misma sesión se pisan | Un único bot dueño de cada sesión: `whatsapp` y `linkedin`. Los otros cinco no abren Chrome |
+| Debian 13, 8 núcleos, 15 GB de RAM (13 en uso con varios bots), 125 GB de disco, Python 3, Node, git, Chrome | El port en Python sigue. La RAM se mide en el canario con las dos sesiones abiertas |
+| HTTPS abierto; SMTP 587/465 e IMAP 993 bloqueados | Mail por API (§4.2). Supabase y ASCI por HTTPS, como estaba |
+| Zona horaria por cuenta; cron en hora local con días hábiles; sin feriados; timing flexible (±15 min) o exacto | `grokbot.timezone` = la del tenant. Los feriados los decide el script. Timing exacto sólo para la tanda de WhatsApp, las pasadas de envío y el resumen |
+| Routines cada 5 minutos como mínimo; disparables por webhook o mail | Monitoreo de casillas y heartbeat cada 15 minutos en horario hábil. Push por webhook en fase 2 |
+| Un comando de terminal bloquea hasta 13 minutos; en segundo plano no hay ese límite | Corridas largas en segundo plano con archivo de estado (§7.1) |
+| El cliente entra al escritorio del box sólo desde la app y con acceso al bot | En fase 1 el QR y los 2FA se hacen en videollamada sobre la vista en vivo del escritorio, sin dar acceso a la cuenta |
+| WhatsApp Web desvincula si el teléfono queda unos 14 días sin conexión | Entra en el chequeo de las 07:30 y en el playbook de incidentes |
 
-Se lo trata como un servicio igual:
+Se lo trata como un servicio:
 
-- **Heartbeat** por routine corta (cada 5 a 15 minutos si Grok Bot lo permite; si no, al inicio de cada routine) a `boxes`: tag de scripts, estado de cada sesión (ok, vencida, desconocida) y si Chrome está adelante.
+- **Heartbeat** por routine cada 15 minutos en horario hábil, a `boxes`: tag de scripts, dependencias presentes, estado de cada sesión (ok, vencida, desconocida) y uso de RAM.
 - **Chequeo de sesiones 07:30** lee `boxes` y el vencimiento de la clave de ASCI; si algo falla, frena el canal (`channel_seats.status = paused` o `mailboxes.status = paused`), levanta `connector_down` y crea la tarea `login_2fa` para el dueño de la sesión.
 - **Corrida ausente**: pg_cron compara `schedule` del tenant con `run_log`; una routine que no abrió corrida 30 minutos después de su hora es `run_stale` crítico a Biguá. Esto no depende del box.
-- **Actualización de scripts** = `git fetch && git checkout <tag>` ejecutado por una routine de mantenimiento, con el tag leído del secreto `SCRIPTS_TAG`. Cambiar la versión de un tenant es cambiar un secreto.
-- **Sin credenciales de Biguá ni de otros tenants** en el box. Lo único de Biguá que hay en un box es el clon del repo, que es público para el tenant.
+- **Actualización de scripts** = `git fetch && git checkout <tag>` más el instalador, ejecutado por una routine de mantenimiento, con el tag leído del secreto `SCRIPTS_TAG`. Cambiar la versión de un tenant es cambiar un secreto.
+- **Sin credenciales de Biguá ni de otros tenants** en el box. Lo único de Biguá que hay en un box es el clon del repo.
+
+Pendiente de soporte (no bloquea): si el box está encendido las 24 horas y si Chrome queda abierto entre corridas. El diseño no lo asume.
+
+### 4.2 Canal de mail sin SMTP ni IMAP
+
+El box no deja salir SMTP ni IMAP (probado el 22/10). El mail va por API sobre HTTPS, con el script del repo manejando rotación, cupos, lotes, deduplicación y pie de baja igual que antes. Las opciones y la comparación están en `06-respuestas-grokbot.md` A.3; la decisión:
+
+| | Estándar | Alternativa | Respaldo |
+|---|---|---|---|
+| Proveedor del dominio alternativo | Google Workspace | Microsoft 365 | Cualquiera de los dos |
+| Cómo entran los scripts | Gmail API con una cuenta de servicio y delegación a nivel de dominio (scopes `gmail.send`, `gmail.readonly`, `gmail.modify`), impersonando cada casilla | Microsoft Graph con permisos de aplicación `Mail.Send` y `Mail.Read` y una política de acceso que los limite a las casillas del tenant | Conectores Gmail u Outlook de Grok Bot, una casilla por conector; el bot envía y lee lo que el script le indica |
+| Credencial | Un JSON de cuenta de servicio por tenant, secreto `MAIL_CREDENTIAL` | Un `client_id` + secreto de aplicación por tenant | Ninguna en el box |
+| Quién la autoriza | El administrador del Workspace del cliente, o Biguá si gestiona el dominio | El administrador del tenant de Microsoft | El dueño de cada casilla, en la app |
+| Envío | `messages.send` con el mensaje RFC 822 armado por el script; `external_ref` = `id` del mensaje; el `Message-ID` se lee después con `messages.get` | `sendMail` y lectura del `internetMessageId` | Por el bot, sin control de `Message-ID` ni de lotes |
+| Lectura | `messages.list` por `historyId` desde `last_checked_at`; hilos por `threadId` | `messages/delta` | Por el bot |
+| Push (fase 2) | `users.watch` con Pub/Sub hacia una Edge Function, que dispara la routine por webhook | Suscripciones de Graph | n/a |
+| Cuándo | Default para todo tenant nuevo | Cliente ya en Microsoft | Tenant chico sin administrador de dominio |
+
+Lo que no se usa para prospección: APIs transaccionales (Resend, SendGrid, Postmark, Mailgun), por reputación compartida y políticas que excluyen el mail en frío. El notificador de Biguá sí puede usar una.
+
+Consecuencias para el modelo de datos: `mailboxes` pierde las credenciales por casilla (no existían en la base, estaban en `.env`) y gana `provider` (`google`, `microsoft`, `grokbot_connector`); `send_ledger.external_ref` guarda el `id` del mensaje del proveedor y una columna `message_id_header` guarda el `Message-ID` para cruzar respuestas.
 
 ## 5. Identidad, tenancy y secretos
 
@@ -122,11 +148,11 @@ Quién tiene qué, por tenant `A`:
 
 | Sistema | Identidad del tenant | Alcance | Dónde vive el secreto | Rotación |
 |---|---|---|---|---|
-| ASCI | Usuario `sdr.A@bigua.lat`, rol `sdr_bot` (hasta que exista: `operador`), `cliente = A`, clave nombrada `SDR BOT · A · box` | Lectura del universo, reveal con presupuesto, sin curación ni ingesta ni SQL | Secreto `ASCI_KEY` en Grok Bot de A; el `clave_id` (no la clave) en Supabase Vault | Anual o ante incidente: `crear_clave` nueva → actualizar secreto → `revocar_clave` vieja. Sin corte |
+| ASCI | Usuario `sdr.A@bigua.lat`, rol `sdr_bot` (hasta que exista: `operador`), `cliente = A`, clave nombrada `SDR BOT · A · box` | Lectura del universo, reveal con presupuesto, sin curación ni ingesta ni SQL | En dos lugares de la cuenta de A: la configuración del conector MCP remoto (para los bots) y el secreto `ASCI_KEY` (para los scripts); el `clave_id` (no la clave) en Supabase Vault | Anual o ante incidente: `crear_clave` nueva → actualizar conector y secreto → `revocar_clave` vieja. Sin corte |
 | Supabase | Usuario Auth `sdr.A@bigua.lat` con `app_metadata.client_id = A` | Sólo filas con `client_id = A`, vía RLS; sólo RPC | `SDR_BOT_EMAIL` y `SDR_BOT_PASSWORD` en Grok Bot de A | Semestral por API admin |
 | Grok Bot | Cuenta `A`: propiedad de Biguá durante el contrato (modelo operado) o del cliente (modelo fábrica), ver §5.1 | Bots, routines, box, secretos de A | n/a | Según producto |
-| Casillas | `.env` por casilla en el box | SMTP/IMAP de ese dominio | Box de A, permisos 600, cargado por el cliente | Cuando el cliente lo decida |
-| LinkedIn / Dripify / WhatsApp | Sesiones de navegador | Perfil de Chrome del box de A | Box de A; el agente nunca ve contraseñas | La hace el dueño |
+| Casillas | Cuenta de servicio con delegación de dominio (Google) o aplicación de Graph (Microsoft), autorizada por el administrador del dominio del tenant | Enviar y leer en las casillas listadas del dominio alternativo, por HTTPS | Secreto `MAIL_CREDENTIAL` en Grok Bot de A | Anual, o cuando el cliente lo decida |
+| LinkedIn / Dripify / WhatsApp | Sesiones de navegador, cada una de un solo bot (`linkedin`, `whatsapp`) | Perfil de Chrome del box de A | Box de A; el agente nunca ve contraseñas | La hace el dueño, en videollamada sobre la vista en vivo del escritorio |
 | CRM | Token privado de HubSpot con scopes mínimos | Portal del cliente | Secreto `HUBSPOT_TOKEN` en Grok Bot de A | Según el cliente |
 
 Reglas:
@@ -137,7 +163,7 @@ Reglas:
 
 ### 5.1 Dos modelos de propiedad de la cuenta de Grok Bot
 
-El diseño soporta los dos porque todo el estado del servicio está en el plano de control y todos los secretos del tenant están en su cuenta de Grok Bot. Cambiar de modelo es cambiar quién administra la cuenta, no rehacer nada.
+El diseño soporta los dos porque todo el estado del servicio está en el plano de control y todos los secretos del tenant están en su cuenta de Grok Bot. Grok Bot no transfiere cuentas (`06` 1.3): el modelo fábrica se hace importando las siete plantillas en una cuenta del cliente y completando el checklist de alta (conector de ASCI, secretos, instalador, sesiones), no transfiriendo la cuenta de Biguá. Los roles de miembro todavía no están confirmados por soporte, así que en fase 1 rige el modelo operado.
 
 | | **Operado por Biguá** (default) | **Fábrica de implementación** |
 |---|---|---|
@@ -159,10 +185,10 @@ No hace falta un gestor de contraseñas externo. Dos lugares, con un rol cada un
 
 | Lugar | Qué guarda | Por qué ahí |
 |---|---|---|
-| **Secretos de la cuenta de Grok Bot del tenant** | `ASCI_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TENANT_SLUG`, `SCRIPTS_TAG`, token de CRM. Las credenciales SMTP/IMAP van como `.env` en el box, cargadas por el cliente | Es lo que los scripts leen. Viaja con la cuenta si se transfiere (modelo fábrica). Biguá no guarda copia de las casillas del cliente: no son suyas |
+| **Secretos de la cuenta de Grok Bot del tenant** | `ASCI_KEY`, `SDR_BOT_EMAIL`, `SDR_BOT_PASSWORD`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `MAIL_CREDENTIAL`, `TENANT_SLUG`, `SCRIPTS_TAG`, token de CRM. Se cargan por el campo enmascarado y llegan a los scripts como variables de entorno; nunca pasan por el chat. La clave de ASCI va además en la configuración del conector MCP | Es lo que los scripts leen. Biguá no guarda copia de la credencial de mail del cliente: no es suya |
 | **Supabase Vault del proyecto `sdrbot`** | Por tenant: la contraseña del usuario Auth del bot (para reemitir sin resetear) y el `clave_id` de ASCI (no la clave). De Biguá: clave admin de ASCI para la sincronización de uso, `service_role` para CI y offboarding | ASCI ya usa Vault para las claves del MCP de Radar; es el mismo mecanismo y el mismo equipo. Acceso sólo desde funciones `security definer` del esquema `sdr` y desde CI |
 
-Qué no se guarda en ningún lado de Biguá: contraseñas de LinkedIn, Dripify, WhatsApp ni de las casillas. Las sesiones viven en el box y las credenciales las carga el cliente. La clave de ASCI se muestra una sola vez al crearla y se carga directo como secreto; si se pierde, se rota.
+Qué no se guarda en ningún lado de Biguá: contraseñas de LinkedIn, Dripify, WhatsApp ni de las casillas. Las sesiones viven en el box, y la credencial de mail la carga quien administra el dominio. La clave de ASCI se muestra una sola vez al crearla y se carga directo como secreto; si se pierde, se rota.
 
 Entrega de la clave de ASCI al tenant: Biguá la crea y la carga en la cuenta de Grok Bot del tenant en el mismo paso del alta. En el modelo fábrica, si la cuenta ya es del cliente, Biguá la carga como miembro administrador o la entrega por un enlace de un solo uso, nunca por mail ni chat.
 
@@ -210,16 +236,39 @@ Cada señal se guarda en `signals` con `asci_signal_id` o un id derivado (fuente
 
 ## 7. Flujos y contratos
 
-### 7.1 Routine → script → RPC
+### 7.1 Routine → prompt → skill → script → RPC
 
-Una routine de Grok Bot ejecuta un script del repo en el box. El contrato del script:
+Una routine de Grok Bot es un prompt que despierta a un bot a una hora; no ejecuta scripts por sí misma. El bot ejecuta el script por la terminal del box y lee su salida. El contrato tiene tres capas:
+
+**El prompt de la routine** vive en el repo (`routines/<bot>/<routine>.md`) y se copia tal cual al crear la routine. Es corto y dice cuatro cosas: qué skill seguir, qué comando correr, cómo esperar, y la política de envío con todas las letras. Ejemplo para la pasada de WhatsApp de las 11:30:
+
+```
+Seguí el skill sdr-whatsapp-envio. Corré en segundo plano
+`~/sdrbot/bin/run.sh wa_send --pass 1` y esperá leyendo
+`~/sdrbot/state/wa_send.json` hasta que status sea done o error (máximo 50 min).
+Esta routine envía los ítems que ya están aprobados en la base de control: no
+muestres borradores, no pidas confirmación, no esperes aprobación. Si el navegador
+pide QR o muestra un desafío, no lo esquives: terminá y reportalo.
+Al terminar, resumí el resultado en cinco líneas.
+```
+
+Por qué así: por defecto un bot no envía sin que una persona apruebe, y las routines no heredan permisos dados en el chat (`06` A3). La aprobación humana vive en la base, y el prompt lo dice.
+
+**El skill** (`skills/<slug>/SKILL.md` en el repo, copiado a `/home/box/agent-data/workflows/<slug>/SKILL.md` por el instalador) explica al bot qué hace el script, qué significa cada estado y qué hacer ante cada error. Es lo que se versiona; el prompt de la routine casi no cambia.
+
+**El script** (`bin/run.sh <routine>` → `scripts/<routine>.py`):
 
 - Lee `TENANT_SLUG`, `SCRIPTS_TAG` y los secretos del entorno. Nunca argumentos con credenciales.
-- Abre `start_run(client, routine, run_key)`; si la corrida ya existe y no está en error, sale con código 0 y el log "ya corrida".
+- Corre en segundo plano cuando puede pasar de 10 minutos (un comando de terminal bloquea 13), y escribe `state/<routine>.json` con `status`, `items_in`, `items_out`, `last_item_at` y el resumen; el bot lo lee cada minuto.
+- Abre `start_run(client, routine, run_key)`; si la corrida ya existe y no está en error, sale con código 0 y el log "ya corrida". Si existe en `partial`, reanuda desde el último ítem.
 - Llama RPCs tipadas. Un rechazo de la base (cap, DNC, follow-up, aprobación) se registra como motivo en el log de la corrida y **no se reintenta por otro camino**.
 - Toda llamada a IA pasa por un módulo que valida el JSON contra un esquema del repo (`schemas/*.json`). Si no valida: `run_log.error`, tarea `review_reply` al operador de Biguá, y sigue con el próximo ítem.
 - Cierra con `finish_run(status, items_in, items_out, credits, error)`. Una corrida que no cierra en 2 horas es `run_stale` (pg_cron).
-- Salida en JSON por stdout para que el bot pueda redactar el resumen sin leer la base.
+- Salida final en JSON por stdout para que el bot pueda redactar el resumen sin leer la base.
+
+**Revisión automática de Grok Bot** (`06` A4): algunas acciones de terminal, navegador o MCP pueden quedar bloqueadas esperando aprobación manual. En una corrida desatendida eso deja la acción sin hacer. El script detecta que el bot no volvió (estado sin avanzar) y cierra la corrida en `partial` con la alerta `run_blocked`; se prueba en el canario con los envíos reales antes de la fase 1.
+
+**Timing**: `exact` para la tanda de WhatsApp (09:52), las pasadas de envío (11:30 y 16:00) y el resumen (18:50); `flexible` (±15 min) para el resto. Feriados: el script lee `schedule.holidays_calendar` y sale sin hacer nada.
 
 ### 7.2 Aprobaciones (canal de control endurecido)
 
@@ -227,25 +276,27 @@ Una sola tabla `approvals` para tandas de WhatsApp, respuestas a leads, secuenci
 
 1. `request_approval(kind, ref_id, approver)` crea la fila con un `token` corto y único y encola la notificación. El asunto lleva `[SDR A-7f3k]` (slug y token).
 2. El aprobador responde en el hilo: `OK`, `OK 1,3`, `NO`, `N: texto`, `YO`.
-3. El monitoreo de casillas acepta la respuesta sólo si: el `From` es la dirección exacta del aprobador registrado, SPF o DKIM alineados con su dominio, y el asunto trae el token de una aprobación `pending`. Si no, la ignora y levanta `approval_rejected_sender` (info).
+3. El monitoreo de casillas (cada 15 minutos en horario hábil, por Gmail API) acepta la respuesta sólo si: el `From` es la dirección exacta del aprobador registrado, SPF o DKIM alineados con su dominio, y el asunto trae el token de una aprobación `pending`. Si no, la ignora y levanta `approval_rejected_sender` (info).
 4. La IA interpreta el texto → JSON (`decision`, `items`, `new_text`) → `decide_approval(token, parsed, raw)`. Una aprobación se decide una sola vez; respuestas posteriores al mismo token se registran pero no cambian nada.
 5. Los efectos (`approve_batch`, `decide_batch_item`, `decide_reply`) los dispara la RPC, no el script.
 
-Fase 2: la misma tabla alimenta una página de aprobación (magic link al aprobador) con los mismos tokens. El mail sigue existiendo como canal alternativo.
+Fase 2: la misma tabla alimenta una página de aprobación (magic link al aprobador) con los mismos tokens, y el push de Gmail dispara la routine por webhook al llegar la respuesta. El mail sigue existiendo como canal alternativo.
 
 ### 7.3 Lectura de casillas y respuestas
 
-- IMAP por casilla, desde `last_checked_at`. Un mail cuenta como respuesta si `In-Reply-To` o `References` matchea un `Message-ID` del `send_ledger`, o si el remitente es un contacto con enrollment vivo. Remitentes de `internal_domains` y notificaciones automáticas se descartan.
-- `record_reply` es idempotente por `(client_id, channel, external_ref = Message-ID)`.
+- Lectura por Gmail API (o Graph) de cada casilla, por `historyId` desde `last_checked_at`, cada 15 minutos en horario hábil (bot `handoff-desk`, sin navegador). Un mail cuenta como respuesta si `In-Reply-To` o `References` matchea un `Message-ID` del `send_ledger`, o si el remitente es un contacto con enrollment vivo. Remitentes de `internal_domains` y notificaciones automáticas se descartan.
+- `record_reply` es idempotente por `(client_id, channel, external_ref = id del mensaje en el proveedor)`; el `Message-ID` se guarda aparte para el cruce de hilos.
 - Clasificación por IA → JSON → `classify_reply` dispara los efectos de la tabla 7.4 del documento, con un cambio: **confianza < umbral → tarea `review_reply` para un operador de Biguá**, no para el cliente. El cliente sólo recibe lo que ya es caliente o tibio.
 - Rebote duro → `do_not_contact` del tenant (scope email) y, si es un dominio inexistente, global (`bounce_hard`).
 
 ### 7.4 WhatsApp
 
-Igual al 8.5 del documento, con tres precisiones:
+Igual al 8.5 del documento, con cuatro precisiones:
+
+- Un solo bot, `whatsapp`, es dueño de la sesión de WhatsApp Web: lee a las 09:52, arma la tanda y envía en las dos pasadas. Ningún otro bot abre ese Chrome. Lo mismo vale para `linkedin` con Sales Navigator y Dripify. Dos bots en la misma sesión se pisan (`06` A2).
 
 - `wa_candidates` sólo devuelve contactos con `phone_reaches_person = true` y `whatsapp_basis` compatible con `channels.whatsapp.first_touch_allowed`. Por defecto, sólo seguimientos de gente que ya respondió por otro canal o que dio su número.
-- El navegador verifica, antes de cada envío, que el chat abierto corresponde al número y que el texto es el aprobado (hash del `body`). Si no coincide, `failed` y alerta.
+- El navegador verifica, antes de cada envío, que el chat abierto corresponde al número y que el texto es el aprobado. Lo hace por lectura visual (captura y comparación), no por DOM: es más lento, y por eso el volumen arranca en 10 por día. Si no coincide, `failed` y alerta.
 - Si WhatsApp Web pide QR: `seat_restricted`, tarea `login_2fa` al dueño de la línea, y los ítems aprobados quedan para la próxima pasada o para envío manual con `mark_item_sent(sent_by = human)`.
 
 ### 7.5 Resúmenes
@@ -255,16 +306,20 @@ Igual al 8.5 del documento, con tres precisiones:
 
 ## 8. Versionado y despliegue de la plantilla
 
-- El repo es la fuente de verdad. Estructura propuesta: `scripts/` (port de PasQAlito), `skills/<bot>/SKILL.md` (prompts como archivos), `routines/<bot>.yaml` (horario por defecto y script que invoca), `supabase/migrations/`, `schemas/` (JSON de salidas de IA y del manifiesto), `playbooks/`, `tests/`.
+- El repo es la fuente de verdad. Estructura propuesta: `scripts/` (port de PasQAlito, con el módulo de mail por API), `bin/` (instalador idempotente, `run.sh`, heartbeat), `skills/<slug>/SKILL.md` (los skills que el instalador copia a `/home/box/agent-data/workflows/<slug>/SKILL.md`, la biblioteca compartida por los bots de la cuenta), `routines/<bot>/<routine>.md` (el prompt exacto de cada routine, con su cron y su timing), `supabase/migrations/`, `schemas/` (JSON de salidas de IA y del manifiesto), `playbooks/`, `tests/`.
 - Versión semántica por tag. Cada corrida y cada mensaje graban `template_version = tag`.
 - **Tenant canario** (Biguá sobre sí misma, o un tenant interno) recibe el tag primero. Los demás, por checklist de release: cambiar `SCRIPTS_TAG`, correr la routine de mantenimiento, chequeo de sesiones, corrida en seco.
-- Lo que vive en la cuenta de Grok Bot (bots, routines) se mantiene mínimo y estable: el bot sabe qué skill cargar y qué script correr; el contenido viene del repo. Así, la mayoría de los releases no tocan Grok Bot.
+- Lo que vive en la cuenta de Grok Bot (bots, routines) se mantiene mínimo y estable: el prompt de cada routine dice qué skill seguir y qué comando correr; el contenido viene del repo. Así, la mayoría de los releases no tocan Grok Bot.
+- Las plantillas son por bot (siete) y viven en un equipo de Grok Bot de Biguá para que sean privadas. No exportan secretos ni el conector MCP de ASCI; el checklist de alta los agrega. Un release de plantilla (cambio de prompt de routine o de perfil de bot) se publica como versión nueva de la plantilla y se reimporta por tenant; es la operación que más conviene evitar, y por eso los prompts son cortos.
 
 ## 9. Observabilidad y alertas
 
 | Señal | Fuente | Severidad | A quién |
 |---|---|---|---|
-| Box sin heartbeat 30 min en horario hábil | pg_cron sobre `boxes` | crítica | Biguá |
+| Box sin heartbeat 30 min en horario hábil (el heartbeat corre cada 15) | pg_cron sobre `boxes` | crítica | Biguá |
+| Dependencias del box ausentes tras "Update Bot's Computer" | heartbeat | warn; el instalador las repone | Biguá |
+| Corrida bloqueada por la revisión automática de Grok Bot (`run_blocked`) | script | crítica | Biguá |
+| RAM del box por encima del 85 % | heartbeat | warn | Biguá |
 | Sesión vencida (WhatsApp, LinkedIn, Dripify) o clave ASCI a vencer en 14 días | chequeo 07:30 | crítica / warn | Dueño de la sesión + Biguá |
 | Corrida con error o colgada | `run_log` | crítica | Biguá |
 | Casilla pausada por rebotes (> 5 % a 7 días) | rollup 02:00 | crítica | Biguá + cliente |
@@ -275,7 +330,7 @@ Igual al 8.5 del documento, con tres precisiones:
 
 Salida: el notificador manda cada alerta crítica en el momento por el canal de cada persona (`members.notify_via`) y deja el resto para el resumen. Todas quedan en `notifications`.
 
-SLOs de operación propuestos para arrancar: routines a horario ≥ 98 % de los días hábiles; urgentes ruteados al cliente en < 15 min desde la lectura; cero envíos a `do_not_contact` (se mide con el trigger `dnc_blocked`).
+SLOs de operación propuestos para arrancar: routines a horario ≥ 98 % de los días hábiles; urgentes ruteados al cliente en < 30 min desde que llega el mail (lectura cada 15 min más procesamiento); cero envíos a `do_not_contact` (se mide con el trigger `dnc_blocked`).
 
 ## 10. Cumplimiento y datos
 
