@@ -10,8 +10,9 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [02-arquitectura.md](02-arquitectura.md) | Arquitectura objetivo: plano de control y plano de ejecución, identidad y secretos por tenant, integración con ASCI (rol, reveal, uso, playbook de señales), contratos de routines, aprobaciones, observabilidad, cumplimiento, decisión RPC vs MCP, qué cambia con la escala |
 | [03-onboarding-y-prerrequisitos.md](03-onboarding-y-prerrequisitos.md) | Qué entrega el cliente, qué construye y decide Biguá, runbook de alta y baja, plan por fases y decisiones pendientes |
 | [04-rol-sdr-bot-asci.md](04-rol-sdr-bot-asci.md) | Especificación del rol `sdr_bot` en ASCI: definición, tools permitidas, presupuesto, alta y rotación, tools nuevas propuestas, borrador de migración y pruebas |
+| [05-preguntas-grokbot.md](05-preguntas-grokbot.md) | Preguntas a Grok Bot para cerrar el diseño: cuentas, box, routines, bots y plantilla, conectores y secretos, datos y cumplimiento, operación; cada una con prioridad, supuesto actual y plan B |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
-Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → manifiesto.
+Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → preguntas a Grok Bot → manifiesto.
 
 Estado: diseño. No hay implementación en este repositorio todavía.
