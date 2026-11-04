@@ -92,3 +92,16 @@ dialog h2 { margin-top: 0; }
   td { border: 0; padding: 4px 12px; }
   tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
 }
+.domain { margin: 14px 0; }
+.domain-name { margin: 0; font-size: 1.15rem; }
+.dns-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+.dns-part { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.record { font-family: ui-monospace, Menlo, monospace; font-size: .8rem; background: var(--muted-bg); padding: 8px 10px;
+  border-radius: 6px; white-space: pre-wrap; word-break: break-all; margin: 8px 0; }
+.checks { list-style: none; padding: 0; margin: 8px 0 0; font-size: .88rem; }
+.checks li { display: flex; gap: 8px; margin: 5px 0; }
+.c-icon { font-weight: 700; width: 1em; flex: none; }
+.c-ok .c-icon { color: var(--ok); }
+.c-warn .c-icon { color: var(--warn); }
+.c-error .c-icon { color: var(--danger); }
+.selectors { margin-top: 12px; }

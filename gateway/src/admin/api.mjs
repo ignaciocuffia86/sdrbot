@@ -12,7 +12,8 @@ import Ajv from 'ajv';
 import { asOwner, asRole } from '../store.mjs';
 import { aadFor, decryptSecret, encryptSecret, newToken } from '../crypto.mjs';
 import { errors, GatewayError } from '../errors.mjs';
-import { withImap, listFolders } from '../mail/imap.mjs';
+import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/imap.mjs';
+import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import {
@@ -79,6 +80,11 @@ const V = {
     properties: { password: { type: 'string', minLength: 1, maxLength: 500 } } }),
   mailboxStatus: validator({ type: 'object', required: ['status'], additionalProperties: false,
     properties: { status: { enum: ['active', 'paused'] } } }),
+  domainCheck: validator({ type: 'object', additionalProperties: false,
+    properties: { domain: { type: 'string', maxLength: 253 } } }),
+  selectors: validator({ type: 'object', required: ['selectors'], additionalProperties: false,
+    properties: { selectors: { type: 'array', maxItems: 10, uniqueItems: true,
+      items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$' } } } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
       scopes: { type: 'array', items: { enum: SCOPES }, minItems: 1, uniqueItems: true },
@@ -417,6 +423,109 @@ route('POST', '/clients/:client/tokens/:id/revoke', async ({ user, params }) => 
     if (!rowCount) throw notFound('No hay un token activo con ese id en este cliente.');
     await audit(c, user, params.client, 'admin.token.revoke', { token_id: params.id });
     return {};
+  });
+});
+
+// ----- dominios: SPF, DKIM, DMARC y MX
+
+// Las pruebas reemplazan el DNS real por uno armado.
+let resolverOverride = null;
+export const useResolver = (r) => { resolverOverride = r; };
+
+const domainOf = (email) => email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+const sameDomain = (a, b) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+
+// Los dominios de un cliente son los de sus buzones, con lo guardado del último chequeo.
+async function domainsOf(c, clientId) {
+  const exists = await c.query(`select 1 from mailgw.client where id = $1`, [clientId]);
+  if (!exists.rowCount) throw notFound('No existe ese cliente.');
+  const accounts = (await c.query(`select ${MAILBOX_COLS}, secret_enc from mailgw.account where client_id = $1 order by email`, [clientId])).rows;
+  const saved = (await c.query(
+    `select domain, dkim_selectors, status, result, checked_at from mailgw.domain_check where client_id = $1`, [clientId])).rows;
+  const byDomain = new Map();
+  for (const a of accounts) {
+    const dom = domainOf(a.email);
+    if (!byDomain.has(dom)) byDomain.set(dom, { domain: dom, accounts: [], dkim_selectors: [], status: null, result: null, checked_at: null });
+    byDomain.get(dom).accounts.push(a);
+  }
+  for (const r of saved) if (byDomain.has(r.domain)) Object.assign(byDomain.get(r.domain), r);
+  return [...byDomain.values()];
+}
+
+const publicDomain = ({ accounts, ...d }) => ({ ...d, mailboxes: accounts.map((a) => a.email) });
+
+// Busca firmas DKIM en los últimos mails del propio dominio (bandeja de entrada y enviados)
+// de hasta dos buzones. Es la única forma de saber el selector real: DKIM no se lista por DNS.
+// Sólo lectura, con tope de tiempo; si un buzón no conecta se sigue sin él.
+async function scanSignatures(domain, accounts) {
+  const usable = accounts.filter((a) => a.status !== 'auth_error').slice(0, 2);
+  const aligned = new Set();
+  const foreign = new Set();
+  let scanned = false;
+  await Promise.all(usable.map(async (a) => {
+    const work = (async () => {
+      const password = decryptSecret(a.secret_enc, aadFor(a.client_id, a.email));
+      await withImap(a, password, async (cl) => {
+        const blocks = await recentHeaders(cl, 'INBOX', 30, ['from', 'dkim-signature']);
+        const sent = await specialFolder(cl, '\\Sent', a.sent_folder).catch(() => null);
+        if (sent) blocks.push(...await recentHeaders(cl, sent, 10, ['from', 'dkim-signature']));
+        scanned = true;
+        for (const h of blocks) {
+          const from = /^from:.*?@([a-z0-9.-]+)/im.exec(h.replace(/\r?\n[ \t]+/g, ' '))?.[1]?.toLowerCase();
+          if (!from || !sameDomain(from, domain)) continue;
+          const sig = signaturesFromHeaders(h, domain);
+          sig.aligned.forEach((x) => aligned.add(x));
+          sig.foreign.forEach((x) => foreign.add(x));
+        }
+      });
+    })();
+    await Promise.race([work, new Promise((r) => { setTimeout(r, 20_000).unref?.(); })]).catch(() => {});
+  }));
+  return { detected: [...aligned], foreign: [...foreign], scanned };
+}
+
+route('GET', '/clients/:client/domains', async ({ user, params }) => scoped(user, params.client, async (c) => ({
+  domains: (await domainsOf(c, params.client)).map(publicDomain),
+})));
+
+route('POST', '/clients/:client/domains/check', async ({ user, params, body }) => {
+  const b = V.domainCheck(body);
+  const all = await scoped(user, params.client, (c) => domainsOf(c, params.client));
+  const targets = b.domain ? all.filter((d) => d.domain === b.domain.toLowerCase()) : all;
+  if (b.domain && !targets.length) throw notFound('Ese dominio no es de ningún buzón de este cliente.');
+  const resolver = resolverOverride ?? systemResolver();
+  const results = await Promise.all(targets.map(async (d) => {
+    const sig = await scanSignatures(d.domain, d.accounts);
+    const smtpTargets = [...new Set(d.accounts.map((a) => a.smtp_host))].map((host) => ({ host }));
+    const result = await checkDomain(d.domain, { resolver, smtpTargets, selectors: d.dkim_selectors, ...sig });
+    return { ...d, status: result.status, result, checked_at: new Date().toISOString() };
+  }));
+  await scoped(user, params.client, async (c) => {
+    for (const r of results) {
+      await c.query(
+        `insert into mailgw.domain_check (client_id, domain, status, result, checked_at) values ($1, $2, $3, $4, now())
+         on conflict (client_id, domain) do update set status = excluded.status, result = excluded.result, checked_at = now()`,
+        [params.client, r.domain, r.status, JSON.stringify(r.result)]);
+    }
+    await audit(c, user, params.client, 'admin.domain.check',
+      { domains: Object.fromEntries(results.map((r) => [r.domain, r.status])) });
+  });
+  return { domains: results.map(publicDomain) };
+});
+
+route('PUT', '/clients/:client/domains/:domain/selectors', async ({ user, params, body }) => {
+  const b = V.selectors(body);
+  const domain = params.domain.toLowerCase();
+  return scoped(user, params.client, async (c) => {
+    const all = await domainsOf(c, params.client);
+    if (!all.some((d) => d.domain === domain)) throw notFound('Ese dominio no es de ningún buzón de este cliente.');
+    const selectors = b.selectors.map((x) => x.toLowerCase());
+    await c.query(
+      `insert into mailgw.domain_check (client_id, domain, dkim_selectors) values ($1, $2, $3)
+       on conflict (client_id, domain) do update set dkim_selectors = excluded.dkim_selectors`,
+      [params.client, domain, selectors]);
+    await audit(c, user, params.client, 'admin.domain.selectors', { domain, selectors });
+    return { dkim_selectors: selectors };
   });
 });
 

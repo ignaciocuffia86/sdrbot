@@ -111,9 +111,10 @@ La base de control todavía no está construida, así que el piloto usa el propi
 | 3 | Migración del esquema `mailgw` | Biguá | Hecho el 04/11: siete tablas con seguridad por filas, sin acceso para `anon` ni `authenticated` |
 | 3b | `add-client` del cliente piloto | Biguá | Hecho el 04/11: cliente `bairesqa` (BairesQA) |
 | 3c | Panel `https://sdrbot.bigua.lat/admin` (migración `003_admin_web`) y primer operador de Biguá | Biguá | Hecho el 04/11 |
-| 3d | Usuario del cliente en el panel (`client_admin` de `bairesqa`), si va a cargar él sus buzones | Biguá | Opcional |
+| 3d | Pestaña «Dominios»: SPF, DKIM, DMARC y MX de cada dominio del cliente (migración `004_dominios`) | Biguá | Hecho el 04/11 |
+| 3e | Usuario del cliente en el panel (`client_admin` de `bairesqa`), si va a cargar él sus buzones | Biguá | Opcional |
 | 4 | Recibir del cliente los ítems de §5 | Cliente | Pendiente |
-| 5 | Alta de cada buzón y «Probar» en el panel `/admin` (lo hace el cliente con su usuario, o Biguá en videollamada) | Biguá + cliente | Pendiente |
+| 5 | Alta de cada buzón, «Probar» y «Verificar» el dominio en el panel `/admin` (lo hace el cliente con su usuario, o Biguá en videollamada) | Biguá + cliente | Pendiente |
 | 6 | Token con `read,draft,manage` desde la pestaña «Tokens de Grok Bot» del panel; cargarlo en la cuenta de Grok Bot como conector MCP y como secreto `MAILGW_TOKEN` | Biguá | Pendiente |
 | 7 | Routine de monitoreo con el prompt de §6; una semana sólo con borradores | Biguá | Pendiente |
 | 8 | Token con `send` para los primeros toques, con el cupo fijado según §5.5 | Biguá + cliente | Después de aprobar los textos |

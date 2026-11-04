@@ -30,6 +30,7 @@ id vmail >/dev/null 2>&1 || useradd -r -M -s /usr/sbin/nologin vmail
 cat > "$T/users" <<USERS
 ana@cliente.test:{PLAIN}clave-ana-1
 beto@cliente.test:{PLAIN}clave-beto-2
+carla@cliente.test:{PLAIN}clave-carla-3
 USERS
 chown -R vmail:vmail "$T/mail"
 cat > "$T/dovecot.conf" <<CONF

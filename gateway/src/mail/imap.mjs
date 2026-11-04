@@ -96,6 +96,23 @@ export async function specialFolder(client, use, configured, { create = false } 
   return created.path;
 }
 
+// Cabeceras pedidas de los últimos n mensajes de una carpeta, en crudo. Sólo lectura: no
+// marca nada como leído.
+export async function recentHeaders(client, folder, n, fields) {
+  const lock = await lockFolder(client, folder, true);
+  try {
+    const exists = client.mailbox?.exists ?? 0;
+    if (!exists) return [];
+    const out = [];
+    for await (const msg of client.fetch(`${Math.max(1, exists - n + 1)}:*`, { headers: fields })) {
+      if (msg.headers) out.push(msg.headers.toString('utf8'));
+    }
+    return out;
+  } finally {
+    lock.release();
+  }
+}
+
 async function lockFolder(client, folder, readOnly) {
   try {
     return await client.getMailboxLock(folder, { readOnly });

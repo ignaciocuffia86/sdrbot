@@ -94,6 +94,19 @@ Donde se cargan clientes, buzones (servidor y puerto IMAP y SMTP, seguridad, usu
 - **CSP estricta** (`default-src 'none'`, scripts y estilos sólo propios, sin marcos), sin dependencias de terceros. Todo lo que viene del servidor se inserta como texto.
 - **Auditoría:** cada acción del panel queda en `mailgw.audit_log` con `actor_user_id`.
 
+### Dominios: SPF, DKIM, DMARC y MX
+
+Pestaña «Dominios» de cada cliente (la ven los dos roles). Los dominios salen de los buzones; «Verificar» consulta el DNS y guarda el resultado en `mailgw.domain_check` (migración `004_dominios`). No cambia nada en el DNS del cliente.
+
+| | Qué mira |
+|---|---|
+| SPF | Que haya uno solo; que termine en `~all` o `-all` (`+all` es error); las consultas DNS de todo el árbol de `include` y `redirect` contra el límite de 10; include rotos; y si autoriza la IP del servidor SMTP del buzón (evaluación de RFC 7208 sin macros) |
+| DKIM | Los selectores no se pueden listar por DNS, así que prueba tres fuentes: el selector real, sacado de la cabecera `DKIM-Signature` de los últimos mails del propio dominio en la bandeja y en enviados (sólo lectura, hasta dos buzones); los que cargue el cliente; y 20 habituales. Por cada clave: revocada, ilegible, RSA menor a 1024 (error) o a 2048 (aviso). Avisa si los mails los firma otro dominio (no cuenta para DMARC) |
+| DMARC | Que exista (si no, el del dominio padre), uno solo, con política válida; `p=none` es aviso; sin `rua` es aviso; `pct` menor a 100 |
+| MX | Que el dominio reciba correo: si no, las respuestas de los prospectos no llegan |
+
+Un DNS que no responde da aviso de reintentar, nunca "no configurado".
+
 El primer operador se crea con la CLI, que imprime su enlace de activación:
 
 ```bash
@@ -151,7 +164,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 57 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) y la protección contra SSRF. Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 70 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) la protección contra SSRF y el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

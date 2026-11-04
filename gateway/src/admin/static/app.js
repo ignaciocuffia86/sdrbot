@@ -235,7 +235,7 @@ function newClientDialog() {
 async function renderClient(clientId, tab) {
   const data = await api('GET', `/clients/${enc(clientId)}`);
   const bigua = data.can_manage_access;
-  const tabs = [['buzones', 'Buzones'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
+  const tabs = [['buzones', 'Buzones'], ['dominios', 'Dominios'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
   if (!tabs.some(([k]) => k === tab)) tab = 'buzones';
   const base = `#/c/${enc(clientId)}`;
   const body = h('div');
@@ -249,6 +249,7 @@ async function renderClient(clientId, tab) {
   if (tab === 'buzones') body.append(mailboxesView(data, reload));
   if (tab === 'usuarios') body.append(usersView(data, reload));
   if (tab === 'tokens') body.append(tokensView(data, reload));
+  if (tab === 'dominios') body.append(await domainsView(clientId, reload));
   if (tab === 'actividad') body.append(await activityView(clientId));
 }
 
@@ -489,6 +490,76 @@ function tokensView(data, reload) {
       : h('div', { class: 'card empty' }, 'Sin tokens todavía.'));
 }
 
+// ----- dominios
+
+const LEVEL = { ok: ['bien', 'b-ok'], warn: ['revisar', 'b-warn'], error: ['mal', 'b-err'] };
+const levelBadge = (s) => {
+  const [label, cls] = LEVEL[s] ?? ['sin verificar', 'b-mute'];
+  return h('span', { class: `badge ${cls}` }, label);
+};
+const ICON = { ok: '✓', warn: '!', error: '✕' };
+
+function checkList(checks) {
+  return h('ul', { class: 'checks' }, (checks ?? []).map((c) => h('li', { class: `c-${c.level}` },
+    h('span', { class: 'c-icon', 'aria-hidden': 'true' }, ICON[c.level]), h('span', {}, c.text))));
+}
+
+function section(title, part, extra) {
+  if (!part) return null;
+  return h('div', { class: 'dns-part' },
+    h('div', { class: 'row spread' }, h('strong', {}, title), levelBadge(part.status)),
+    part.record ? h('pre', { class: 'record' }, part.record) : null,
+    extra ?? null,
+    checkList(part.checks));
+}
+
+function domainCard(clientId, d, reload) {
+  const r = d.result;
+  const selInput = h('input', { value: (d.dkim_selectors ?? []).join(', '), placeholder: 'ej.: default, selector1' });
+  const saveSel = h('button', { class: 'sm', type: 'button', onclick: async (ev) => {
+    const selectors = selInput.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+    const ok = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/domains/${enc(d.domain)}/selectors`, { selectors }));
+    if (ok) toast('Selectores guardados. Verificá de nuevo para usarlos.');
+  } }, 'Guardar');
+  const recheck = h('button', { class: 'sm', type: 'button', onclick: async (ev) => {
+    ev.currentTarget.textContent = 'Verificando…';
+    const ok = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/domains/check`, { domain: d.domain }));
+    if (ok) reload();
+  } }, 'Verificar');
+  const dkimSelectors = r?.dkim?.selectors?.length
+    ? h('div', { class: 'small muted' }, 'Selectores probados: ', r.dkim.selectors.map((s) => `${s.selector} (${s.source}${s.found ? '' : ', no existe'})`).join(' · '))
+    : null;
+  return h('div', { class: 'card domain' },
+    h('div', { class: 'row spread' },
+      h('div', {}, h('h2', { class: 'domain-name' }, d.domain),
+        h('div', { class: 'small muted' }, `${d.mailboxes.length} buzón(es) · ${d.checked_at ? `verificado ${fmtDate(d.checked_at)}` : 'sin verificar'}`)),
+      h('div', { class: 'row' }, levelBadge(d.status), recheck)),
+    r?.checks?.length ? checkList(r.checks) : null,
+    r && r.resolvable !== false ? h('div', { class: 'dns-grid' },
+      section('SPF', r.spf),
+      section('DKIM', r.dkim, dkimSelectors),
+      section('DMARC', r.dmarc),
+      section('MX', r.mx ? { ...r.mx, record: r.mx.records?.join('\n') || null } : null))
+      : r ? null : h('p', { class: 'muted' }, 'Todavía no se verificó. «Verificar» consulta el DNS y busca la firma DKIM en los últimos mails del buzón.'),
+    h('div', { class: 'selectors' },
+      h('label', {}, 'Selectores DKIM propios (si el proveedor usa uno que no se detecta solo)'),
+      h('div', { class: 'secret' }, selInput, saveSel)));
+}
+
+async function domainsView(clientId, reload) {
+  const { domains } = await api('GET', `/clients/${enc(clientId)}/domains`);
+  if (!domains.length) return h('div', { class: 'card empty' }, 'Los dominios salen de los buzones: cargá un buzón primero.');
+  const all = h('button', { class: 'primary', onclick: async (ev) => {
+    ev.currentTarget.textContent = 'Verificando…';
+    const ok = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/domains/check`, {}));
+    if (ok) reload();
+  } }, domains.length > 1 ? 'Verificar todos' : 'Verificar');
+  return h('div', {},
+    h('div', { class: 'row spread' }, h('p', { class: 'muted small' },
+      'SPF, DKIM y DMARC deciden si los mails del bot llegan a la bandeja o a spam. Se consultan por DNS; nada se cambia.'), all),
+    domains.map((d) => domainCard(clientId, d, reload)));
+}
+
 // ----- actividad
 
 const OPS = {
@@ -496,6 +567,7 @@ const OPS = {
   'admin.mailbox.check': 'prueba de conexión', 'admin.mailbox.pause': 'pausa', 'admin.mailbox.activate': 'reactivación',
   'admin.mailbox.delete': 'baja de buzón', 'admin.client.create': 'alta del cliente', 'admin.user.create': 'alta de usuario',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
+  'admin.domain.check': 'verificación de dominio', 'admin.domain.selectors': 'selectores DKIM',
 };
 
 async function activityView(clientId) {
@@ -505,7 +577,7 @@ async function activityView(clientId) {
     h('tbody', {}, activity.map((a) => h('tr', {},
       h('td', { class: 'small' }, fmtDate(a.at)),
       h('td', {}, OPS[a.op] ?? a.op),
-      h('td', { class: 'small' }, a.mailbox ?? a.detail?.mailbox ?? '—'),
+      h('td', { class: 'small' }, a.mailbox ?? a.detail?.mailbox ?? a.detail?.domain ?? (a.detail?.domains ? Object.keys(a.detail.domains).join(', ') : '—')),
       h('td', { class: 'small' }, a.actor ?? 'bot'),
       h('td', {}, a.ok ? h('span', { class: 'badge b-ok' }, 'ok') : h('span', { class: 'badge b-err' }, a.error_code ?? 'error'))))));
 }
