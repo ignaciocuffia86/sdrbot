@@ -101,13 +101,14 @@ números no cierran.
 | `cuenta.investigada`, `cuenta.excluida` | `prospector` | Sí (la exclusión, con su motivo) |
 | `prospecto.revelado` | `prospector` | Sí |
 | `mail.enviado`, `mail.rebotado` | Gateway | Sí |
-| `linkedin.cargado` (en una campaña de Dripify) | `linkedin` | Sí |
+| `linkedin.cargado` (en una campaña de Dripify) | `dripify.cargar`, al confirmar la carga | Sí |
 | `linkedin.invitacion`, `linkedin.conexion`, `linkedin.mensaje` | Gateway, por webhook de Dripify (§3.3.1) | Sí |
+| `linkedin.pausado`, `linkedin.bloqueado` | `dripify.pausar` / `dripify.bloquear` | Sí |
 | `whatsapp.enviado` | `whatsapp` | Sí |
 | `respuesta` (canal, clasificación) | Gateway o el bot del canal + `seguimiento` | Sí |
 | `positivo`, `crm.cargado`, `baja` | `seguimiento` | Sí |
-| `aprobacion` | `orquestador` | Sí |
 | `pedido` (entre bots), `decision` | Cada bot | **No** (interno) |
+| `aprobacion.pedida`, `aprobacion.decidida` | El bot que la necesita / el `orquestador` | La decidida, sí |
 | `aviso.cliente` | `seguimiento` u `orquestador` | Sí: es lo que se le notifica |
 
 #### 3.3.1 Webhooks de Dripify
@@ -119,10 +120,18 @@ Dripify ofrece webhooks **por campaña** (pantalla Settings de cada campaña):
 | After a connection request is sent | `linkedin.invitacion` | Cuenta para el dashboard |
 | After a connection request is accepted | `linkedin.conexion` | Cuenta; avisa a `seguimiento` (puede decidir un mail de apoyo) |
 | After a first message is sent | `linkedin.mensaje` | Cuenta |
-| After a LinkedIn reply is received | `respuesta` (canal LinkedIn) | Despierta a `seguimiento`: clasifica y, si respondió, pide a `linkedin` sacarlo de las otras secuencias |
+| After a LinkedIn reply is received | `respuesta` (canal LinkedIn) | Despierta a `seguimiento`, que **lee la conversación completa por `dripify.conversacion`**: el webhook es disparador, no fuente de verdad |
 
-- La lista de Dripify tiene más opciones abajo de las cuatro que se ven: revisarlas al
-  configurar.
+- **El webhook de respuesta se dispara sólo con la primera respuesta** del lead en la campaña
+  (`12`, Dripify §3). Las siguientes las encuentra la pasada periódica de `seguimiento` sobre las
+  conversaciones activas, por la API.
+- **Aceptar la invitación no es interés:** `linkedin.conexion` cuenta para el dashboard y nada más.
+- El cuerpo trae 22 campos (nombre, email, teléfono, URL de LinkedIn, puesto, empresa, web,
+  industria, dotación, campaña…) y, en el de respuesta, la conversación. Dripify no publica un
+  ejemplo del JSON: el gateway guarda el cuerpo crudo y la traducción a eventos se ajusta con el
+  primer evento real.
+- La lista de disparadores tiene más opciones que estas cuatro; el de «primera respuesta del
+  lead» está deprecado.
 - Como es **por campaña**, al crear una campaña nueva hay que cargarle los cuatro webhooks. Es un
   paso del alta y del checklist de cada campaña nueva. El `orquestador` avisa si una campaña que
   aparece en los ajustes del cliente no está mandando eventos.
@@ -142,6 +151,8 @@ En el mismo MCP que el gateway (`sdrbot.bigua.lat/mcp`), mismo token del cliente
 | `registro.evento` | Agrega un evento (de los tipos de §3.3) |
 | `registro.agenda` | Los prospectos con próximo paso hoy, por canal: el día del `orquestador` |
 | `registro.historia` | La línea de tiempo de un prospecto |
+| `registro.pedir` / `registro.pendientes` | Pedidos entre bots: el pedido queda acá y el mensaje entre bots sólo despierta (`09` §4.3) |
+| `registro.pedir_aprobacion` / `registro.aprobar` | Aprobaciones como datos: las pide un bot, las decide el operador en el chat del `orquestador` (`09` §5.4) |
 
 ## 4. Qué va al CRM y cuándo
 
@@ -228,7 +239,7 @@ límites.
 
 | Opción | A favor | En contra |
 |---|---|---|
-| Conector nativo o MCP oficial de cada CRM en Grok | Nada que construir; acceso completo | Con acceso completo el bot puede borrar o pisar datos del cliente; las reglas de los bots cambian por cliente; Dynamics 365 no tiene un MCP remoto que Grok pueda conectar con cabecera fija **(verificar)** |
+| Conector nativo o MCP oficial de cada CRM en Grok | Nada que construir; acceso completo | Con acceso completo el bot puede borrar o pisar datos del cliente; las reglas de los bots cambian por cliente; el catálogo de Grok tiene HubSpot y Dataverse (donde vive Dynamics 365 Sales), con OAuth y sin los límites que necesita el SDR (`12`, 3.1) |
 | **`crm.*` en el MCP de Biguá** | Los límites de §6.2 son duros; las reglas de los bots son las mismas con cualquier CRM; auditoría en el registro; credenciales cifradas como las de buzones | Código nuestro, un adaptador por CRM |
 
 En Dynamics 365 hay además una baranda del lado del cliente: el usuario de aplicación tiene un
@@ -278,7 +289,7 @@ cliente que los buzones: un cliente no ve nada de otro.
 | **Positivos** | Lista con la respuesta, la fecha y el enlace al registro en su CRM |
 | **Línea de tiempo por cuenta** | Los eventos visibles (§3.3): qué se le mandó a quién, cuándo y qué contestó |
 | **Avisos** | Bajas de personas que estaban en su CRM, cuentas excluidas por estar en su CRM, y lo que haga falta avisar |
-| **Salud** | Estado de los buzones y del dominio (lo que ya muestra el panel), sesiones de LinkedIn y WhatsApp |
+| **Salud** | Estado de los buzones y del dominio (lo que ya muestra el panel), la conexión con Dripify (API key y cupo del día) y la sesión de WhatsApp |
 
 No se muestran las conversaciones entre bots ni sus decisiones internas: eso es para Biguá.
 
