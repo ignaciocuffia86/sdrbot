@@ -237,7 +237,7 @@ test('DMARC: registro sugerido para crear, subir la política y sumar reportes',
   const none = await checkDomain('a.test', { resolver: fakeDns({ ...base, TXT: { ...base.TXT, '_dmarc.a.test': ['v=DMARC1; p=none; rua=mailto:r@a.test; adkim=s'] } }) });
   const h = hintOf(none.dmarc, /p=none/);
   assert.equal(h.record.value, 'v=DMARC1; p=quarantine; rua=mailto:r@a.test; adkim=s');
-  assert.match(h.steps[0], /arreglar DKIM/, 'DKIM no está: primero eso');
+  assert.ok(h.steps.some((x) => /arreglar DKIM/.test(x)), 'DKIM no está: primero eso');
 
   const noRua = await checkDomain('a.test', { resolver: fakeDns({ ...base, TXT: { ...base.TXT, '_dmarc.a.test': ['v=DMARC1; p=reject'] } }) });
   assert.equal(hintOf(noRua.dmarc, /rua/).record.value, 'v=DMARC1; p=reject; rua=mailto:dmarc@a.test');
@@ -257,6 +257,43 @@ test('DKIM: pasos del proveedor, clave sin publicar y baja de un selector viejo'
   const baja = viejo.dkim.checks.find((c) => /default/.test(c.text));
   assert.equal(baja.level, 'warn', 'hay otra clave válida');
   assert.match(baja.hint.steps[0], /selector viejo/);
+});
+
+test('caso BairesQA: SPF bien, dos claves DKIM (2048 y 1024) y DMARC p=none sin reportes', async () => {
+  const r = await checkDomain('b.test', {
+    resolver: fakeDns({
+      TXT: {
+        'b.test': ['v=spf1 include:spf.hosting.test ~all'], 'spf.hosting.test': ['v=spf1 ip4:200.58.111.0/24 -all'],
+        '_dmarc.b.test': ['v=DMARC1; p=none'],
+        'mail._domainkey.b.test': [`v=DKIM1; k=rsa; p=${KEY2048}`], 'mx._domainkey.b.test': [`v=DKIM1; k=rsa; p=${KEY1024}`],
+      },
+      A: { 'c1.ferozo.test': ['200.58.111.88'] },
+      MX: { 'b.test': [{ priority: 10, exchange: 'mail.b.test' }] },
+    }),
+    smtpTargets: [{ host: 'c1.ferozo.test' }],
+  });
+  assert.equal(r.spf.status, 'ok');
+  assert.equal(r.dkim.valid, true);
+
+  // La clave corta: primero averiguar con cuál firma, no rotar a ciegas.
+  const corta = hintOf(r.dkim, /"mx".*1024/);
+  assert.match(corta.steps[0], /«mail» con 2048 bits/);
+  assert.ok(corta.steps.some((x) => /Mostrar original/.test(x)));
+
+  // DMARC: un solo camino. El de subir la política conserva los reportes, y no pide arreglar DKIM.
+  const subir = hintOf(r.dmarc, /p=none/);
+  const reportes = hintOf(r.dmarc, /rua/);
+  assert.equal(subir.record.value, 'v=DMARC1; p=quarantine; rua=mailto:dmarc@b.test');
+  assert.equal(reportes.record.value, 'v=DMARC1; p=none; rua=mailto:dmarc@b.test');
+  assert.match(subir.steps[0], /Primero sumar los reportes/);
+  assert.ok(subir.steps.some((x) => /SPF y DKIM están bien/.test(x)));
+  assert.ok(!subir.steps.some((x) => /arreglar DKIM/.test(x)));
+
+  // Si se sabe con cuál firma, el consejo es directo.
+  const firmaFuerte = await checkDomain('b.test', { resolver: fakeDns({ TXT: { 'mail._domainkey.b.test': [`p=${KEY2048}`], 'mx._domainkey.b.test': [`p=${KEY1024}`] }, MX: { 'b.test': [{ priority: 1, exchange: 'm.b.test' }] } }), detected: ['mail'] });
+  assert.match(hintOf(firmaFuerte.dkim, /"mx"/).steps[0], /no con «mx»: esta clave no se usa/);
+  const firmaCorta = await checkDomain('b.test', { resolver: fakeDns({ TXT: { 'mx._domainkey.b.test': [`p=${KEY1024}`] }, MX: { 'b.test': [{ priority: 1, exchange: 'm.b.test' }] } }), detected: ['mx'] });
+  assert.match(hintOf(firmaCorta.dkim, /"mx"/).steps[0], /firmados con «mx», así que conviene cambiarla/);
 });
 
 test('ningún aviso ni error sale sin qué hacer', async () => {

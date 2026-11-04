@@ -275,20 +275,23 @@ export const dmarcHints = {
       record: dmarcRec(at, serializeDmarc({ ...tags, v: 'DMARC1', p: 'none' })),
     };
   },
+  // El valor sugerido conserva las etiquetas del registro y suma rua si falta: así este
+  // consejo y el de los reportes no se pisan, se aplique el que se aplique último.
   monitorOnly(at, tags, { spfOk, dkimOk }) {
     const ready = spfOk && dkimOk;
-    return {
-      steps: [
-        ready
-          ? 'SPF y DKIM están bien: se puede subir la política.'
-          : `Antes de subirla, arreglar ${[!spfOk && 'SPF', !dkimOk && 'DKIM'].filter(Boolean).join(' y ')}: con «quarantine», los mails propios que fallen van a spam.`,
-        'Mirar los reportes (rua) de al menos dos semanas: todo lo que mande el dominio legítimamente tiene que pasar SPF o DKIM.',
-        PUBLISH(`_dmarc.${at}`),
-        'Cambiar «p=none» por «p=quarantine» (este valor). Unas semanas después, si los reportes siguen limpios, «p=reject».',
-        WAIT,
-      ],
-      record: dmarcRec(at, serializeDmarc({ ...tags, p: 'quarantine' })),
-    };
+    const steps = [];
+    if (!tags.rua) {
+      steps.push('Primero sumar los reportes (el aviso de «rua», acá abajo) y mirarlos de dos a cuatro semanas: sin reportes no hay forma de saber si subir la política deja afuera mails propios.');
+    } else {
+      steps.push('Mirar los reportes (rua) de al menos dos semanas: todo lo que mande el dominio legítimamente tiene que pasar SPF o DKIM.');
+    }
+    steps.push(ready
+      ? 'SPF y DKIM están bien, así que el dominio está listo para subirla cuando los reportes estén limpios.'
+      : `Antes de subirla, arreglar ${[!spfOk && 'SPF', !dkimOk && 'DKIM'].filter(Boolean).join(' y ')}: con «quarantine», los mails propios que fallen van a spam.`);
+    steps.push(PUBLISH(`_dmarc.${at}`),
+      `Cambiar «p=none» por «p=quarantine» (este valor${tags.rua ? '' : ', que ya incluye los reportes'}). Unas semanas después, si los reportes siguen limpios, «p=reject».`,
+      WAIT);
+    return { steps, record: dmarcRec(at, serializeDmarc({ ...tags, p: 'quarantine', rua: tags.rua ?? `mailto:dmarc@${at}` })) };
   },
   pct(at, tags) {
     const { pct: _p, ...rest } = tags;
@@ -302,7 +305,7 @@ export const dmarcHints = {
       steps: [
         'Crear un buzón o alias dmarc@ en el dominio, o usar la dirección de un servicio que resume los reportes (Postmark DMARC, dmarcian, Valimail Monitor).',
         PUBLISH(`_dmarc.${at}`),
-        'Agregar «rua=mailto:…» con esa dirección (este valor usa dmarc@ del dominio).',
+        `Agregar «rua=mailto:…» con esa dirección (este valor usa dmarc@${at}: la casilla tiene que existir, si no los reportes rebotan). La política queda como está.`,
         WAIT,
       ],
       record: dmarcRec(at, serializeDmarc({ ...tags, rua: `mailto:dmarc@${at}` })),
@@ -362,15 +365,37 @@ export const dkimHints = {
       ],
     };
   },
-  weakKey(domain, selector, provider) {
-    return {
-      steps: [
-        provider.dkimRotate,
-        'Lo seguro es publicar la clave nueva con un selector nuevo, pasar la firma a ese selector y recién unos días después borrar el viejo: así ningún mail en tránsito queda sin validar.',
-        WAIT,
-      ],
-      links: link(provider, 'dkim'),
-    };
+  // Una clave corta sólo importa si los mails firman con ella. Si hay otra fuerte publicada y
+  // no se sabe cuál usa el servidor, lo primero es averiguarlo: puede ser una clave vieja.
+  weakKey(domain, selector, provider, { strongOthers = [], detected = [] } = {}) {
+    const rotate = [
+      provider.dkimRotate,
+      'Lo seguro es publicar la clave nueva con un selector nuevo, pasar la firma a ese selector y recién unos días después borrar el viejo: así ningún mail en tránsito queda sin validar.',
+      WAIT,
+    ];
+    if (detected.includes(selector)) {
+      return { steps: [`Los mails del dominio salen firmados con «${selector}», así que conviene cambiarla:`, ...rotate], links: link(provider, 'dkim') };
+    }
+    if (detected.length) {
+      return {
+        steps: [
+          `Los mails salen firmados con ${detected.map((x) => `«${x}»`).join(', ')}, no con «${selector}»: esta clave no se usa.`,
+          `Se puede borrar el registro ${selector}._domainkey.${domain} del DNS (o dejarlo: no afecta la entrega).`,
+        ],
+      };
+    }
+    if (strongOthers.length) {
+      return {
+        steps: [
+          `También está publicada ${strongOthers.map((x) => `«${x}»`).join(', ')} con 2048 bits. Lo primero es saber con cuál firma el servidor: si no es con «${selector}», no hay nada que arreglar.`,
+          'Para saberlo: mandar un mail desde el buzón a una cuenta de Gmail, abrirlo, menú ⋮ → «Mostrar original». Arriba dice «DKIM: PASS con el dominio …», y en la cabecera DKIM-Signature el selector es lo que sigue a «s=».',
+          `Si firma con ${strongOthers.map((x) => `«${x}»`).join(' o ')}: «${selector}» es una clave vieja; se puede borrar ${selector}._domainkey o ignorar este aviso.`,
+          `Si firma con «${selector}»: ${provider.dkimRotate}`,
+        ],
+        links: link(provider, 'dkim'),
+      };
+    }
+    return { steps: rotate, links: link(provider, 'dkim') };
   },
   foreign(domain, foreign, provider) {
     return {

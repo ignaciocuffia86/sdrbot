@@ -351,6 +351,8 @@ async function checkDkim(d, domain, { configured = [], detected = [], foreign = 
   }));
   const found = results.filter((r) => r.found);
   const anyValid = found.some((r) => !r.error && !(r.type === 'rsa' && r.bits < 1024));
+  const strong = found.filter((r) => !r.error && (r.type !== 'rsa' || r.bits >= 2048)).map((r) => r.selector);
+  const weakContext = (sel) => ({ strongOthers: strong.filter((x) => x !== sel), detected });
   // Los comunes sólo se informan si existen; los cargados y detectados, siempre.
   const shown = results.filter((r) => r.found || r.source !== 'común');
   for (const r of shown) {
@@ -369,8 +371,8 @@ async function checkDkim(d, domain, { configured = [], detected = [], foreign = 
       const msg = `${label}: ${r.error}`;
       checks.push(anyValid ? warn(msg, dkimHints.revoked(domain, r.selector, provider, true)) : err(msg, dkimHints.revoked(domain, r.selector, provider, false)));
     } else if (r.error) checks.push(err(`${label}: ${r.error}`, dkimHints.unreadable(domain, r.selector)));
-    else if (r.type === 'rsa' && r.bits < 1024) checks.push(err(`${label}: clave RSA de ${r.bits} bits; los receptores la rechazan.`, dkimHints.weakKey(domain, r.selector, provider)));
-    else if (r.type === 'rsa' && r.bits < 2048) checks.push(warn(`${label}: clave RSA de ${r.bits} bits. Funciona, pero 2048 es lo recomendado.`, dkimHints.weakKey(domain, r.selector, provider)));
+    else if (r.type === 'rsa' && r.bits < 1024) checks.push(err(`${label}: clave RSA de ${r.bits} bits; los receptores la rechazan.`, dkimHints.weakKey(domain, r.selector, provider, weakContext(r.selector))));
+    else if (r.type === 'rsa' && r.bits < 2048) checks.push(warn(`${label}: clave RSA de ${r.bits} bits. Funciona, pero 2048 es lo recomendado.`, dkimHints.weakKey(domain, r.selector, provider, weakContext(r.selector))));
     else checks.push(ok(`${label}: clave ${r.type.toUpperCase()}${r.bits ? ` de ${r.bits} bits` : ''}.`));
   }
   const cleaned = checks.filter(Boolean);
@@ -381,6 +383,8 @@ async function checkDkim(d, domain, { configured = [], detected = [], foreign = 
   }
   return {
     status: statusOf(cleaned),
+    // Hay al menos una clave publicada que los receptores aceptan.
+    valid: anyValid,
     selectors: results.filter((r) => r.found || r.source !== 'común').map(({ temp: _t, ...r }) => r),
     checks: cleaned,
   };
@@ -423,7 +427,12 @@ export async function checkDomain(domain, { resolver = systemResolver(), smtpTar
     checkMx(d, domain, provider),
   ]);
   // DMARC va después: el consejo de subir la política depende de que SPF y DKIM estén bien.
-  const dmarc = await checkDmarc(d, domain, provider, { spfOk: spf.status === 'ok', dkimOk: dkim.status === 'ok' });
+  // "Listo para subir DMARC" mira si SPF pasa y si hay una clave DKIM válida, no si cada
+  // sección está en verde: una clave vieja de 1024 bits de más no cambia la respuesta.
+  const dmarc = await checkDmarc(d, domain, provider, {
+    spfOk: spf.status === 'ok',
+    dkimOk: dkim.valid && !dkim.checks.some((c) => c.level === 'error'),
+  });
   return {
     domain, status: worst(spf.status, dmarc.status, dkim.status, mx.status), resolvable: true,
     provider: provider.id === 'hosting' ? null : provider.name, spf, dkim, dmarc, mx, checks: [],
