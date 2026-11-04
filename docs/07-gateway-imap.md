@@ -4,6 +4,8 @@ El cliente del piloto tiene sus buzones en un servidor IMAP/SMTP genérico, no e
 
 El gateway está construido y probado en este repo (`gateway/`). Falta desplegarlo: necesita el proyecto de Supabase del SDR BOT, que todavía no existe, y un proyecto de Vercel.
 
+> Para clientes con buzones en Microsoft 365 o Google Workspace, ver `08-roadmap-proveedores.md`: el gateway suma un tipo de buzón por proveedor después del piloto.
+
 ## 1. Dónde encaja
 
 Es un cuarto camino para el canal de mail, al lado de los tres de `02-arquitectura.md` §4.2. Para el bot y los scripts, una casilla IMAP se ve igual que las demás: se lee, se responde, se marca y se envía con el mismo cupo y la misma idempotencia.

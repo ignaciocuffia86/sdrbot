@@ -170,6 +170,8 @@ Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de 
 
 ## Límites de la versión 0.1
 
+- Sólo IMAP/SMTP con contraseña. Microsoft 365 y Google Workspace (OAuth, Graph y Gmail API) están en `docs/08-roadmap-proveedores.md`; mientras tanto, Gmail funciona con contraseña de aplicación (§5.1 de ese documento, con «Guardar copia de lo enviado» desactivado).
+
 - Sin IMAP IDLE: el gateway no avisa cuando llega un mail; se consulta cada 15 minutos.
 - Cada llamada tiene que terminar en 60 segundos (Vercel): por eso `sync` trae hasta 25 mensajes por defecto y 100 como máximo.
 - No descarga ni envía adjuntos.

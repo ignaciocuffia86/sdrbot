@@ -126,6 +126,8 @@ Pendiente de soporte (no bloquea): si el box está encendido las 24 horas y si C
 
 ### 4.2 Canal de mail sin SMTP ni IMAP
 
+> **Revisado el 04/11/2026** en `08-roadmap-proveedores.md`: Gmail API y Graph pasan a vivir en el gateway de correo (no en los scripts del box) y la credencial queda cifrada en el gateway en vez de ser un secreto de Grok Bot. Lo de abajo es el diseño anterior; se reescribe cuando arranque la etapa 1 del roadmap.
+
 El box no deja salir SMTP ni IMAP (probado el 22/10). El mail va por API sobre HTTPS, con el script del repo manejando rotación, cupos, lotes, deduplicación y pie de baja igual que antes. Las opciones y la comparación están en `06-respuestas-grokbot.md` A.3; la decisión:
 
 | | Estándar | Alternativa | Respaldo |

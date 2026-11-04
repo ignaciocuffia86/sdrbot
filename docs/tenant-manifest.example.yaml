@@ -166,7 +166,7 @@ channels:                             # [cliente] qué canales se usan y con qu�
     enabled: true
     sending_domain: bairesqa.net      # dominio alternativo, distinto del principal
     dns_owner: cliente                # cliente | bigua (Biguá gestiona DNS y casillas)
-    provider: google_workspace        # google_workspace | microsoft_365 | imap (hosting genérico, vía gateway IMAP: docs/07)
+    provider: google_workspace        # google_workspace | microsoft_365 | imap (hosting genérico, vía gateway IMAP: docs/07) · roadmap de Microsoft y Google: docs/08
     api_auth: domain_wide_delegation  # google: domain_wide_delegation · microsoft: graph_app_only · respaldo: grokbot_connector
     api_credential_secret: MAIL_CREDENTIAL   # nombre del secreto en la cuenta de Grok Bot; el valor nunca va acá
     delegation_authorized_by: ti@bairesqa.com   # administrador del dominio que autorizó la delegación

@@ -13,8 +13,9 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [05-preguntas-grokbot.md](05-preguntas-grokbot.md) | Preguntas a Grok Bot para cerrar el diseño: cuentas, box, routines, bots y plantilla, conectores y secretos, datos y cumplimiento, operación; cada una con prioridad, supuesto actual y plan B |
 | [06-respuestas-grokbot.md](06-respuestas-grokbot.md) | Respuestas de Grok Bot (22/10) e impacto en el diseño: mail por API en vez de SMTP/IMAP, un bot dueño de cada sesión de navegador, routines como prompts, plantillas por bot en un equipo, lo que queda para soporte y las pruebas del canario |
 | [07-gateway-imap.md](07-gateway-imap.md) | Gateway IMAP/SMTP para clientes con correo en un hosting genérico: por qué, decisión de construirlo, qué hace, seguridad, qué pedirle al cliente, cómo trabaja el bot en el piloto, riesgos y pasos de arranque. El código está en `gateway/` |
+| [08-roadmap-proveedores.md](08-roadmap-proveedores.md) | Roadmap post piloto: cómo sumar buzones en Microsoft 365 (Graph, acotado con RBAC de Exchange) y Google Workspace (Gmail API, puente por IMAP con contraseña de aplicación), por qué todo entra por el gateway y no por conectores de Grok Bot, qué pedirle a cada cliente, etapas y decisiones abiertas |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
-Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → preguntas y respuestas de Grok Bot → manifiesto.
+Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → preguntas y respuestas de Grok Bot → gateway → roadmap de proveedores → manifiesto.
 
-Estado: diseño, más el gateway IMAP/SMTP construido y probado en `gateway/` (falta desplegarlo).
+Estado: diseño, más el gateway de correo (IMAP/SMTP, panel `/admin` y chequeo de dominios) desplegado en `https://sdrbot.bigua.lat` y en uso en el piloto de BairesQA. Microsoft 365 y Google Workspace están planificados en `08-roadmap-proveedores.md`.
