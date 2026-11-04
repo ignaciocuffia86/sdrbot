@@ -1,8 +1,9 @@
 # Preguntas a Grok Bot · arquitectura v2 (Grok orquesta)
 
 Para validar `09-arquitectura-v2.md`, donde Grok Bot orquesta: los bots conversan entre sí,
-deciden el próximo paso y usan como herramientas el MCP de ASCI, el gateway de correo de Biguá
-(con las reglas de operación) y HubSpot. Complementa a `05-preguntas-grokbot.md`: lo ya respondido
+deciden el próximo paso y usan como herramientas el MCP de ASCI y el MCP de Biguá
+(`sdrbot.bigua.lat`: gateway de correo, reglas de operación, registro de prospección y CRM).
+Las aprobaciones se hacen en el chat de Grok con el `orquestador`. Complementa a `05-preguntas-grokbot.md`: lo ya respondido
 en `06-respuestas-grokbot.md` no se repite, salvo cuando este modelo lo vuelve crítico. Lo que
 quedó pendiente para soporte en `06` A.4 (miembros, datos, DPA, SLA) sigue vigente.
 
@@ -13,15 +14,15 @@ igual que en `06`: respuesta + fuente (**Probado**, **Producto** o **Sin dato**)
 ## 1. Conversación entre bots y concurrencia
 
 Es lo central del modelo: si los bots no pueden pedirse cosas de forma confiable, el plan B
-pasa la conversación a tareas de HubSpot (`09` §4.3).
+deja los pedidos como eventos pendientes en el registro de prospección (`09` §4.3).
 
 | # | Pregunta | Prio | Por qué importa | Supuesto | Si no |
 |---|---|---|---|---|---|
 | 1.1 | ¿Pueden correr **al mismo tiempo dos bots distintos** de la misma cuenta? (`06` 3.3 quedó sin dato) | B | `seguimiento` tiene que atender a un interesado mientras `prospector` trabaja | Sí | Juntar bots: tres en vez de cinco |
-| 1.2 | Cuando un bot le **manda un mensaje a otro**, ¿el receptor se despierta y lo procesa aunque no tenga una routine en ese momento? ¿Cuánto tarda? | B | Es el mecanismo de orquestación | Sí, en menos de un minuto | Pedidos como tareas de HubSpot que cada bot lee en su routine |
-| 1.3 | ¿El que manda **puede esperar la respuesta** dentro de su corrida, o es «mandar y seguir»? | B | Define si el `prospector` puede preguntar y seguir con la respuesta | Mandar y seguir; la respuesta llega como otro mensaje | Pedidos sin respuesta inmediata; el estado se lee en HubSpot |
-| 1.4 | ¿Los mensajes entre bots **quedan registrados** y se pueden ver o exportar? | I | Auditoría de un proceso no lineal | Quedan en el historial de cada bot | Cada pedido deja nota en HubSpot (ya previsto) |
-| 1.5 | Si un bot recibe un mensaje **mientras está corriendo** otra tarea, ¿se encola, lo interrumpe o se pierde? | B | Pedidos que llegan en medio de una tanda | Se encola | Routines cortas y pedidos por HubSpot |
+| 1.2 | Cuando un bot le **manda un mensaje a otro**, ¿el receptor se despierta y lo procesa aunque no tenga una routine en ese momento? ¿Cuánto tarda? | B | Es el mecanismo de orquestación | Sí, en menos de un minuto | Pedidos como eventos pendientes en el registro que cada bot lee en su routine |
+| 1.3 | ¿El que manda **puede esperar la respuesta** dentro de su corrida, o es «mandar y seguir»? | B | Define si el `prospector` puede preguntar y seguir con la respuesta | Mandar y seguir; la respuesta llega como otro mensaje | Pedidos sin respuesta inmediata; el estado se lee en el registro |
+| 1.4 | ¿Los mensajes entre bots **quedan registrados** y se pueden ver o exportar? | I | Auditoría de un proceso no lineal | Quedan en el historial de cada bot | Cada pedido deja un evento en el registro (ya previsto) |
+| 1.5 | Si un bot recibe un mensaje **mientras está corriendo** otra tarea, ¿se encola, lo interrumpe o se pierde? | B | Pedidos que llegan en medio de una tanda | Se encola | Routines cortas y pedidos por el registro |
 | 1.6 | Si una routine dispara mientras **la anterior del mismo bot sigue corriendo**, ¿se encola, se saltea o corre en paralelo? | I | Routines cada 15 minutos | Se saltea | Corridas acotadas por tiempo en el manual |
 | 1.7 | ¿Hay **límites o protección contra bucles** de mensajes entre bots? ¿Cómo se cobran esos mensajes? | I | Dos bots que se pasan un tema sin cerrarlo | Sin límite; se cobra como uso normal | Tope de idas y vueltas en el manual (`09` §4.3) |
 | 1.8 | **Disparo por webhook**: ¿qué URL y qué autenticación (secreto o firma)? ¿El cuerpo le llega al prompt? ¿Latencia y límite de disparos? | I | El gateway despierta a `seguimiento` cuando llega una respuesta | URL con secreto; el cuerpo llega; menos de un minuto | Routine de `seguimiento` cada 5 minutos en horario hábil |
@@ -41,8 +42,8 @@ pasa la conversación a tareas de HubSpot (`09` §4.3).
 
 | # | Pregunta | Prio | Por qué importa | Supuesto | Si no |
 |---|---|---|---|---|---|
-| 3.1 | ¿Hay **conector nativo de HubSpot**? ¿Qué deja hacer (contactos, empresas, negocios, notas, correos registrados, tareas, propiedades propias)? | B | HubSpot es la memoria de los bots | Existe y cubre contactos, empresas, notas y tareas | MCP oficial de HubSpot (3.2) o herramientas de HubSpot en el MCP de Biguá |
-| 3.2 | ¿Se puede conectar un **MCP remoto que pide OAuth** (como el oficial de HubSpot), o sólo con cabecera fija (`06` 5.2)? | I | Alternativa a 3.1 | Sólo cabecera fija | Herramientas de HubSpot en el MCP de Biguá con el token del cliente |
+| 3.1 | ¿Hay **conectores nativos de HubSpot y de Dynamics 365**? | D | El diseño los usa a través del MCP de Biguá (`crm.*`, `11` §7) para que las reglas sean iguales con cualquier CRM; un conector nativo sólo serviría para consultas manuales en el chat | — | Nada: `crm.*` ya cubre |
+| 3.2 | ¿Se puede conectar un **MCP remoto que pide OAuth**, o sólo con cabecera fija (`06` 5.2)? | D | Para conectores de terceros en el futuro | Sólo cabecera fija | Todo por el MCP de Biguá |
 | 3.3 | ¿Límites de **cantidad de herramientas** por conector, **tamaño de respuesta** y **tiempo** por llamada? | B | `reglas.manual` devuelve instrucciones largas | Decenas de KB y 60 s | Reglas partidas por sección |
 | 3.4 | ¿Las llamadas a herramientas MCP **pasan por la revisión automática** (`06` A4) en corridas desatendidas? ¿Se puede marcar un conector como confiable? | B | Todo el modelo son llamadas MCP sin una persona mirando | No se bloquean las de un conector ya agregado | Probar en el canario qué se bloquea y ajustar nombres y descripciones de las herramientas |
 | 3.5 | Ante un 429 o 5xx del servidor MCP, ¿el bot **reintenta** solo? | I | El gateway limita por cupo y por cliente | Reintenta alguna vez | Las herramientas dicen en el texto cuándo reintentar |
@@ -78,5 +79,6 @@ pasa la conversación a tareas de HubSpot (`09` §4.3).
 
 | # | Pregunta | Prio | Por qué importa | Supuesto | Si no |
 |---|---|---|---|---|---|
-| 7.1 | ¿Un usuario del cliente puede **chatear sólo con el `orquestador`** sin ver los otros bots, el box, los secretos ni el historial de las routines? | I | Que el vendedor pregunte «¿cómo vamos?» o apruebe una respuesta en el chat | No confirmado (`06` 1.1) | Aprobaciones por tarea de HubSpot o por mail |
-| 7.2 | ¿Un bot puede **mandar un mensaje a una persona** fuera de Grok (mail, Slack, WhatsApp) para avisar o pedir aprobación? | I | Avisar al vendedor que hay un interesado | Por conectores (Slack, mail) | Aviso por tarea de HubSpot (HubSpot notifica al dueño) |
+| 7.1 | ¿Un usuario del cliente puede **chatear sólo con el `orquestador`** sin ver los otros bots, el box, los secretos ni el historial de las routines? | B | Las aprobaciones se hacen en ese chat (`09` §5.4); si el líder es del cliente, necesita entrar | No confirmado (`06` 1.1) | El líder es un operador de Biguá |
+| 7.2 | ¿El `orquestador` puede **avisarle al líder** que hay una aprobación pendiente (notificación de la app, mail, Slack), o el líder tiene que entrar a mirar? | B | Un positivo no puede esperar a que alguien abra la app | Notificación de la app | Aviso por mail desde el gateway con un enlace al chat |
+| 7.3 | Si el líder contesta en el chat horas después, ¿el `orquestador` retoma con el contexto de la aprobación pedida? | I | Aprobaciones que no son inmediatas | Sí, es el mismo chat | El `orquestador` relee lo pendiente en el registro |
