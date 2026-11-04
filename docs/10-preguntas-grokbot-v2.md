@@ -79,6 +79,6 @@ deja los pedidos como eventos pendientes en el registro de prospección (`09` §
 
 | # | Pregunta | Prio | Por qué importa | Supuesto | Si no |
 |---|---|---|---|---|---|
-| 7.1 | ¿Un usuario del cliente puede **chatear sólo con el `orquestador`** sin ver los otros bots, el box, los secretos ni el historial de las routines? | B | Las aprobaciones se hacen en ese chat (`09` §5.4); si el líder es del cliente, necesita entrar | No confirmado (`06` 1.1) | El líder es un operador de Biguá |
-| 7.2 | ¿El `orquestador` puede **avisarle al líder** que hay una aprobación pendiente (notificación de la app, mail, Slack), o el líder tiene que entrar a mirar? | B | Un positivo no puede esperar a que alguien abra la app | Notificación de la app | Aviso por mail desde el gateway con un enlace al chat |
+| 7.1 | ¿Un usuario del cliente puede **chatear sólo con el `orquestador`** sin ver los otros bots, el box, los secretos ni el historial de las routines? | D | Hoy aprueba un operador de Biguá; serviría si más adelante el cliente quiere hablar con el bot | No confirmado (`06` 1.1) | La capa de integración (Teams, Slack, mail) de `09` etapa 8 |
+| 7.2 | ¿El `orquestador` puede **avisarle al operador de Biguá** que hay una aprobación pendiente (notificación de la app, mail, Slack), o el líder tiene que entrar a mirar? | B | Un positivo no puede esperar a que alguien abra la app | Notificación de la app | Aviso por mail desde el gateway con un enlace al chat |
 | 7.3 | Si el líder contesta en el chat horas después, ¿el `orquestador` retoma con el contexto de la aprobación pedida? | I | Aprobaciones que no son inmediatas | Sí, es el mismo chat | El `orquestador` relee lo pendiente en el registro |

@@ -38,13 +38,13 @@ historial de git).
 | 2 | Estado del SDR en Supabase con un esquema completo (v1.1, 02 §3) | Los bots deciden; al CRM va sólo lo positivo | — | Si el CRM sólo tiene positivos, los bots no tienen dónde recordar a los demás | **Sí, con un registro chico** | **Registro de prospección** en Supabase, memoria de trabajo de los bots (`11` §2 y §3). Mucho más chico que el esquema de `02`: cuentas, prospectos y una línea de tiempo |
 | 3 | El trabajo entre bots pasa por la base (02 §7) o por una cola (09a) | Los bots conversan entre sí | Es lo que da el proceso no lineal; Grok lo soporta (`06` 4.5) | No sabemos si un mensaje entre bots despierta al otro, si queda registrado, ni si dos bots corren a la vez (`06` 3.3); riesgo de bucles y de trabajo duplicado | **A validar con Grok** (`10` §1, bloqueante) | Protocolo de conversación (§4.3): referencia del registro, estado en el registro, evento por pedido, tope de idas y vueltas |
 | 4 | Reveal con filtro programático y presupuesto validado antes de gastar (02 §6.2) | El `prospector` revela por el MCP de ASCI | Un solo bot decide a quién y lo hace | Puede gastar de más o revelar a quien no corresponde | **Sí** | El presupuesto diario de ASCI por usuario es la baranda dura; falta el mensual (`04` §4.2). Antes de revelar, el bot consulta exclusiones en el CRM (`11` §6) |
-| 5 | Aprobación humana de textos base y de respuestas a interesados (v1.1); aprobación por mail con token (02 §7.2) | Aprobación en el chat de Grok con el `orquestador` | Sin canal extra; el que aprueba conversa con el bot y puede pedir cambios | El que aprueba necesita acceso a la cuenta de Grok del cliente; qué ve un miembro no está confirmado (`06` 1.1) | **Sí** | §5.4. Cada aprobación queda como evento en el registro |
+| 5 | Aprobación humana de textos base y de respuestas a interesados (v1.1); aprobación por mail con token (02 §7.2) | Aprobación en el chat de Grok con el `orquestador` | Sin canal extra; el que aprueba conversa con el bot y puede pedir cambios | El que aprueba necesita acceso a la cuenta de Grok del cliente | **Sí** | Aprueba un **operador de Biguá**, que ya administra la cuenta (§5.4). Cada aprobación queda como evento en el registro. Más adelante, una capa para aprobar desde Teams, Slack o mail |
 | 6 | Envíos de mail desde scripts del box (02 §4.2) | El bot envía por el MCP del gateway | Ya funciona en el piloto | El tope y la idempotencia dependen de que el bot mande bien la clave | **Sí** | El gateway exige clave de idempotencia, cupo y máximo de destinatarios; las reglas fijan cómo armar la clave (§5.2) |
 | 7 | Gateway sin memoria de los hilos | El gateway documenta respuestas y seguimiento | Una sola fuente del correo | Hay que construirlo | **Sí** | §7 |
 | 8 | LinkedIn con un bot que opera Sales Navigator y Dripify (02) | Dripify con campañas armadas; el bot carga leads por CSV | Dripify corre la cadencia y sus límites; el navegador hace poco | Si el prospecto contesta por mail, Dripify le sigue escribiendo hasta que alguien lo saque | **Sí** | Bot `linkedin`, dueño de la sesión; los webhooks de Dripify llegan al gateway (§5.3); sacar de la campaña es regla guía con verificación diaria (§6) |
 | 9 | WhatsApp: tandas aprobadas, sólo seguimientos, teléfono que llega a la persona, base legal declarada (v1.1, 02 §7.4) | Seguimiento cuando hay número de WhatsApp; el consentimiento ya está | Más simple | — | **Sí** | El número está en el registro; si está, se puede usar para seguimiento |
 | 10 | Documentación completa en el CRM (`09` en su versión anterior) | Al CRM sólo positivos o a pedido | El CRM del cliente queda limpio | Cada CRM guarda los datos distinto | **Sí** | Paquete de derivación igual para todos los CRM (`11` §5) |
-| 11 | Un adaptador por CRM en la plataforma (09a) vs. conector nativo de cada CRM | Igual que el resto: el bot llama herramientas | — | Con conectores distintos por cliente, las reglas de los bots cambian por cliente | **Sí** | Herramientas `crm.*` en el MCP de Biguá con adaptador HubSpot y Dynamics 365: el bot no sabe qué CRM hay detrás (`11` §7) |
+| 11 | Un paquete fijo con mapeo cerrado (versión anterior de `11`) | El bot llega al CRM por MCP, mira los datos que el cliente ya tiene y decide qué campos cargar y cómo (línea de tiempo, lo conversado, completar datos) | Cargas útiles para cada cliente, sin formularios por cliente | Un bot con escritura libre puede pisar o ensuciar el CRM del cliente | **Sí, con límites** | `crm.*` en el MCP de Biguá: el bot explora el esquema y decide; el MCP pone límites duros (no borra, no pisa datos cargados, sólo entidades permitidas). El mapeo se aprueba una vez por cliente en el chat (`11` §5 y §6) |
 | 12 | Siete bots (02) | Los que pida el flujo | — | — | — | Cinco (§4.1) |
 | 13 | Alta con usuario de Supabase, ocho secretos e instalador en el box (02, 03) | Grok con conectores | Menos piezas | — | **Sí** | En Grok: conector de ASCI y conector de `sdrbot.bigua.lat` (gateway, reglas, registro y CRM). Ningún programa propio en el box |
 
@@ -86,7 +86,7 @@ flowchart LR
 | Capa | Qué tiene | Dónde | Cuánto cambia |
 |---|---|---|---|
 | **Arranque** | Perfil de cada bot: quién es, con quién habla, que sus reglas están en `reglas.manual`, que lo que sabe de un prospecto está en el registro y no en su memoria, que nunca envía a quien no está en el registro. Routines cortas: «Tarea `prospector.diaria`: seguí `reglas.manual`» | Plantillas de Grok (equipo de Biguá) | Casi nunca: cambiarlo es reimportar en cada cuenta |
-| **Manual** | Por bot y por tarea: objetivo, pasos, criterios de decisión, a quién pedirle qué, qué registrar, cómo armar el paquete del CRM, qué hacer ante cada error, ejemplos | Repo (`playbooks/`) → publicado en Supabase con versión | Seguido; llega a todos los clientes sin tocar Grok |
+| **Manual** | Por bot y por tarea: objetivo, pasos, criterios de decisión, a quién pedirle qué, qué registrar, cómo cargar en el CRM, qué hacer ante cada error, ejemplos | Repo (`playbooks/`) → publicado en Supabase con versión | Seguido; llega a todos los clientes sin tocar Grok |
 | **Ajustes del cliente** | ICP, oferta, tono, idioma, firma, campaña de Dripify por segmento, límites propios, qué cuenta como positivo, quién aprueba | Supabase, editables en el panel | Por cliente |
 
 - `reglas.manual(bot, tarea)` devuelve las tres capas combinadas para ese cliente, con su
@@ -107,7 +107,7 @@ flowchart LR
 |---|---|---|---|
 | `orquestador` | Líder: arma el plan del día con `registro.agenda`, reparte y destraba, **pide y recibe aprobaciones en su chat**, carga en el CRM lo que se le pida, responde preguntas, resume | A todos | No |
 | `prospector` | Cuentas nuevas en ASCI, exclusiones en el CRM, decisores, reveal, contenido y envío por el gateway del primer mail y sus seguimientos | `linkedin` (sumar a Dripify), `orquestador` (aprobaciones y dudas) | No |
-| `seguimiento` | Respuestas de los tres canales: clasifica, decide qué sigue (contestar, frenar, pasar a WhatsApp, prospectar a la persona derivada), propone la respuesta y arma el paquete del CRM de los positivos | `orquestador` (aprobación), `prospector`, `linkedin` (sacar de Dripify), `whatsapp` | No |
+| `seguimiento` | Respuestas de los tres canales: clasifica, decide qué sigue (contestar, frenar, pasar a WhatsApp, prospectar a la persona derivada), propone la respuesta y carga los positivos en el CRM | `orquestador` (aprobación), `prospector`, `linkedin` (sacar de Dripify), `whatsapp` | No |
 | `linkedin` | Dueño de la sesión de Dripify: arma el CSV con las URL de LinkedIn y lo importa en la campaña que corresponde, saca de la campaña a quien respondió por otro canal | `seguimiento` | **Sí** |
 | `whatsapp` | Dueño de WhatsApp Web: manda los seguimientos que le pide `seguimiento`, lee respuestas y avisa | `seguimiento` | **Sí** |
 
@@ -169,12 +169,12 @@ sequenceDiagram
   R-->>S: respuesta por mail atada al mail 1
   S->>R: registro.historia
   S->>L: sacalo de Dripify: respondió por mail
-  S->>O: positivo: esta es la respuesta propuesta y el paquete del CRM
+  S->>O: positivo: esta es la respuesta propuesta
   O->>H: ¿apruebo esta respuesta?
   H-->>O: sí (o con cambios)
   O->>S: aprobado
   S->>R: gateway: responder en el hilo
-  S->>R: crm.cargar_derivacion
+  S->>R: crm.describir / buscar / crear Lead + nota + tarea
   S->>R: registro.evento: en CRM
 ```
 
@@ -218,9 +218,10 @@ Lo no lineal está en las decisiones: el `orquestador` cambia el plan si un segm
 | Carga en el CRM | No: es consecuencia de la respuesta aprobada |
 | Lo que los bots no resolvieron (tope de idas y vueltas) | Siempre |
 
-- Mientras el líder no contesta, lo pendiente queda en el registro y el `orquestador` lo
-  recuerda en su resumen. Quién es el líder (alguien de Biguá o del cliente) depende de qué ve
-  un miembro de la cuenta (`10` 7.1).
+- El líder es **un operador de Biguá**. Mientras no contesta, lo pendiente queda en el registro y
+  el `orquestador` lo recuerda; un positivo sin aprobar después de N horas levanta una alerta.
+- Más adelante: una **capa de gestión e integración** para hablar con el `orquestador` y aprobar
+  desde Teams, Slack o mail, sin entrar a Grok (etapa 8).
 
 ## 6. Reglas duras y reglas guía
 
@@ -281,17 +282,20 @@ WhatsApp).
 | **0** · hecho | Gateway, panel, dominios; BairesQA con un bot leyendo y escribiendo borradores | — |
 | **1** · reglas y registro | `reglas.*` y `registro.*`; bots `orquestador` y `prospector`; calibración con aprobación en el chat | El `prospector` envía 20 mails aprobados en el chat, todo en el registro |
 | **2** · memoria del correo | Hilos, respuestas atadas, cursor, supresión, rebotes, «sin respuesta», bitácora; bot `seguimiento` | `seguimiento` trabaja sólo con lo que le dan el gateway y el registro |
-| **3** · CRM | `crm.*` con HubSpot; paquete de derivación; respuesta a positivos con aprobación | Un positivo aprobado aparece en HubSpot con su nota y su tarea |
+| **3** · CRM | `crm.*` con HubSpot (explorar el esquema, crear con límites); mapeo aprobado en el chat; respuesta a positivos con aprobación | Un positivo aprobado aparece en HubSpot con los campos del cliente completados, la conversación y una tarea |
 | **4** · Dripify | `linkedin` importando CSV; webhooks; sacar de la campaña al que respondió por mail | Un prospecto en mail y Dripify se frena en los dos al responder en uno |
 | **5** · WhatsApp | Bot `whatsapp` | Un seguimiento por WhatsApp registrado |
-| **6** · Dynamics 365 | Adaptador de `crm.*` | El cliente de D365 recibe sus positivos como Lead |
+| **6** · Dynamics 365 | Adaptador de `crm.*`; usuario de aplicación con rol de seguridad acotado | El cliente de D365 recibe sus positivos como Lead con su mapeo aprobado |
+| **7** · Dashboard del cliente | Vista del registro en el panel: números, embudo, canales, positivos, línea de tiempo, avisos (`11` §8) | El cliente ve qué hicimos en la semana sin preguntar |
+| **8** · Capa de integración | Hablar con el `orquestador` y aprobar desde Teams, Slack o mail | Una aprobación hecha desde fuera de Grok |
 
-## 10. Para confirmar con Biguá
+## 10. Decidido el 04/11
 
-1. **Registro de prospección en Supabase** como memoria de los bots, ya que el CRM sólo recibe
-   positivos (`11` §2).
-2. **Calibración de clientes nuevos:** los primeros 20 mails del `prospector` con aprobación en
-   el chat, y después salen solos. ¿Sí, otro número, o sin calibración?
-3. **¿Quién es el líder** que aprueba en el chat: alguien de Biguá, alguien del cliente, o los
-   dos?
-4. Las preguntas de datos del CRM en `11` §10.
+| Tema | Decisión |
+|---|---|
+| Memoria de los bots | Registro de prospección en Supabase, que además alimenta el dashboard del cliente (`11` §2, §8) |
+| Calibración | Los primeros 20 mails de cada cliente nuevo con aprobación en el chat; se corrige si hace falta |
+| Quién aprueba | Un operador de Biguá; la capa de integración, más adelante |
+| Qué es positivo | Interesado, pide reunión, pide información, acepta una llamada |
+| Carga en el CRM | El bot decide qué campos y cómo, por MCP, con límites duros y mapeo aprobado por cliente; en Dynamics 365, Lead |
+| Bajas | Se marcan en el CRM si la persona ya existía y se avisa al cliente |
