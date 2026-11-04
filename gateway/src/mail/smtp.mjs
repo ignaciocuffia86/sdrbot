@@ -3,10 +3,13 @@
 import nodemailer from 'nodemailer';
 import { limits } from '../config.mjs';
 import { errors, GatewayError } from '../errors.mjs';
+import { resolveTarget } from './net.mjs';
 
-function transport(account, password) {
+async function transport(account, password) {
+  const target = await resolveTarget(account.smtp_host, account.smtp_port, 'SMTP');
   return nodemailer.createTransport({
-    host: account.smtp_host,
+    host: target.address,
+    tls: target.servername ? { servername: target.servername } : undefined,
     port: account.smtp_port,
     secure: account.smtp_security === 'tls',
     // Con starttls se exige la actualización a TLS antes de autenticar.
@@ -32,7 +35,7 @@ export function classifySmtpError(e) {
 }
 
 export async function sendRaw(account, password, { envelope, raw }) {
-  const t = transport(account, password);
+  const t = await transport(account, password);
   try {
     const info = await t.sendMail({ envelope, raw });
     if (!info.accepted?.length) throw errors.recipientsRejected(info.rejected ?? []);
@@ -45,7 +48,7 @@ export async function sendRaw(account, password, { envelope, raw }) {
 }
 
 export async function verifySmtp(account, password) {
-  const t = transport(account, password);
+  const t = await transport(account, password);
   try {
     await t.verify();
     return true;

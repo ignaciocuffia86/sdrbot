@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Administración del gateway. Corre en la máquina de un operador de Biguá con DATABASE_URL
 // y MAILGW_ENC_KEYS en el entorno (las mismas que en Vercel). No hay endpoints HTTP de
-// administración: el alta de buzones y tokens no queda expuesta a internet.
+// administración propios: el panel web /admin (src/admin) hace lo mismo con usuarios y roles;
+// esta herramienta queda para migrar, rotar claves y crear el primer operador.
 //
 // La contraseña de un buzón se lee de la entrada estándar, nunca de un argumento ni de una
 // variable de entorno: así no queda en el historial de la terminal ni en la lista de
@@ -22,6 +23,9 @@
 //   node bin/admin.mjs pause|reactivate <cliente> <email>
 //   node bin/admin.mjs clear-send <cliente> <email> <clave_de_idempotencia>
 //   node bin/admin.mjs rekey
+//   node bin/admin.mjs add-admin <email> "<nombre>" [--client <cliente>] [--base-url https://sdrbot.bigua.lat]
+//        sin --client crea un operador de Biguá; con --client, un usuario de ese cliente.
+//        Imprime un enlace de activación de un solo uso (24 h) para elegir la contraseña.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -75,6 +79,7 @@ async function main() {
       username: { type: 'string' }, 'display-name': { type: 'string' }, 'daily-cap': { type: 'string' },
       timezone: { type: 'string' }, 'no-append-sent': { type: 'boolean' },
       'sent-folder': { type: 'string' }, 'drafts-folder': { type: 'string' },
+      client: { type: 'string' }, 'base-url': { type: 'string' },
     },
   });
 
@@ -193,6 +198,19 @@ async function main() {
         n += 1;
       }
       console.log(`Recifrados: ${n}. Ya se puede sacar la clave vieja de MAILGW_ENC_KEYS.`);
+      break;
+    }
+    case 'add-admin': {
+      const [email, name] = p;
+      if (!email || !name) die('Uso: add-admin <email> "<nombre>" [--client <cliente>]');
+      const { createUser } = await import('../src/admin/auth.mjs');
+      const { user, setupToken } = await createUser({
+        email, name, role: o.client ? 'client_admin' : 'bigua_admin', clientId: o.client ?? null,
+      });
+      const base = (o['base-url'] ?? 'https://sdrbot.bigua.lat').replace(/\/+$/, '');
+      console.log(`Usuario ${user.email} (${user.role}${user.client_id ? ` de ${user.client_id}` : ''}) creado.`);
+      console.log('Enlace de activación (una sola vez, vence en 24 h; mandarlo por un canal seguro):');
+      console.log(`${base}/admin#activar=${setupToken}`);
       break;
     }
     default:

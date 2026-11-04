@@ -1,0 +1,454 @@
+// API del panel /admin. Todas las rutas cuelgan de /admin/api y responden JSON.
+//
+// Permisos:
+//   bigua_admin   todo: clientes, usuarios de cada cliente, equipo de Biguá, buzones y tokens.
+//   client_admin  sólo su cliente: buzones (alta, edición, contraseña, prueba, pausa) y
+//                 actividad. Sus consultas corren con el rol mailgw_portal y su cliente fijado.
+//
+// Protección contra CSRF: la cookie es SameSite=Strict y además toda llamada tiene que traer
+// la cabecera X-Mailgw-Admin, que un formulario de otro sitio no puede mandar. Sin CORS.
+
+import Ajv from 'ajv';
+import { asOwner, asRole } from '../store.mjs';
+import { aadFor, decryptSecret, encryptSecret, newToken } from '../crypto.mjs';
+import { errors, GatewayError } from '../errors.mjs';
+import { withImap, listFolders } from '../mail/imap.mjs';
+import { verifySmtp } from '../mail/smtp.mjs';
+import { validateHostSyntax, validatePort } from '../mail/net.mjs';
+import {
+  activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
+  sessionUser, tokenFromCookie,
+} from './auth.mjs';
+
+const ajv = new Ajv({ allErrors: true, useDefaults: true, strict: false });
+const forbidden = () => new GatewayError('forbidden', 'No tenés permiso para esto.', 403);
+const notFound = (what = 'No existe.') => new GatewayError('not_found', what, 404);
+
+const SLUG = '^[a-z0-9][a-z0-9-]{1,40}$';
+const SCOPES = ['read', 'draft', 'send', 'manage'];
+
+function validator(schema) {
+  const v = ajv.compile(schema);
+  return (body) => {
+    const copy = structuredClone(body ?? {});
+    if (!v(copy)) throw errors.invalid(`Datos inválidos: ${v.errors.map((e) => `${e.instancePath || '/'} ${e.message}`).join('; ')}`);
+    return copy;
+  };
+}
+
+const mailboxFields = {
+  display_name: { type: ['string', 'null'], maxLength: 120 },
+  username: { type: 'string', minLength: 1, maxLength: 254 },
+  imap_host: { type: 'string', minLength: 1, maxLength: 253 },
+  imap_port: { type: 'integer', minimum: 1, maximum: 65535 },
+  imap_security: { enum: ['tls', 'starttls'] },
+  smtp_host: { type: 'string', minLength: 1, maxLength: 253 },
+  smtp_port: { type: 'integer', minimum: 1, maximum: 65535 },
+  smtp_security: { enum: ['tls', 'starttls'] },
+  timezone: { type: 'string', maxLength: 64 },
+  daily_send_cap: { type: 'integer', minimum: 0, maximum: 1000 },
+  append_sent: { type: 'boolean' },
+  sent_folder: { type: ['string', 'null'], maxLength: 200 },
+  drafts_folder: { type: ['string', 'null'], maxLength: 200 },
+};
+
+const V = {
+  login: validator({ type: 'object', required: ['email', 'password'], additionalProperties: false,
+    properties: { email: { type: 'string', maxLength: 254 }, password: { type: 'string', maxLength: 200 } } }),
+  activate: validator({ type: 'object', required: ['token', 'password'], additionalProperties: false,
+    properties: { token: { type: 'string', maxLength: 200 }, password: { type: 'string', maxLength: 200 } } }),
+  changePassword: validator({ type: 'object', required: ['current', 'next'], additionalProperties: false,
+    properties: { current: { type: 'string', maxLength: 200 }, next: { type: 'string', maxLength: 200 } } }),
+  client: validator({ type: 'object', required: ['id', 'name'], additionalProperties: false,
+    properties: { id: { type: 'string', pattern: SLUG }, name: { type: 'string', minLength: 1, maxLength: 120 } } }),
+  user: validator({ type: 'object', required: ['email', 'name'], additionalProperties: false,
+    properties: { email: { type: 'string', maxLength: 254, pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$' },
+      name: { type: 'string', minLength: 1, maxLength: 120 } } }),
+  mailboxCreate: validator({ type: 'object', additionalProperties: false,
+    required: ['email', 'password', 'imap_host', 'imap_port', 'imap_security', 'smtp_host', 'smtp_port', 'smtp_security'],
+    properties: {
+      email: { type: 'string', maxLength: 254, pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$' },
+      password: { type: 'string', minLength: 1, maxLength: 500 },
+      ...mailboxFields,
+      timezone: { ...mailboxFields.timezone, default: 'America/Argentina/Buenos_Aires' },
+      daily_send_cap: { ...mailboxFields.daily_send_cap, default: 40 },
+      append_sent: { type: 'boolean', default: true },
+    } }),
+  mailboxUpdate: validator({ type: 'object', additionalProperties: false, minProperties: 1, properties: mailboxFields }),
+  mailboxPassword: validator({ type: 'object', required: ['password'], additionalProperties: false,
+    properties: { password: { type: 'string', minLength: 1, maxLength: 500 } } }),
+  mailboxStatus: validator({ type: 'object', required: ['status'], additionalProperties: false,
+    properties: { status: { enum: ['active', 'paused'] } } }),
+  token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
+    properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
+      scopes: { type: 'array', items: { enum: SCOPES }, minItems: 1, uniqueItems: true },
+      days: { type: 'integer', minimum: 1, maximum: 730, default: 120 } } }),
+};
+
+function checkTimezone(tz) {
+  if (tz === undefined) return;
+  try { new Intl.DateTimeFormat('en', { timeZone: tz }); } catch { throw errors.invalid(`Zona horaria inválida: ${tz}`); }
+}
+
+// Valida y normaliza servidores y puertos con las mismas reglas que se aplican al conectar.
+function normalizeServers(b) {
+  for (const k of ['imap_host', 'smtp_host']) if (b[k] !== undefined) b[k] = validateHostSyntax(b[k]);
+  for (const k of ['imap_port', 'smtp_port']) if (b[k] !== undefined) validatePort(b[k]);
+  checkTimezone(b.timezone);
+  return b;
+}
+
+// ---------------------------------------------------------------- alcance
+
+const isBigua = (u) => u.role === 'bigua_admin';
+
+// Corre fn con la conexión que corresponde al usuario y al cliente pedido: el dueño para un
+// operador de Biguá, mailgw_portal con su cliente para un usuario de cliente. Un usuario de
+// cliente que pide otro cliente recibe "no existe", igual que si no existiera.
+function scoped(user, clientId, fn) {
+  if (isBigua(user)) return asOwner(fn);
+  if (user.client_id !== clientId) throw notFound('No existe ese cliente.');
+  return asRole('mailgw_portal', clientId, fn);
+}
+
+const requireBigua = (user) => { if (!isBigua(user)) throw forbidden(); };
+
+const MAILBOX_COLS = `id, client_id, email, display_name, username, imap_host, imap_port, imap_security,
+  smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder,
+  status, auth_failures, last_ok_at, last_error, last_error_at, created_at, updated_at`;
+
+async function audit(c, user, clientId, op, detail, accountId = null) {
+  await c.query(
+    `insert into mailgw.audit_log (client_id, account_id, actor_user_id, op, ok, detail) values ($1, $2, $3, $4, true, $5)`,
+    [clientId, accountId, user.id, op, detail ? JSON.stringify(detail) : null]);
+}
+
+async function getMailbox(c, clientId, email) {
+  const { rows } = await c.query(`select ${MAILBOX_COLS}, secret_enc from mailgw.account where client_id = $1 and email = lower($2)`,
+    [clientId, email]);
+  if (!rows.length) throw notFound('No existe ese buzón.');
+  return rows[0];
+}
+
+const publicMailbox = ({ secret_enc: _s, ...m }) => m;
+
+// ---------------------------------------------------------------- rutas
+
+const routes = [];
+const route = (method, pattern, handler, { auth = true } = {}) => routes.push({
+  method, re: new RegExp(`^${pattern.replace(/:(\w+)/g, '(?<$1>[^/]+)')}$`), handler, auth,
+});
+
+route('POST', '/login', async ({ body, req, res, secure }) => {
+  const b = V.login(body);
+  const token = await login(b.email, b.password, { ip: req.headers['x-forwarded-for']?.split(',')[0] ?? null, userAgent: req.headers['user-agent'] });
+  res.setHeader('Set-Cookie', cookieFor(token, { secure }));
+  return { me: await sessionUser(token) };
+}, { auth: false });
+
+route('POST', '/activate', async ({ body }) => {
+  const b = V.activate(body);
+  const u = await activate(b.token, b.password);
+  return { email: u.email };
+}, { auth: false });
+
+route('POST', '/logout', async ({ req, res, secure }) => {
+  await logout(tokenFromCookie(req));
+  res.setHeader('Set-Cookie', clearCookie({ secure }));
+  return {};
+});
+
+route('GET', '/me', async ({ user }) => ({ me: user }));
+
+route('POST', '/me/password', async ({ user, body }) => {
+  const b = V.changePassword(body);
+  await changePassword(user.id, b.current, b.next);
+  return {};
+});
+
+// ----- clientes
+
+route('GET', '/clients', async ({ user }) => {
+  if (!isBigua(user)) {
+    return scoped(user, user.client_id, async (c) => ({
+      clients: (await c.query(`select id, name, created_at from mailgw.client where id = $1`, [user.client_id])).rows,
+    }));
+  }
+  return asOwner(async (c) => ({
+    clients: (await c.query(
+      `select c.id, c.name, c.created_at,
+              (select count(*)::int from mailgw.account a where a.client_id = c.id) as mailboxes,
+              (select count(*)::int from mailgw.admin_user u where u.client_id = c.id) as users
+         from mailgw.client c order by c.name`)).rows,
+  }));
+});
+
+route('POST', '/clients', async ({ user, body }) => {
+  requireBigua(user);
+  const b = V.client(body);
+  return asOwner(async (c) => {
+    const { rowCount } = await c.query(`insert into mailgw.client (id, name) values ($1, $2) on conflict (id) do nothing`, [b.id, b.name]);
+    if (!rowCount) throw new GatewayError('conflict', `Ya existe un cliente con el id "${b.id}".`, 409);
+    await audit(c, user, b.id, 'admin.client.create', { name: b.name });
+    return { client: { id: b.id, name: b.name } };
+  });
+});
+
+route('GET', '/clients/:client', async ({ user, params }) => scoped(user, params.client, async (c) => {
+  const client = (await c.query(`select id, name, created_at from mailgw.client where id = $1`, [params.client])).rows[0];
+  if (!client) throw notFound('No existe ese cliente.');
+  const mailboxes = (await c.query(
+    `select ${MAILBOX_COLS},
+            coalesce((select s.count from mailgw.send_counter s where s.account_id = a.id
+                       and s.day = (now() at time zone a.timezone)::date), 0) as sends_today
+       from mailgw.account a where client_id = $1 order by email`, [params.client])).rows;
+  const out = { client, mailboxes, can_manage_access: isBigua(user) };
+  if (isBigua(user)) {
+    out.users = (await c.query(
+      `select id, email, name, role, active, (password_hash is not null) as activated, setup_expires_at, last_login_at, created_at
+         from mailgw.admin_user where client_id = $1 order by email`, [params.client])).rows;
+    out.tokens = (await c.query(
+      `select id, name, scopes, created_at, expires_at, revoked_at, last_used_at
+         from mailgw.token where client_id = $1 order by created_at desc`, [params.client])).rows;
+  }
+  return out;
+}));
+
+route('GET', '/clients/:client/activity', async ({ user, params }) => scoped(user, params.client, async (c) => {
+  // Un usuario de cliente no lee admin_user: ve la actividad sin el nombre de quién la hizo.
+  const actor = isBigua(user)
+    ? `(select u.email from mailgw.admin_user u where u.id = l.actor_user_id)`
+    : `case when l.actor_user_id is not null then 'panel' end`;
+  return {
+    activity: (await c.query(
+      `select l.at, l.op, l.ok, l.error_code, l.detail, a.email as mailbox, ${actor} as actor
+         from mailgw.audit_log l left join mailgw.account a on a.id = l.account_id
+        where l.client_id = $1 order by l.id desc limit 200`, [params.client])).rows,
+  };
+}));
+
+// ----- buzones
+
+route('POST', '/clients/:client/mailboxes', async ({ user, params, body }) => {
+  const b = normalizeServers(V.mailboxCreate(body));
+  const email = b.email.trim().toLowerCase();
+  const secret = encryptSecret(b.password, aadFor(params.client, email));
+  return scoped(user, params.client, async (c) => {
+    const exists = await c.query(`select 1 from mailgw.client where id = $1`, [params.client]);
+    if (!exists.rowCount) throw notFound('No existe ese cliente.');
+    const { rows } = await c.query(
+      `insert into mailgw.account (client_id, email, display_name, username, secret_enc,
+          imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
+          timezone, daily_send_cap, append_sent, sent_folder, drafts_folder)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       on conflict (client_id, email) do nothing
+       returning ${MAILBOX_COLS}`,
+      [params.client, email, b.display_name ?? null, b.username ?? email, secret,
+        b.imap_host, b.imap_port, b.imap_security, b.smtp_host, b.smtp_port, b.smtp_security,
+        b.timezone, b.daily_send_cap, b.append_sent, b.sent_folder || null, b.drafts_folder || null]);
+    if (!rows.length) throw new GatewayError('conflict', `Ya existe el buzón ${email} en este cliente.`, 409);
+    await audit(c, user, params.client, 'admin.mailbox.create', { mailbox: email }, rows[0].id);
+    return { mailbox: rows[0] };
+  });
+});
+
+route('PATCH', '/clients/:client/mailboxes/:email', async ({ user, params, body }) => {
+  const b = normalizeServers(V.mailboxUpdate(body));
+  return scoped(user, params.client, async (c) => {
+    const m = await getMailbox(c, params.client, params.email);
+    const cols = Object.keys(b);
+    const sets = cols.map((k, i) => `${k} = $${i + 3}`).join(', ');
+    const vals = cols.map((k) => (k.endsWith('_folder') && !b[k] ? null : b[k]));
+    const { rows } = await c.query(
+      `update mailgw.account set ${sets}, updated_at = now() where client_id = $1 and id = $2 returning ${MAILBOX_COLS}`,
+      [params.client, m.id, ...vals]);
+    await audit(c, user, params.client, 'admin.mailbox.update', { mailbox: m.email, fields: cols }, m.id);
+    return { mailbox: rows[0] };
+  });
+});
+
+route('POST', '/clients/:client/mailboxes/:email/password', async ({ user, params, body }) => {
+  const b = V.mailboxPassword(body);
+  return scoped(user, params.client, async (c) => {
+    const m = await getMailbox(c, params.client, params.email);
+    const secret = encryptSecret(b.password, aadFor(params.client, m.email));
+    await c.query(`update mailgw.account set secret_enc = $3, status = 'active', auth_failures = 0, last_error = null, updated_at = now()
+                    where client_id = $1 and id = $2`, [params.client, m.id, secret]);
+    await audit(c, user, params.client, 'admin.mailbox.password', { mailbox: m.email }, m.id);
+    return {};
+  });
+});
+
+route('POST', '/clients/:client/mailboxes/:email/status', async ({ user, params, body }) => {
+  const b = V.mailboxStatus(body);
+  return scoped(user, params.client, async (c) => {
+    const m = await getMailbox(c, params.client, params.email);
+    await c.query(`update mailgw.account set status = $3, auth_failures = case when $3 = 'active' then 0 else auth_failures end,
+                          updated_at = now() where client_id = $1 and id = $2`, [params.client, m.id, b.status]);
+    await audit(c, user, params.client, `admin.mailbox.${b.status === 'active' ? 'activate' : 'pause'}`, { mailbox: m.email }, m.id);
+    return { status: b.status };
+  });
+});
+
+// Prueba IMAP y SMTP con lo guardado. Respeta el bloqueo por contraseña: un buzón en
+// auth_error se reactiva cambiando la contraseña, no probando de nuevo.
+route('POST', '/clients/:client/mailboxes/:email/check', async ({ user, params }) => {
+  const m = await scoped(user, params.client, (c) => getMailbox(c, params.client, params.email));
+  if (m.status === 'auth_error') throw errors.mailboxBlocked(m.email);
+  const password = decryptSecret(m.secret_enc, aadFor(m.client_id, m.email));
+  const result = { imap: null, smtp: null, folders: [] };
+  let authFailed = false;
+  let lastError = null;
+  try {
+    result.folders = await withImap(m, password, (cl) => listFolders(cl));
+    result.imap = 'ok';
+  } catch (e) {
+    result.imap = e.message;
+    authFailed ||= e.code === 'mail_auth_failed';
+    lastError = e.message;
+  }
+  try {
+    await verifySmtp(m, password);
+    result.smtp = 'ok';
+  } catch (e) {
+    result.smtp = e.message;
+    authFailed ||= e.code === 'mail_auth_failed';
+    lastError ??= e.message;
+  }
+  await scoped(user, params.client, async (c) => {
+    if (result.imap === 'ok' && result.smtp === 'ok') {
+      await c.query(`update mailgw.account set auth_failures = 0, last_ok_at = now(), last_error = null where id = $1`, [m.id]);
+    } else if (authFailed) {
+      await c.query(`update mailgw.account set auth_failures = auth_failures + 1,
+                       status = case when auth_failures + 1 >= 3 then 'auth_error' else status end,
+                       last_error = $2, last_error_at = now() where id = $1`, [m.id, lastError]);
+    } else {
+      await c.query(`update mailgw.account set last_error = $2, last_error_at = now() where id = $1`, [m.id, lastError]);
+    }
+    await audit(c, user, params.client, 'admin.mailbox.check', { mailbox: m.email, imap: result.imap === 'ok', smtp: result.smtp === 'ok' }, m.id);
+  });
+  result.folders = result.folders.map((f) => ({ path: f.path, special_use: f.special_use, messages: f.messages }));
+  return result;
+});
+
+route('DELETE', '/clients/:client/mailboxes/:email', async ({ user, params }) => {
+  requireBigua(user);
+  return asOwner(async (c) => {
+    const m = await getMailbox(c, params.client, params.email);
+    await c.query(`delete from mailgw.account where id = $1`, [m.id]);
+    await audit(c, user, params.client, 'admin.mailbox.delete', { mailbox: m.email });
+    return {};
+  });
+});
+
+// ----- usuarios de un cliente y equipo de Biguá
+
+route('POST', '/clients/:client/users', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.user(body);
+  const exists = await asOwner((c) => c.query(`select 1 from mailgw.client where id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('No existe ese cliente.');
+  const { user: created, setupToken } = await createUser({
+    email: b.email, name: b.name, role: 'client_admin', clientId: params.client, createdBy: user.id,
+  }).catch((e) => { throw /unique/.test(e.message) ? new GatewayError('conflict', 'Ya existe un usuario con ese email.', 409) : e; });
+  await asOwner((c) => audit(c, user, params.client, 'admin.user.create', { email: created.email }));
+  return { user: created, setup_token: setupToken };
+});
+
+route('GET', '/team', async ({ user }) => {
+  requireBigua(user);
+  return asOwner(async (c) => ({
+    users: (await c.query(
+      `select id, email, name, role, active, (password_hash is not null) as activated, setup_expires_at, last_login_at, created_at
+         from mailgw.admin_user where role = 'bigua_admin' order by email`)).rows,
+  }));
+});
+
+route('POST', '/team', async ({ user, body }) => {
+  requireBigua(user);
+  const b = V.user(body);
+  const { user: created, setupToken } = await createUser({ email: b.email, name: b.name, role: 'bigua_admin', createdBy: user.id })
+    .catch((e) => { throw /unique/.test(e.message) ? new GatewayError('conflict', 'Ya existe un usuario con ese email.', 409) : e; });
+  return { user: created, setup_token: setupToken };
+});
+
+route('POST', '/users/:id/reset', async ({ user, params }) => {
+  requireBigua(user);
+  const token = await resetSetup(params.id);
+  if (!token) throw notFound('No existe ese usuario.');
+  return { setup_token: token };
+});
+
+route('POST', '/users/:id/status', async ({ user, params, body }) => {
+  requireBigua(user);
+  const active = body?.active === true;
+  if (params.id === user.id && !active) throw errors.notAllowed('No podés desactivar tu propio usuario.');
+  return asOwner(async (c) => {
+    const { rowCount } = await c.query(`update mailgw.admin_user set active = $2 where id = $1`, [params.id, active]);
+    if (!rowCount) throw notFound('No existe ese usuario.');
+    if (!active) await c.query(`delete from mailgw.admin_session where user_id = $1`, [params.id]);
+    return { active };
+  });
+});
+
+// ----- tokens de Grok Bot
+
+route('POST', '/clients/:client/tokens', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.token(body);
+  return asOwner(async (c) => {
+    const exists = await c.query(`select 1 from mailgw.client where id = $1`, [params.client]);
+    if (!exists.rowCount) throw notFound('No existe ese cliente.');
+    const { token, hash } = newToken();
+    const { rows } = await c.query(
+      `insert into mailgw.token (client_id, name, token_hash, scopes, expires_at)
+       values ($1, $2, $3, $4, now() + make_interval(days => $5)) returning id, name, scopes, expires_at`,
+      [params.client, b.name, hash, b.scopes, b.days]);
+    await audit(c, user, params.client, 'admin.token.create', { name: b.name, scopes: b.scopes });
+    return { token: rows[0], secret: token };
+  });
+});
+
+route('POST', '/clients/:client/tokens/:id/revoke', async ({ user, params }) => {
+  requireBigua(user);
+  return asOwner(async (c) => {
+    const { rowCount } = await c.query(
+      `update mailgw.token set revoked_at = now() where id = $1 and client_id = $2 and revoked_at is null`, [params.id, params.client]);
+    if (!rowCount) throw notFound('No hay un token activo con ese id en este cliente.');
+    await audit(c, user, params.client, 'admin.token.revoke', { token_id: params.id });
+    return {};
+  });
+});
+
+// ---------------------------------------------------------------- despacho
+
+export async function handleAdminApi(req, res, path, body) {
+  // Toda llamada al panel trae esta cabecera: un formulario o una imagen de otro sitio no la
+  // puede mandar, y sin CORS un script de otro origen tampoco.
+  if (req.headers['x-mailgw-admin'] !== '1') throw forbidden();
+  const origin = req.headers.origin;
+  if (origin) {
+    let host = null;
+    try { host = new URL(origin).host; } catch { /* origen ilegible */ }
+    if (host !== req.headers.host) throw forbidden();
+  }
+  const secure = process.env.MAILGW_INSECURE_COOKIES !== '1';
+  const sub = path.slice('/admin/api'.length) || '/';
+  for (const r of routes) {
+    if (r.method !== req.method) continue;
+    const m = r.re.exec(sub);
+    if (!m) continue;
+    let user = null;
+    if (r.auth) {
+      user = await sessionUser(tokenFromCookie(req));
+      if (!user) throw new GatewayError('unauthorized', 'La sesión venció. Ingresá de nuevo.', 401);
+    }
+    const params = {};
+    for (const [k, v] of Object.entries(m.groups ?? {})) {
+      try { params[k] = decodeURIComponent(v); } catch { throw errors.invalid('Ruta mal formada.'); }
+    }
+    return r.handler({ req, res, body, user, params, secure });
+  }
+  throw notFound('Ruta inexistente.');
+}
+

@@ -92,12 +92,15 @@ for i in $(seq 1 20); do su postgres -c "psql -qAtc 'select 1'" >/dev/null 2>&1 
 # aplicación estuvieran mal, porque un superusuario puede tomar cualquier rol.
 su postgres -c "psql -qc 'drop database if exists mailgw_test'" >/dev/null
 su postgres -c "psql -qc 'drop role if exists mailgw_app'" >/dev/null
+su postgres -c "psql -qc 'drop role if exists mailgw_portal'" >/dev/null
 su postgres -c "psql -qc 'drop role if exists mailgw_owner'" >/dev/null
 su postgres -c "psql -qc \"create role mailgw_owner login createrole nosuperuser password 'mailgw_owner'\"" >/dev/null
 su postgres -c "psql -qc 'create database mailgw_test owner mailgw_owner'" >/dev/null
 
 export DATABASE_URL="postgres://mailgw_owner:mailgw_owner@127.0.0.1:5432/mailgw_test"
 export MAILGW_DB_SSL=off
+# Dovecot y SMTP de prueba escuchan en 127.0.0.1 y puertos altos.
+export MAILGW_ALLOW_PRIVATE_HOSTS=1
 export MAILGW_ENC_KEYS="k2:$(openssl rand -base64 32),k1:$(openssl rand -base64 32)"
 export NODE_EXTRA_CA_CERTS="$T/ca.pem"
 export MAILGW_TEST_DIR="$T"

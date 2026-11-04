@@ -18,7 +18,7 @@ export const errors = {
   mailboxPaused: (email) => new GatewayError('mailbox_paused', `El buzón ${email} está pausado.`, 423),
   mailboxBlocked: (email) => new GatewayError('mailbox_blocked',
     `El buzón ${email} quedó bloqueado después de tres fallas de autenticación seguidas. ` +
-    'Un operador tiene que revisar la contraseña y reactivarlo (bin/admin.mjs reactivate). ' +
+    'Hay que cargar la contraseña correcta en el panel /admin (Contraseña) o con bin/admin.mjs set-password. ' +
     'Se bloquea para no disparar el bloqueo por intentos fallidos del servidor de correo.', 423),
   authFailed: (proto) => new GatewayError('mail_auth_failed',
     `El servidor ${proto} rechazó el usuario o la contraseña del buzón.`, 502),

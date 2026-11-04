@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>SDR Bot · Buzones</title>
+  <link rel="stylesheet" href="/admin/app.css">
+  <script src="/admin/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">SDR Bot <span>· buzones</span></a>
+    <nav id="nav" hidden>
+      <a href="#/" data-nav="clientes">Clientes</a>
+      <a href="#/equipo" data-nav="equipo" data-bigua>Equipo Biguá</a>
+    </nav>
+    <div id="who" class="who" hidden>
+      <span id="who-name"></span>
+      <button type="button" class="link" id="btn-password">Cambiar contraseña</button>
+      <button type="button" class="link" id="btn-logout">Salir</button>
+    </div>
+  </header>
+  <main id="main" aria-live="polite"></main>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="dlg"><form method="dialog" id="dlg-form"></form></dialog>
+  <noscript>El panel necesita JavaScript.</noscript>
+</body>
+</html>

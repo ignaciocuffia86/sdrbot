@@ -1,0 +1,548 @@
+// Panel /admin del gateway de correo. Sin dependencias ni compilación.
+// Todo lo que viene del servidor se inserta como texto (textContent), nunca como HTML.
+
+'use strict';
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const main = $('#main');
+const dlg = $('#dlg');
+const dlgForm = $('#dlg-form');
+let me = null;
+
+// ---------------------------------------------------------------- utilidades
+
+function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs ?? {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v;
+    else if (v === true) el.setAttribute(k, '');
+    else el.setAttribute(k, String(v));
+  }
+  for (const c of children.flat(Infinity)) {
+    if (c === null || c === undefined || c === false) continue;
+    el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+
+class ApiError extends Error {
+  constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+}
+
+async function api(method, path, body) {
+  const res = await fetch(`/admin/api${path}`, {
+    method,
+    credentials: 'same-origin',
+    headers: { 'x-mailgw-admin': '1', ...(body ? { 'content-type': 'application/json' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let json = null;
+  try { json = await res.json(); } catch { /* sin cuerpo */ }
+  if (!res.ok || !json?.ok) {
+    const err = new ApiError(res.status, json?.error?.code ?? 'error', json?.error?.message ?? `Error ${res.status}`);
+    if (res.status === 401 && path !== '/login' && path !== '/activate' && path !== '/me/password') {
+      me = null;
+      renderLogin(err.message);
+    }
+    throw err;
+  }
+  return json.data;
+}
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3500);
+}
+
+const fmtDate = (v) => (v ? new Date(v).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+const enc = encodeURIComponent;
+
+function statusBadge(s) {
+  const map = { active: ['activo', 'b-ok'], paused: ['pausado', 'b-mute'], auth_error: ['bloqueado: contraseña', 'b-err'] };
+  const [label, cls] = map[s] ?? [s, 'b-mute'];
+  return h('span', { class: `badge ${cls}` }, label);
+}
+
+// Ejecuta una acción de un botón: lo deshabilita mientras corre y muestra el error.
+async function busy(btn, fn, errEl) {
+  btn.disabled = true;
+  if (errEl) errEl.textContent = '';
+  try { return await fn(); } catch (e) {
+    if (errEl) errEl.textContent = e.message; else toast(e.message);
+    return undefined;
+  } finally { btn.disabled = false; }
+}
+
+// ---------------------------------------------------------------- diálogo
+
+function openDialog(title, body, { submit, submitLabel = 'Guardar', danger = false, cancelLabel = 'Cancelar' } = {}) {
+  const err = h('p', { class: 'err', role: 'alert' });
+  const ok = submit ? h('button', { type: 'submit', class: danger ? 'danger' : 'primary', value: 'ok' }, submitLabel) : null;
+  dlgForm.replaceChildren(
+    h('h2', {}, title),
+    body,
+    err,
+    h('div', { class: 'dlg-actions' },
+      h('button', { type: 'button', onclick: () => dlg.close() }, submit ? cancelLabel : 'Cerrar'),
+      ok),
+  );
+  dlgForm.onsubmit = submit ? async (ev) => {
+    ev.preventDefault();
+    const done = await busy(ok, () => submit(new FormData(dlgForm)), err);
+    if (done !== undefined && done !== false) dlg.close();
+  } : null;
+  dlg.showModal();
+  const first = dlgForm.querySelector('input:not([type=hidden]), select');
+  if (first) first.focus();
+}
+
+// Muestra un secreto que no se vuelve a ver.
+function showSecret(title, value, explanation) {
+  const input = h('input', { readonly: true, value });
+  openDialog(title, h('div', {},
+    h('p', {}, explanation),
+    h('div', { class: 'secret' }, input,
+      h('button', { type: 'button', onclick: async () => {
+        try { await navigator.clipboard.writeText(value); toast('Copiado.'); } catch { input.select(); }
+      } }, 'Copiar')),
+    h('p', { class: 'note' }, 'Se muestra una sola vez: la base guarda sólo el hash. Si se pierde, hay que generar otro.')));
+  input.select();
+}
+
+const activationLink = (token) => `${location.origin}/admin#activar=${token}`;
+
+function field(label, input, hint) {
+  return h('div', {}, h('label', {}, label), input, hint ? h('div', { class: 'small muted' }, hint) : null);
+}
+
+// ---------------------------------------------------------------- sesión
+
+function renderShell() {
+  const logged = Boolean(me);
+  $('#nav').hidden = !logged || me.role !== 'bigua_admin';
+  $('#who').hidden = !logged;
+  if (logged) $('#who-name').textContent = `${me.name} · ${me.role === 'bigua_admin' ? 'Biguá' : me.client_id}`;
+}
+
+function renderLogin(message) {
+  me = null;
+  renderShell();
+  const err = h('p', { class: 'err', role: 'alert' }, message ?? '');
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Ingresar');
+  const form = h('form', { class: 'card narrow' },
+    h('h1', {}, 'Ingresar'),
+    h('p', { class: 'sub' }, 'Panel de buzones del SDR Bot.'),
+    field('Email', h('input', { name: 'email', type: 'email', autocomplete: 'username', required: true })),
+    field('Contraseña', h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
+    err,
+    h('div', { class: 'row' }, btn));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const r = await busy(btn, () => api('POST', '/login', { email: fd.get('email'), password: fd.get('password') }), err);
+    if (r) { me = r.me; route(); }
+  });
+  main.replaceChildren(form);
+  $('input', form).focus();
+}
+
+function renderActivate(token) {
+  me = null;
+  renderShell();
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Activar cuenta');
+  const form = h('form', { class: 'card narrow' },
+    h('h1', {}, 'Elegí tu contraseña'),
+    h('p', { class: 'sub' }, 'Mínimo 12 caracteres. Con esto queda activada tu cuenta del panel.'),
+    field('Contraseña nueva', h('input', { name: 'p1', type: 'password', autocomplete: 'new-password', required: true, minlength: 12 })),
+    field('Repetirla', h('input', { name: 'p2', type: 'password', autocomplete: 'new-password', required: true, minlength: 12 })),
+    err,
+    h('div', { class: 'row' }, btn));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    if (fd.get('p1') !== fd.get('p2')) { err.textContent = 'Las contraseñas no coinciden.'; return; }
+    const r = await busy(btn, () => api('POST', '/activate', { token, password: fd.get('p1') }), err);
+    if (r) {
+      history.replaceState(null, '', '/admin#/');
+      renderLogin();
+      toast(`Cuenta ${r.email} activada. Ya podés ingresar.`);
+    }
+  });
+  main.replaceChildren(form);
+  $('input', form).focus();
+}
+
+$('#btn-logout').addEventListener('click', async () => {
+  try { await api('POST', '/logout'); } catch { /* igual se sale */ }
+  me = null;
+  history.replaceState(null, '', '/admin#/');
+  renderLogin();
+});
+
+$('#btn-password').addEventListener('click', () => {
+  openDialog('Cambiar contraseña', h('div', {},
+    field('Contraseña actual', h('input', { name: 'current', type: 'password', autocomplete: 'current-password', required: true })),
+    field('Contraseña nueva', h('input', { name: 'next', type: 'password', autocomplete: 'new-password', required: true, minlength: 12 }),
+      'Mínimo 12 caracteres.')), {
+    submit: async (fd) => {
+      await api('POST', '/me/password', { current: fd.get('current'), next: fd.get('next') });
+      toast('Contraseña cambiada.');
+      return true;
+    },
+  });
+});
+
+// ---------------------------------------------------------------- clientes
+
+async function renderClients() {
+  const { clients } = await api('GET', '/clients');
+  if (me.role !== 'bigua_admin') { location.hash = `#/c/${enc(me.client_id)}`; return; }
+  const list = clients.length
+    ? h('div', { class: 'grid' }, clients.map((c) => h('a', { class: 'card client-card', href: `#/c/${enc(c.id)}` },
+      h('strong', {}, c.name), h('div', { class: 'mono muted' }, c.id),
+      h('div', { class: 'small muted' }, `${c.mailboxes} buzón(es) · ${c.users} usuario(s)`))))
+    : h('div', { class: 'card empty' }, 'Todavía no hay clientes.');
+  main.replaceChildren(
+    h('div', { class: 'row spread' },
+      h('div', {}, h('h1', {}, 'Clientes'), h('p', { class: 'sub' }, 'Cada cliente tiene sus buzones, sus usuarios y sus tokens; nada se cruza entre clientes.')),
+      h('button', { class: 'primary', onclick: newClientDialog }, 'Nuevo cliente')),
+    list);
+}
+
+function newClientDialog() {
+  openDialog('Nuevo cliente', h('div', {},
+    field('Nombre', h('input', { name: 'name', required: true, maxlength: 120, placeholder: 'BairesQA' })),
+    field('Identificador', h('input', { name: 'id', required: true, pattern: '[a-z0-9][a-z0-9\\-]{1,40}', placeholder: 'bairesqa' }),
+      'Minúsculas, números y guiones. No se puede cambiar después.')), {
+    submit: async (fd) => {
+      const { client } = await api('POST', '/clients', { id: fd.get('id'), name: fd.get('name') });
+      location.hash = `#/c/${enc(client.id)}`;
+      return true;
+    },
+  });
+}
+
+// ---------------------------------------------------------------- un cliente
+
+async function renderClient(clientId, tab) {
+  const data = await api('GET', `/clients/${enc(clientId)}`);
+  const bigua = data.can_manage_access;
+  const tabs = [['buzones', 'Buzones'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
+  if (!tabs.some(([k]) => k === tab)) tab = 'buzones';
+  const base = `#/c/${enc(clientId)}`;
+  const body = h('div');
+  main.replaceChildren(
+    bigua ? h('a', { href: '#/', class: 'small' }, '← Clientes') : null,
+    h('h1', {}, data.client.name),
+    h('p', { class: 'sub mono' }, data.client.id),
+    h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label))),
+    body);
+  const reload = () => renderClient(clientId, tab);
+  if (tab === 'buzones') body.append(mailboxesView(data, reload));
+  if (tab === 'usuarios') body.append(usersView(data, reload));
+  if (tab === 'tokens') body.append(tokensView(data, reload));
+  if (tab === 'actividad') body.append(await activityView(clientId));
+}
+
+// ----- buzones
+
+function mailboxesView(data, reload) {
+  const cid = data.client.id;
+  const add = h('button', { class: 'primary', onclick: () => mailboxDialog(cid, null, reload) }, 'Agregar buzón');
+  if (!data.mailboxes.length) {
+    return h('div', {}, h('div', { class: 'card empty' }, h('p', {}, 'Este cliente todavía no tiene buzones.'), add));
+  }
+  const rows = data.mailboxes.map((m) => h('tr', {},
+    h('td', {}, h('strong', {}, m.email), m.display_name ? h('div', { class: 'small muted' }, m.display_name) : null),
+    h('td', { class: 'small' },
+      h('div', {}, `IMAP ${m.imap_host}:${m.imap_port} (${m.imap_security})`),
+      h('div', {}, `SMTP ${m.smtp_host}:${m.smtp_port} (${m.smtp_security})`)),
+    h('td', {}, statusBadge(m.status),
+      m.last_error ? h('div', { class: 'small err' }, m.last_error) : null,
+      h('div', { class: 'small muted' }, `último OK: ${fmtDate(m.last_ok_at)}`)),
+    h('td', { class: 'small' }, `${m.sends_today} / ${m.daily_send_cap}`),
+    h('td', {}, h('div', { class: 'actions' },
+      h('button', { class: 'sm', onclick: (ev) => checkMailbox(ev.currentTarget, cid, m, reload) }, 'Probar'),
+      h('button', { class: 'sm', onclick: () => mailboxDialog(cid, m, reload) }, 'Editar'),
+      h('button', { class: 'sm', onclick: () => passwordDialog(cid, m, reload) }, 'Contraseña'),
+      m.status === 'paused' || m.status === 'auth_error'
+        ? (m.status === 'paused' ? h('button', { class: 'sm', onclick: (ev) => setStatus(ev.currentTarget, cid, m, 'active', reload) }, 'Reactivar') : null)
+        : h('button', { class: 'sm', onclick: (ev) => setStatus(ev.currentTarget, cid, m, 'paused', reload) }, 'Pausar'),
+      data.can_manage_access ? h('button', { class: 'sm danger', onclick: () => deleteMailbox(cid, m, reload) }, 'Eliminar') : null))));
+  return h('div', {},
+    h('div', { class: 'row spread' }, h('p', { class: 'muted small' },
+      'Las contraseñas se guardan cifradas y no se vuelven a mostrar. Un buzón bloqueado por contraseña se reactiva cargando la correcta.'), add),
+    h('table', {}, h('thead', {}, h('tr', {}, ['Buzón', 'Servidores', 'Estado', 'Envíos hoy', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows)));
+}
+
+const PRESETS = { tls: { imap: 993, smtp: 465 }, starttls: { imap: 143, smtp: 587 } };
+
+function mailboxDialog(clientId, m, reload) {
+  const isNew = !m;
+  const v = m ?? { imap_security: 'tls', smtp_security: 'tls', imap_port: 993, smtp_port: 465, timezone: 'America/Argentina/Buenos_Aires', daily_send_cap: 40, append_sent: true };
+  const sec = (name, value) => h('select', { name }, h('option', { value: 'tls', selected: value === 'tls' }, 'TLS'), h('option', { value: 'starttls', selected: value === 'starttls' }, 'STARTTLS'));
+  const imapSec = sec('imap_security', v.imap_security);
+  const smtpSec = sec('smtp_security', v.smtp_security);
+  const imapPort = h('input', { name: 'imap_port', type: 'number', min: 1, max: 65535, required: true, value: v.imap_port });
+  const smtpPort = h('input', { name: 'smtp_port', type: 'number', min: 1, max: 65535, required: true, value: v.smtp_port });
+  imapSec.addEventListener('change', () => { imapPort.value = PRESETS[imapSec.value].imap; });
+  smtpSec.addEventListener('change', () => { smtpPort.value = PRESETS[smtpSec.value].smtp; });
+  const imapHost = h('input', { name: 'imap_host', required: true, value: v.imap_host ?? '', placeholder: 'mail.dominio.com' });
+  const smtpHost = h('input', { name: 'smtp_host', required: true, value: v.smtp_host ?? '', placeholder: 'mail.dominio.com' });
+  imapHost.addEventListener('change', () => { if (!smtpHost.value) smtpHost.value = imapHost.value; });
+  const email = h('input', { name: 'email', type: 'email', required: isNew, disabled: !isNew, value: v.email ?? '' });
+  const username = h('input', { name: 'username', value: v.username ?? '', placeholder: 'igual al email' });
+
+  const body = h('div', {},
+    h('div', { class: 'cols2' },
+      field('Email del buzón', email, isNew ? null : 'El email no se cambia: para otro, crear otro buzón.'),
+      field('Nombre que ve el destinatario', h('input', { name: 'display_name', value: v.display_name ?? '', placeholder: 'Ana Pérez' }))),
+    h('div', { class: 'cols2' },
+      field('Usuario de login', username, 'Casi siempre es el email.'),
+      isNew ? field('Contraseña del buzón', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'new-password' }),
+        'Se guarda cifrada; no se vuelve a mostrar.') : h('div')),
+    h('fieldset', {}, h('legend', {}, 'Entrada (IMAP)'),
+      h('div', { class: 'cols' }, field('Servidor', imapHost), field('Seguridad', imapSec), field('Puerto', imapPort))),
+    h('fieldset', {}, h('legend', {}, 'Salida (SMTP)'),
+      h('div', { class: 'cols' }, field('Servidor', smtpHost), field('Seguridad', smtpSec), field('Puerto', smtpPort))),
+    h('fieldset', {}, h('legend', {}, 'Comportamiento'),
+      h('div', { class: 'cols2' },
+        field('Tope de envíos por día', h('input', { name: 'daily_send_cap', type: 'number', min: 0, max: 1000, required: true, value: v.daily_send_cap })),
+        field('Zona horaria', h('input', { name: 'timezone', required: true, value: v.timezone }))),
+      h('div', { class: 'cols2' },
+        field('Carpeta de enviados', h('input', { name: 'sent_folder', value: v.sent_folder ?? '', placeholder: 'automática' })),
+        field('Carpeta de borradores', h('input', { name: 'drafts_folder', value: v.drafts_folder ?? '', placeholder: 'automática' }))),
+      h('label', { class: 'check' }, h('input', { name: 'append_sent', type: 'checkbox', checked: v.append_sent }),
+        'Guardar copia de lo enviado en la carpeta de enviados')));
+
+  openDialog(isNew ? 'Agregar buzón' : `Editar ${m.email}`, body, {
+    submitLabel: isNew ? 'Agregar' : 'Guardar',
+    submit: async (fd) => {
+      const payload = {
+        display_name: fd.get('display_name').trim() || null,
+        username: fd.get('username').trim() || undefined,
+        imap_host: fd.get('imap_host').trim(), imap_port: Number(fd.get('imap_port')), imap_security: fd.get('imap_security'),
+        smtp_host: fd.get('smtp_host').trim(), smtp_port: Number(fd.get('smtp_port')), smtp_security: fd.get('smtp_security'),
+        daily_send_cap: Number(fd.get('daily_send_cap')), timezone: fd.get('timezone').trim(),
+        sent_folder: fd.get('sent_folder').trim() || null, drafts_folder: fd.get('drafts_folder').trim() || null,
+        append_sent: fd.get('append_sent') === 'on',
+      };
+      if (isNew) {
+        payload.email = fd.get('email').trim();
+        payload.password = fd.get('password');
+        if (!payload.username) delete payload.username;
+        await api('POST', `/clients/${enc(clientId)}/mailboxes`, payload);
+        toast(`Buzón ${payload.email} agregado. Probá la conexión.`);
+      } else {
+        if (!payload.username) delete payload.username;
+        await api('PATCH', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}`, payload);
+        toast('Cambios guardados.');
+      }
+      reload();
+      return true;
+    },
+  });
+}
+
+function passwordDialog(clientId, m, reload) {
+  openDialog(`Contraseña de ${m.email}`, h('div', {},
+    h('p', { class: 'muted' }, 'Reemplaza la guardada y, si el buzón estaba bloqueado por contraseña, lo reactiva.'),
+    field('Contraseña nueva del buzón', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'new-password' }))), {
+    submit: async (fd) => {
+      await api('POST', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}/password`, { password: fd.get('password') });
+      toast('Contraseña actualizada. Probá la conexión.');
+      reload();
+      return true;
+    },
+  });
+}
+
+async function checkMailbox(btn, clientId, m, reload) {
+  const label = btn.textContent;
+  btn.textContent = 'Probando…';
+  const r = await busy(btn, () => api('POST', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}/check`));
+  btn.textContent = label;
+  if (!r) { reload(); return; }
+  const line = (name, v) => h('li', {}, h('strong', {}, `${name}: `), v === 'ok' ? h('span', { class: 'badge b-ok' }, 'conecta') : h('span', { class: 'err' }, v));
+  openDialog(`Prueba de ${m.email}`, h('div', { class: 'result' },
+    h('ul', {}, line('IMAP (leer)', r.imap), line('SMTP (enviar)', r.smtp)),
+    r.folders.length ? h('div', {}, h('p', { class: 'muted small' }, 'Carpetas:'),
+      h('ul', { class: 'small' }, r.folders.map((f) => h('li', {}, f.path, f.special_use ? h('span', { class: 'muted' }, ` ${f.special_use}`) : null,
+        f.messages !== null ? h('span', { class: 'muted' }, ` · ${f.messages} msj.`) : null)))) : null));
+  reload();
+}
+
+async function setStatus(btn, clientId, m, status, reload) {
+  const r = await busy(btn, () => api('POST', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}/status`, { status }));
+  if (r) { toast(status === 'paused' ? 'Buzón pausado: el bot no lo usa hasta reactivarlo.' : 'Buzón reactivado.'); reload(); }
+}
+
+function deleteMailbox(clientId, m, reload) {
+  openDialog(`Eliminar ${m.email}`, h('div', {},
+    h('p', {}, 'Se borra el buzón del gateway con su contraseña cifrada y su historial de envíos. El correo en el servidor no se toca.'),
+    h('p', { class: 'note' }, 'Para dejar de usarlo un tiempo, mejor pausarlo.')), {
+    submitLabel: 'Eliminar', danger: true,
+    submit: async () => {
+      await api('DELETE', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}`);
+      toast('Buzón eliminado.');
+      reload();
+      return true;
+    },
+  });
+}
+
+// ----- usuarios
+
+function userRows(users, reload) {
+  return users.map((u) => h('tr', {},
+    h('td', {}, h('strong', {}, u.name), h('div', { class: 'small muted' }, u.email)),
+    h('td', {}, !u.active ? h('span', { class: 'badge b-mute' }, 'desactivado')
+      : u.activated ? h('span', { class: 'badge b-ok' }, 'activo') : h('span', { class: 'badge b-warn' }, 'falta activar')),
+    h('td', { class: 'small' }, fmtDate(u.last_login_at)),
+    h('td', {}, h('div', { class: 'actions' },
+      h('button', { class: 'sm', onclick: async (ev) => {
+        const r = await busy(ev.currentTarget, () => api('POST', `/users/${enc(u.id)}/reset`));
+        if (r) showSecret(`Enlace para ${u.email}`, activationLink(r.setup_token),
+          'Mandale este enlace por un canal seguro. Sirve 24 horas, una vez, para elegir una contraseña nueva.');
+      } }, u.activated ? 'Nueva contraseña' : 'Nuevo enlace'),
+      u.id === me.id ? null : h('button', { class: 'sm', onclick: async (ev) => {
+        const r = await busy(ev.currentTarget, () => api('POST', `/users/${enc(u.id)}/status`, { active: !u.active }));
+        if (r) reload();
+      } }, u.active ? 'Desactivar' : 'Activar')))));
+}
+
+function newUserDialog(title, path, reload) {
+  openDialog(title, h('div', {},
+    field('Nombre', h('input', { name: 'name', required: true, maxlength: 120 })),
+    field('Email', h('input', { name: 'email', type: 'email', required: true }))), {
+    submitLabel: 'Crear',
+    submit: async (fd) => {
+      const r = await api('POST', path, { name: fd.get('name').trim(), email: fd.get('email').trim() });
+      reload();
+      setTimeout(() => showSecret(`Enlace de activación para ${r.user.email}`, activationLink(r.setup_token),
+        'Mandale este enlace por un canal seguro. Sirve 24 horas y una sola vez: con él elige su contraseña.'), 0);
+      return true;
+    },
+  });
+}
+
+function usersView(data, reload) {
+  const add = h('button', { class: 'primary', onclick: () => newUserDialog(`Nuevo usuario de ${data.client.name}`, `/clients/${enc(data.client.id)}/users`, reload) }, 'Agregar usuario');
+  return h('div', {},
+    h('div', { class: 'row spread' }, h('p', { class: 'muted small' },
+      'Los usuarios de un cliente sólo ven y administran los buzones de ese cliente.'), add),
+    data.users.length
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['Usuario', 'Estado', 'Último ingreso', ''].map((t) => h('th', {}, t)))), h('tbody', {}, userRows(data.users, reload)))
+      : h('div', { class: 'card empty' }, 'Sin usuarios todavía.'));
+}
+
+// ----- tokens
+
+function tokensView(data, reload) {
+  const cid = data.client.id;
+  const add = h('button', { class: 'primary', onclick: () => {
+    openDialog('Nuevo token para Grok Bot', h('div', {},
+      field('Nombre', h('input', { name: 'name', required: true, placeholder: 'grok-bot SDR' })),
+      h('label', {}, 'Permisos'),
+      ['read', 'draft', 'send', 'manage'].map((s) => h('label', { class: 'check' },
+        h('input', { type: 'checkbox', name: 'scopes', value: s, checked: s !== 'manage' }),
+        { read: 'read — leer y sincronizar', draft: 'draft — crear borradores', send: 'send — enviar y responder', manage: 'manage — marcar, mover, crear carpetas' }[s])),
+      field('Vence en (días)', h('input', { name: 'days', type: 'number', min: 1, max: 730, value: 120, required: true }))), {
+      submitLabel: 'Generar',
+      submit: async (fd) => {
+        const r = await api('POST', `/clients/${enc(cid)}/tokens`, { name: fd.get('name').trim(), scopes: fd.getAll('scopes'), days: Number(fd.get('days')) });
+        reload();
+        setTimeout(() => showSecret(`Token ${r.token.name}`, r.secret,
+          'Cargalo como secreto en la cuenta de Grok Bot del cliente (cabecera Authorization: Bearer). No lo pegues en chats ni en el repo.'), 0);
+        return true;
+      },
+    });
+  } }, 'Generar token');
+  const rows = data.tokens.map((t) => {
+    const expired = t.expires_at && new Date(t.expires_at) < new Date();
+    const state = t.revoked_at ? h('span', { class: 'badge b-mute' }, 'revocado')
+      : expired ? h('span', { class: 'badge b-warn' }, 'vencido') : h('span', { class: 'badge b-ok' }, 'vigente');
+    return h('tr', {},
+      h('td', {}, h('strong', {}, t.name), h('div', { class: 'mono muted' }, t.id.slice(0, 8))),
+      h('td', { class: 'small' }, t.scopes.join(', ')),
+      h('td', {}, state),
+      h('td', { class: 'small' }, `vence ${fmtDate(t.expires_at)}`, h('div', { class: 'muted' }, `último uso ${fmtDate(t.last_used_at)}`)),
+      h('td', {}, t.revoked_at ? null : h('button', { class: 'sm danger', onclick: () => openDialog(`Revocar ${t.name}`,
+        h('p', {}, 'El bot que use este token deja de tener acceso en el acto.'), {
+          submitLabel: 'Revocar', danger: true,
+          submit: async () => { await api('POST', `/clients/${enc(cid)}/tokens/${enc(t.id)}/revoke`); reload(); return true; },
+        }) }, 'Revocar')));
+  });
+  return h('div', {},
+    h('div', { class: 'row spread' }, h('p', { class: 'muted small' },
+      'El token es lo que usa la cuenta de Grok Bot del cliente para llegar a sus buzones. Sólo ve los buzones de este cliente.'), add),
+    rows.length
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['Token', 'Permisos', 'Estado', 'Vigencia', ''].map((x) => h('th', {}, x)))), h('tbody', {}, rows))
+      : h('div', { class: 'card empty' }, 'Sin tokens todavía.'));
+}
+
+// ----- actividad
+
+const OPS = {
+  'admin.mailbox.create': 'alta de buzón', 'admin.mailbox.update': 'edición de buzón', 'admin.mailbox.password': 'cambio de contraseña',
+  'admin.mailbox.check': 'prueba de conexión', 'admin.mailbox.pause': 'pausa', 'admin.mailbox.activate': 'reactivación',
+  'admin.mailbox.delete': 'baja de buzón', 'admin.client.create': 'alta del cliente', 'admin.user.create': 'alta de usuario',
+  'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
+};
+
+async function activityView(clientId) {
+  const { activity } = await api('GET', `/clients/${enc(clientId)}/activity`);
+  if (!activity.length) return h('div', { class: 'card empty' }, 'Sin actividad registrada.');
+  return h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Qué', 'Buzón', 'Quién', 'Resultado'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, activity.map((a) => h('tr', {},
+      h('td', { class: 'small' }, fmtDate(a.at)),
+      h('td', {}, OPS[a.op] ?? a.op),
+      h('td', { class: 'small' }, a.mailbox ?? a.detail?.mailbox ?? '—'),
+      h('td', { class: 'small' }, a.actor ?? 'bot'),
+      h('td', {}, a.ok ? h('span', { class: 'badge b-ok' }, 'ok') : h('span', { class: 'badge b-err' }, a.error_code ?? 'error'))))));
+}
+
+// ---------------------------------------------------------------- equipo de Biguá
+
+async function renderTeam() {
+  const { users } = await api('GET', '/team');
+  const reload = () => renderTeam();
+  main.replaceChildren(
+    h('div', { class: 'row spread' },
+      h('div', {}, h('h1', {}, 'Equipo Biguá'), h('p', { class: 'sub' }, 'Operadores con acceso a todos los clientes.')),
+      h('button', { class: 'primary', onclick: () => newUserDialog('Nuevo operador de Biguá', '/team', reload) }, 'Agregar operador')),
+    h('table', {}, h('thead', {}, h('tr', {}, ['Usuario', 'Estado', 'Último ingreso', ''].map((t) => h('th', {}, t)))), h('tbody', {}, userRows(users, reload))));
+}
+
+// ---------------------------------------------------------------- navegación
+
+async function route() {
+  const hash = location.hash;
+  const act = /^#activar=([A-Za-z0-9_-]+)$/.exec(hash);
+  if (act) return renderActivate(act[1]);
+  if (!me) {
+    try { me = (await api('GET', '/me')).me; } catch { return; }
+  }
+  renderShell();
+  const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  for (const a of document.querySelectorAll('nav a')) a.classList.toggle('on', a.dataset.nav === (parts[0] === 'equipo' ? 'equipo' : 'clientes'));
+  main.replaceChildren(h('p', { class: 'muted' }, 'Cargando…'));
+  try {
+    if (parts[0] === 'c' && parts[1]) await renderClient(parts[1], parts[2]);
+    else if (parts[0] === 'equipo' && me.role === 'bigua_admin') await renderTeam();
+    else await renderClients();
+  } catch (e) {
+    if (e.status !== 401) main.replaceChildren(h('div', { class: 'card empty' }, h('p', { class: 'err' }, e.message), h('a', { href: '#/' }, 'Volver')));
+  }
+}
+
+window.addEventListener('hashchange', route);
+route();

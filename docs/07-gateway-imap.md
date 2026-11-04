@@ -49,13 +49,14 @@ Doce operaciones, cada una disponible como `POST /v1/<op>` (para los scripts) y 
 
 | Riesgo | Control |
 |---|---|
-| Biguá guarda la contraseña de un buzón del cliente | Cifrada con AES-256-GCM; la llave está sólo en Vercel (`MAILGW_ENC_KEYS`), nunca en la base; el texto cifrado está atado a su buzón. La contraseña entra por la CLI de un operador, sin pasar por mail ni chat. El DPA tiene que decir que Biguá guarda credenciales de acceso al correo |
+| Biguá guarda la contraseña de un buzón del cliente | Cifrada con AES-256-GCM; la llave está sólo en Vercel (`MAILGW_ENC_KEYS`), nunca en la base; el texto cifrado está atado a su buzón. La contraseña la carga el cliente o un operador en el panel `/admin` (o por la CLI), sin pasar por mail ni chat, y nunca vuelve al navegador. El DPA tiene que decir que Biguá guarda credenciales de acceso al correo |
 | Un token filtrado | Hash en la base, vencimiento, revocación, permisos separados (`read`, `draft`, `send`, `manage`) y alcance limitado a los buzones de su cliente |
 | Que se crucen datos entre clientes | Dos barreras. El gateway filtra cada consulta por el cliente del token, y además la base lo hace cumplir: cada pedido corre con un rol restringido y políticas por cliente en todas las tablas, así que un error en una consulta no puede leer ni escribir filas de otro cliente. Las credenciales cifradas están atadas a su buzón y cliente. Probado contra la base (`test/aislamiento.test.mjs`) y verificado en el proyecto `sdrbot` |
 | El bot manda de más o duplica | Cupo diario atómico por buzón, clave de idempotencia obligatoria (probado con pedidos simultáneos), máximo 10 destinatarios, permiso `send` aparte |
 | El bot borra algo | No hay operación para borrar, ni `\Deleted`, ni mover a la papelera |
 | El hosting bloquea la cuenta o la IP por intentos fallidos | Tres contraseñas rechazadas seguidas bloquean el buzón en el gateway y deja de intentar hasta que un operador lo reactiva |
-| Superficie de administración expuesta | No hay endpoints de administración: el alta de clientes, buzones y tokens se hace con la CLI desde la máquina de un operador |
+| Superficie de administración expuesta | Panel `/admin` con usuarios propios: activación por enlace de un solo uso, scrypt, bloqueo tras 5 intentos, sesiones de 12 h con cookie `HttpOnly`/`SameSite=Strict`, cabecera anti-CSRF, CSP estricta. Un usuario de cliente corre en la base con el rol `mailgw_portal` y sólo ve su cliente; tokens y usuarios son sólo de Biguá |
+| El panel usado para escanear la red interna (SSRF) | El gateway sólo se conecta a IPs públicas y a puertos de correo; el nombre se resuelve una vez y se conecta a esa IP |
 | Trazabilidad | `mailgw.audit_log`: token, buzón, operación, resultado y conteos, sin contenido de mensajes |
 
 ## 5. Qué necesitamos del cliente
@@ -64,7 +65,7 @@ Doce operaciones, cada una disponible como `POST /v1/<op>` (para los scripts) y 
 |---|---|---|---|
 | 1 | Buzones | Las direcciones que va a usar el bot. Recomendado: buzones dedicados al SDR, no la casilla personal del vendedor | Sí |
 | 2 | Datos de conexión | Servidor y puerto IMAP (normalmente 993 con SSL) y SMTP (465 con SSL o 587 con STARTTLS), y el usuario si no es la dirección completa | Sí |
-| 3 | Contraseña de cada buzón | Si el proveedor ofrece contraseñas de aplicación, una de esas. Se carga en una videollamada con un operador de Biguá, que la escribe en la CLI; nunca por mail | Sí |
+| 3 | Contraseña de cada buzón | Si el proveedor ofrece contraseñas de aplicación, una de esas. La carga el cliente con su usuario del panel `/admin`, o un operador de Biguá en videollamada; nunca por mail ni chat | Sí |
 | 4 | Acceso desde afuera | Confirmar con el hosting que IMAP y SMTP aceptan conexiones desde cualquier IP, sin lista de IPs permitidas ni bloqueo por país. Si exigen IP fija, ver §7 | Sí |
 | 5 | Límite de envío del hosting | Cuántos mails por hora y por día permite el plan. El cupo del gateway se fija por debajo | Sí para enviar |
 | 6 | SPF, DKIM y DMARC | Que el dominio autorice al servidor SMTP del hosting; si no, los mails van a spam | Sí para enviar |
@@ -106,11 +107,13 @@ La base de control todavía no está construida, así que el piloto usa el propi
 | # | Paso | Quién | Estado |
 |---|---|---|---|
 | 1 | Crear el proyecto de Supabase `sdrbot` (misma organización y región que `locasci`) | Biguá | Hecho el 04/11: `rrieaxdmrikhhgzuvvzb`, `sa-east-1` |
-| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`; conectarle el Supabase `sdrbot` desde Storage (carga `POSTGRES_URL`); variable `MAILGW_ENC_KEYS`; dominio `sdrbot.bigua.lat` | Biguá | Hecho el 04/11 salvo `MAILGW_ENC_KEYS`: proyecto `sdrbot-mail-gateway` conectado al repo y a la base, en `https://sdrbot.bigua.lat`, región `gru1`; `/health` responde |
+| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`; conectarle el Supabase `sdrbot` desde Storage (carga `POSTGRES_URL`); variable `MAILGW_ENC_KEYS`; dominio `sdrbot.bigua.lat` | Biguá | Hecho el 04/11: proyecto `sdrbot-mail-gateway` conectado al repo y a la base, en `https://sdrbot.bigua.lat`, región `gru1`; `/health` responde |
 | 3 | Migración del esquema `mailgw` | Biguá | Hecho el 04/11: siete tablas con seguridad por filas, sin acceso para `anon` ni `authenticated` |
 | 3b | `add-client` del cliente piloto | Biguá | Hecho el 04/11: cliente `bairesqa` (BairesQA) |
+| 3c | Panel `https://sdrbot.bigua.lat/admin` (migración `003_admin_web`) y primer operador de Biguá | Biguá | Hecho el 04/11 |
+| 3d | Usuario del cliente en el panel (`client_admin` de `bairesqa`), si va a cargar él sus buzones | Biguá | Opcional |
 | 4 | Recibir del cliente los ítems de §5 | Cliente | Pendiente |
-| 5 | `add-account` y `check` por cada buzón, en videollamada con el cliente | Biguá + cliente | Pendiente |
-| 6 | `add-token` con `read,draft,manage`; cargarlo en la cuenta de Grok Bot como conector MCP y como secreto `MAILGW_TOKEN` | Biguá | Pendiente |
+| 5 | Alta de cada buzón y «Probar» en el panel `/admin` (lo hace el cliente con su usuario, o Biguá en videollamada) | Biguá + cliente | Pendiente |
+| 6 | Token con `read,draft,manage` desde la pestaña «Tokens de Grok Bot» del panel; cargarlo en la cuenta de Grok Bot como conector MCP y como secreto `MAILGW_TOKEN` | Biguá | Pendiente |
 | 7 | Routine de monitoreo con el prompt de §6; una semana sólo con borradores | Biguá | Pendiente |
 | 8 | Token con `send` para los primeros toques, con el cupo fijado según §5.5 | Biguá + cliente | Después de aprobar los textos |

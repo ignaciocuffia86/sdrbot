@@ -66,12 +66,22 @@ async function tx(fn) {
 // set_config(..., true) vale sólo para la transacción: con el pooler en modo transacción la
 // conexión física se comparte entre pedidos, y nada de un cliente queda pegado a la próxima.
 async function asClient(clientId, fn) {
+  return asRole('mailgw_app', clientId, fn);
+}
+
+// Una transacción con un rol restringido y un cliente fijado. mailgw_app para el gateway,
+// mailgw_portal para los usuarios de un cliente en el panel (ver 003_admin_web.sql).
+export async function asRole(role, clientId, fn) {
+  if (!['mailgw_app', 'mailgw_portal'].includes(role)) throw new Error(`Rol no permitido: ${role}`);
   return tx(async (c) => {
-    await c.query(`select set_config('role', 'mailgw_app', true), set_config('mailgw.client_id', $1, true)`,
-      [clientId ?? '']);
+    await c.query(`select set_config('role', $1, true), set_config('mailgw.client_id', $2, true)`,
+      [role, clientId ?? '']);
     return fn(c);
   });
 }
+
+// Para el panel con un operador de Biguá: el dueño, en una transacción.
+export const asOwner = (fn) => tx(fn);
 
 const one = async (clientId, text, params) => (await asClient(clientId, (c) => c.query(text, params))).rows;
 

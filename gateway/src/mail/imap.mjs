@@ -5,6 +5,7 @@ import { ImapFlow } from 'imapflow';
 import { limits } from '../config.mjs';
 import { errors, GatewayError } from '../errors.mjs';
 import { parseMessage, summaryFromEnvelope } from './parse.mjs';
+import { resolveTarget } from './net.mjs';
 
 const NETWORK_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
   'EHOSTUNREACH', 'ENETUNREACH', 'CONNECT_TIMEOUT', 'GREETING_TIMEOUT', 'ETIMEOUT', 'NoConnection']);
@@ -20,8 +21,10 @@ export function classifyImapError(e) {
 }
 
 export async function withImap(account, password, fn) {
+  const target = await resolveTarget(account.imap_host, account.imap_port, 'IMAP');
   const client = new ImapFlow({
-    host: account.imap_host,
+    host: target.address,
+    servername: target.servername,
     port: account.imap_port,
     secure: account.imap_security === 'tls',
     // Con starttls la contraseña nunca viaja sin cifrar: si el servidor no ofrece

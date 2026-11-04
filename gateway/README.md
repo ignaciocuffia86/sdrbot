@@ -52,7 +52,8 @@ Respuesta REST: `{"ok": true, "data": ...}` o `{"ok": false, "error": {"code": "
 - **Nada se borra.** Ni `\Deleted` ni mover a la papelera: borrar lo hace una persona.
 - **Máximo 10 destinatarios** por envío: es para mails uno a uno.
 - **Contraseñas cifradas** con AES-256-GCM. La clave vive sólo en la variable de entorno `MAILGW_ENC_KEYS` de Vercel; la base guarda el texto cifrado, atado a su buzón. Un volcado de la base sola no expone contraseñas.
-- **Tokens con hash** (sha256) y permisos `read`, `draft`, `send` y `manage`. No hay endpoints de administración: el alta se hace con la CLI.
+- **Tokens con hash** (sha256) y permisos `read`, `draft`, `send` y `manage`.
+- **Servidores de correo permitidos.** El gateway resuelve el servidor una vez, se conecta a esa IP (con el nombre como SNI para el certificado) y rechaza direcciones internas, de loopback, link-local y reservadas, y puertos que no sean de correo (25, 143, 465, 587, 993, 2525). Sin esto, el botón "Probar" del panel serviría para que el gateway abra conexiones a la red interna de Vercel.
 - **Aislamiento entre clientes en la base**, no sólo en el código. Cada pedido corre en una transacción con el rol `mailgw_app` (sin `BYPASSRLS`, sin ser dueño de nada) y con el cliente del token fijado; las políticas de cada tabla dejan ver y escribir sólo las filas de ese cliente. Todas las tablas llevan `client_id`, y un envío no puede quedar a nombre de un buzón de otro cliente (clave foránea compuesta). Los tokens no se leen directo: `mailgw.autenticar(hash)` devuelve el cliente. Lo prueba `test/aislamiento.test.mjs` contra la base, sin pasar por el gateway.
 - **Auditoría** por operación (`mailgw.audit_log`): quién, qué buzón, resultado y conteos, sin contenido de mensajes.
 
@@ -75,9 +76,36 @@ Requisitos: un proyecto de Supabase (el de la base de control del SDR BOT) y un 
 
 Desplegado el 04/11/2026 como proyecto `sdrbot-mail-gateway` de Vercel, en `https://sdrbot.bigua.lat`, región `gru1`, Node 22.
 
-## Alta de un cliente y sus buzones
+## Panel web: `https://sdrbot.bigua.lat/admin`
 
-Con `DATABASE_URL` y `MAILGW_ENC_KEYS` en el entorno:
+Donde se cargan clientes, buzones (servidor y puerto IMAP y SMTP, seguridad, usuario, contraseña, tope diario, zona horaria, carpetas), usuarios y tokens de Grok Bot.
+
+| Rol | Ve y hace |
+|---|---|
+| `bigua_admin` (operador de Biguá) | Todos los clientes. Alta de clientes, buzones, usuarios de cada cliente, operadores de Biguá y tokens de Grok Bot; borrar buzones |
+| `client_admin` (usuario de un cliente) | Sólo su cliente: alta y edición de buzones, contraseña, probar conexión, pausar y reactivar, y la actividad. No ve usuarios ni tokens; otro cliente le responde 404 |
+
+- **Sin contraseñas por mail.** Un usuario nuevo recibe un enlace de activación (`/admin#activar=…`, 24 h, un solo uso) y elige su contraseña (mínimo 12 caracteres). El mismo mecanismo sirve para "olvidé mi contraseña": el operador genera un enlace nuevo, y la contraseña anterior deja de servir recién cuando se usa.
+- **Contraseñas del panel** con scrypt. Cinco intentos fallidos bloquean la cuenta 15 minutos.
+- **Sesiones** en la base (`mailgw.admin_session`, sólo el hash): cookie `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/admin`; vencen a las 12 horas o tras 2 horas sin uso. Desactivar un usuario corta sus sesiones.
+- **CSRF:** además de `SameSite=Strict`, toda llamada a `/admin/api` exige la cabecera `X-Mailgw-Admin: 1` y un `Origin` igual al host.
+- **Aislamiento en la base también para el panel.** Lo que hace un `client_admin` corre con el rol `mailgw_portal` y su cliente fijado, con políticas por cliente; ese rol no puede leer tokens, usuarios ni sesiones (`test/admin.test.mjs`).
+- **La contraseña de un buzón nunca vuelve** al navegador: entra, se cifra y sólo se reemplaza. Los tokens se muestran una vez.
+- **CSP estricta** (`default-src 'none'`, scripts y estilos sólo propios, sin marcos), sin dependencias de terceros. Todo lo que viene del servidor se inserta como texto.
+- **Auditoría:** cada acción del panel queda en `mailgw.audit_log` con `actor_user_id`.
+
+El primer operador se crea con la CLI, que imprime su enlace de activación:
+
+```bash
+node bin/admin.mjs add-admin operador@bigua.lat "Nombre"                    # operador de Biguá
+node bin/admin.mjs add-admin admin@cliente.com "Nombre" --client bairesqa   # usuario de un cliente
+```
+
+Para probar el panel en local por HTTP, `MAILGW_INSECURE_COOKIES=1` saca el `Secure` de la cookie.
+
+## Alta por línea de comandos
+
+Lo mismo que el panel, desde la máquina de un operador con `DATABASE_URL` y `MAILGW_ENC_KEYS` en el entorno:
 
 ```bash
 node bin/admin.mjs add-client piloto "Cliente piloto"
@@ -96,7 +124,7 @@ node bin/admin.mjs add-token piloto "grokbot piloto" --scopes read,draft,manage 
 
 Con STARTTLS: `--imap-port 143 --imap-security starttls --smtp-port 587 --smtp-security starttls`. Si el servidor ya guarda una copia de lo enviado, `--no-append-sent`. Si las carpetas no son las estándar, `--sent-folder` y `--drafts-folder`.
 
-Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también reactiva), `pause`, `reactivate`, `clear-send`, `rekey`. `node bin/admin.mjs` sin argumentos los lista.
+Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también reactiva), `pause`, `reactivate`, `clear-send`, `rekey`, `add-admin`. `node bin/admin.mjs` sin argumentos los lista.
 
 ## Conectar Grok Bot
 
@@ -123,7 +151,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 36 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, y el cliente Python. Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 57 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) y la protección contra SSRF. Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

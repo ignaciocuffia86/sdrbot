@@ -5,6 +5,7 @@
 //   GET  /v1/mailboxes      atajo de POST /v1/mailboxes
 //   POST /v1/<op>           una operación (ver src/ops.mjs), cuerpo JSON
 //   POST /mcp               MCP (streamable HTTP, sin sesión)
+//   GET  /admin             panel web (src/admin/static) · /admin/api/* su API (src/admin/api.mjs)
 //
 // Toda respuesta REST es { ok: true, data } o { ok: false, error: { code, message } }.
 
@@ -13,6 +14,34 @@ import { errors, GatewayError } from './errors.mjs';
 import { limits, VERSION } from './config.mjs';
 import { opByName, runOp } from './ops.mjs';
 import { handleMcp } from './mcp.mjs';
+import { handleAdminApi } from './admin/api.mjs';
+import { readFile } from 'node:fs/promises';
+
+// Cabeceras del panel: sin scripts ni estilos de terceros ni en línea, sin marcos.
+const ADMIN_HEADERS = {
+  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+    + "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'Strict-Transport-Security': 'max-age=31536000',
+  'Cache-Control': 'no-store',
+};
+
+const STATIC = {
+  '/admin': ['index.html', 'text/html; charset=utf-8'],
+  '/admin/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/admin/app.css': ['app.css', 'text/css; charset=utf-8'],
+};
+const staticCache = new Map();
+
+async function serveStatic(res, [file, type]) {
+  if (!staticCache.has(file)) staticCache.set(file, await readFile(new URL(`./admin/static/${file}`, import.meta.url)));
+  res.statusCode = 200;
+  for (const [k, v] of Object.entries(ADMIN_HEADERS)) res.setHeader(k, v);
+  res.setHeader('Content-Type', type);
+  res.end(staticCache.get(file));
+}
 
 function send(res, status, body) {
   res.statusCode = status;
@@ -55,6 +84,18 @@ export async function handle(req, res) {
   try {
     if (path === '/health' && req.method === 'GET') {
       return send(res, 200, { ok: true, data: { service: 'sdrbot-mail-gateway', version: VERSION } });
+    }
+
+    if (path === '/admin' || path.startsWith('/admin/')) {
+      for (const [k, v] of Object.entries(ADMIN_HEADERS)) res.setHeader(k, v);
+      if (path.startsWith('/admin/api/') || path === '/admin/api') {
+        const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req) : {};
+        const data = await handleAdminApi(req, res, path, body);
+        return send(res, 200, { ok: true, data: data ?? {} });
+      }
+      if (req.method !== 'GET' && req.method !== 'HEAD') throw new GatewayError('method_not_allowed', 'Usar GET.', 405);
+      if (STATIC[path]) return await serveStatic(res, STATIC[path]);
+      throw errors.notFound();
     }
 
     if (path === '/mcp') {
