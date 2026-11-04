@@ -2,7 +2,7 @@ import { errors } from './errors.mjs';
 
 const int = (v, d) => (v === undefined || v === '' ? d : Number.parseInt(v, 10));
 
-// MAILGW_ENC_KEYS = "k2:<base64 de 32 bytes>,k1:<base64>". La primera cifra; todas descifran.
+// MAILGW_ENC_KEYS = "k2:<32 bytes en base64 o hex>,k1:<...>". La primera cifra; todas descifran.
 // Rotar es anteponer una clave nueva, correr `admin rekey` y después sacar la vieja.
 export function parseKeys(raw) {
   // Comillas o espacios alrededor son un error común al pegar el valor en Vercel: se toleran.
@@ -20,14 +20,25 @@ export function parseKeys(raw) {
     if (!/^[a-z0-9]{1,16}$/i.test(id)) {
       throw errors.config(`MAILGW_ENC_KEYS: identificador inválido en la clave ${n + 1} (letras y números, hasta 16; por ejemplo k1).`);
     }
-    const key = Buffer.from(b64, 'base64');
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64) || key.length !== 32) {
-      throw errors.config(`MAILGW_ENC_KEYS: la clave "${id}" no es un base64 de 32 bytes (generarla con openssl rand -base64 32).`);
+    const key = decodeKey(b64);
+    if (!key) {
+      throw errors.config(`MAILGW_ENC_KEYS: la clave "${id}" no es de 32 bytes: después de "${id}:" hay ${b64.length} caracteres. `
+        + 'Tiene que ser la salida de openssl rand -base64 32 (44 caracteres, termina en =) '
+        + 'o de openssl rand -hex 32 (64 caracteres).');
     }
     return [id, key];
   });
   if (!entries.length) throw errors.config('MAILGW_ENC_KEYS está vacía.');
   return { current: entries[0], byId: new Map(entries) };
+}
+
+// 32 bytes en base64 (estándar o URL-safe, con o sin relleno) o en hexadecimal (64 caracteres).
+// Las dos formas no se pisan: 32 bytes en base64 son 43 o 44 caracteres.
+function decodeKey(text) {
+  let key = null;
+  if (/^[0-9a-f]{64}$/i.test(text)) key = Buffer.from(text, 'hex');
+  else if (/^[A-Za-z0-9+/_-]+={0,2}$/.test(text)) key = Buffer.from(text, 'base64');
+  return key?.length === 32 ? key : null;
 }
 
 let keysCache;
