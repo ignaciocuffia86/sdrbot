@@ -104,9 +104,10 @@ La base de control todavía no está construida, así que el piloto usa el propi
 
 | # | Paso | Quién | Estado |
 |---|---|---|---|
-| 1 | Crear el proyecto de Supabase `sdrbot` (misma organización y región que `locasci`) | Biguá | Pendiente: decisión de costo |
-| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`, variables `DATABASE_URL` y `MAILGW_ENC_KEYS`, dominio `mail.bigua.lat` | Biguá | Pendiente |
-| 3 | `migrate`, `add-client`, y `/health` respondiendo | Biguá | Pendiente |
+| 1 | Crear el proyecto de Supabase `sdrbot` (misma organización y región que `locasci`) | Biguá | Hecho el 04/11: `rrieaxdmrikhhgzuvvzb`, `sa-east-1` |
+| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`; conectarle el Supabase `sdrbot` desde Storage (carga `POSTGRES_URL`); variable `MAILGW_ENC_KEYS`; dominio `mail.bigua.lat` | Biguá | Pendiente: requiere el gateway en `main` |
+| 3 | Migración del esquema `mailgw` | Biguá | Hecho el 04/11: siete tablas con seguridad por filas, sin acceso para `anon` ni `authenticated` |
+| 3b | `add-client` del cliente piloto y `/health` respondiendo | Biguá | Pendiente: después del paso 2 |
 | 4 | Recibir del cliente los ítems de §5 | Cliente | Pendiente |
 | 5 | `add-account` y `check` por cada buzón, en videollamada con el cliente | Biguá + cliente | Pendiente |
 | 6 | `add-token` con `read,draft,manage`; cargarlo en la cuenta de Grok Bot como conector MCP y como secreto `MAILGW_TOKEN` | Biguá | Pendiente |

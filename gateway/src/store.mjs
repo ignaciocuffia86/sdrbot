@@ -184,6 +184,7 @@ export async function audit(entry) {
 export async function migrate(sqlFiles) {
   await q(`create schema if not exists mailgw`);
   await q(`create table if not exists mailgw.migration (name text primary key, applied_at timestamptz not null default now())`);
+  await q(`alter table mailgw.migration enable row level security`);
   const done = new Set((await q(`select name from mailgw.migration`)).rows.map((r) => r.name));
   const applied = [];
   for (const { name, sql } of sqlFiles) {
