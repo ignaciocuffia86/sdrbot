@@ -198,8 +198,10 @@ Lo no lineal está en las decisiones: el `orquestador` cambia el plan si un segm
   con la herramienta de archivos del bot) y lo importa en la campaña. Necesita que el navegador
   de Grok pueda subir archivos (`10` 5.1); si no, los carga de a uno.
 - La URL sale de ASCI o Apollo; sin URL, la persona no va a Dripify.
-- Los webhooks de Dripify llegan a una dirección del gateway por cliente, con un secreto propio;
-  el gateway los registra y despierta a `seguimiento`.
+- Dripify tiene webhooks **por campaña**: invitación enviada, invitación aceptada, primer mensaje
+  enviado y respuesta recibida (`11` §3.3.1). Llegan a una dirección del gateway por cliente, que
+  los registra y, ante una respuesta, despierta a `seguimiento`. Cada campaña nueva necesita sus
+  webhooks configurados.
 
 ### 5.4 Aprobaciones en el chat de Grok
 

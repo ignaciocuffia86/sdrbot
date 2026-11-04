@@ -102,7 +102,7 @@ números no cierran.
 | `prospecto.revelado` | `prospector` | Sí |
 | `mail.enviado`, `mail.rebotado` | Gateway | Sí |
 | `linkedin.cargado` (en una campaña de Dripify) | `linkedin` | Sí |
-| `linkedin.invitacion`, `linkedin.conexion`, `linkedin.mensaje` | Gateway, por webhook de Dripify | Sí |
+| `linkedin.invitacion`, `linkedin.conexion`, `linkedin.mensaje` | Gateway, por webhook de Dripify (§3.3.1) | Sí |
 | `whatsapp.enviado` | `whatsapp` | Sí |
 | `respuesta` (canal, clasificación) | Gateway o el bot del canal + `seguimiento` | Sí |
 | `positivo`, `crm.cargado`, `baja` | `seguimiento` | Sí |
@@ -110,8 +110,26 @@ números no cierran.
 | `pedido` (entre bots), `decision` | Cada bot | **No** (interno) |
 | `aviso.cliente` | `seguimiento` u `orquestador` | Sí: es lo que se le notifica |
 
-Qué eventos manda Dripify por webhook (invitación enviada, aceptada, respuesta) hay que
-confirmarlo en su configuración; los que no mande los registra `linkedin` al leer la campaña.
+#### 3.3.1 Webhooks de Dripify
+
+Dripify ofrece webhooks **por campaña** (pantalla Settings de cada campaña):
+
+| Disparador de Dripify | Evento del registro | Qué hace la plataforma |
+|---|---|---|
+| After a connection request is sent | `linkedin.invitacion` | Cuenta para el dashboard |
+| After a connection request is accepted | `linkedin.conexion` | Cuenta; avisa a `seguimiento` (puede decidir un mail de apoyo) |
+| After a first message is sent | `linkedin.mensaje` | Cuenta |
+| After a LinkedIn reply is received | `respuesta` (canal LinkedIn) | Despierta a `seguimiento`: clasifica y, si respondió, pide a `linkedin` sacarlo de las otras secuencias |
+
+- La lista de Dripify tiene más opciones abajo de las cuatro que se ven: revisarlas al
+  configurar.
+- Como es **por campaña**, al crear una campaña nueva hay que cargarle los cuatro webhooks. Es un
+  paso del alta y del checklist de cada campaña nueva. El `orquestador` avisa si una campaña que
+  aparece en los ajustes del cliente no está mandando eventos.
+- Cada cliente tiene su propia dirección en el gateway (con un secreto en la URL o en la
+  cabecera, según lo que permita Dripify). El gateway identifica al prospecto por la URL de
+  LinkedIn que venga en el cuerpo (`registro.buscar`); el formato exacto del cuerpo se confirma
+  con el primer evento real.
 
 ### 3.4 Herramientas para los bots
 
@@ -279,6 +297,6 @@ exportan al cliente en la baja.
 
 ## 10. Abierto
 
-- Qué eventos manda el webhook de Dripify (§3.3): se confirma al configurarlo.
+- El formato del cuerpo de los webhooks de Dripify y si hay más disparadores que los cuatro (§3.3.1): se confirma al configurar la primera campaña.
 - Si a un cliente le interesa que la reunión agendada actualice el CRM (§4).
 - La capa de integración con Teams, Slack o mail para aprobar y avisar (`09` §9).
