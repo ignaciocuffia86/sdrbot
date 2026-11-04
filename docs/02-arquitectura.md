@@ -4,7 +4,7 @@ Diseño de la solución a partir del documento v1.1 y de la revisión en `01-rev
 
 No hay código acá. Lo que se nombra como RPC, tool o script es contrato, no implementación.
 
-> **04/11/2026:** hay una propuesta de arquitectura v2 en `09-arquitectura-v2.md` que mueve la lógica del box a la plataforma SDRBOT. Su §0 dice qué partes de este documento reemplaza.
+> **04/11/2026:** la arquitectura v2 (`09-arquitectura-v2.md`) cambia el modelo: Grok Bot orquesta, el estado de los prospectos vive en HubSpot, el gateway controla el correo y las reglas de los bots están en Supabase. Su §1 revisa punto por punto qué de este documento cambia y por qué.
 
 ## 1. Principios
 

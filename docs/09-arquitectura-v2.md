@@ -1,449 +1,337 @@
-# Arquitectura v2 · Plataforma SDRBOT + bots de Grok
+# Arquitectura v2 · Grok Bot como orquestador
 
-Estado: **propuesta**, 04/11/2026. Reemplaza en parte a `02-arquitectura.md` (§0 dice qué
-cambia). Lo que hay que validar con Grok Bot está en `10-preguntas-grokbot-v2.md`; las
-decisiones que dependen de Biguá, en §13.
+Estado: **modelo definido por Biguá el 04/11/2026**, con la revisión de cada punto donde choca
+con lo decidido antes. Reemplaza a la propuesta anterior de este mismo documento (la de «la
+plataforma decide y Grok ejecuta», que queda en el historial de git) y a partes de
+`02-arquitectura.md` (§1 dice cuáles). Las preguntas a Grok Bot para validarlo están en
+`10-preguntas-grokbot-v2.md`.
 
-## 0. Qué cambia y por qué
+## 0. El modelo
 
-`02` se diseñó cuando el mail tenía que salir desde scripts en el box, porque el box bloquea
-SMTP e IMAP. Eso obligaba a poner la lógica en el box: un port en Python de PasQAlito, un
-instalador, un tag por tenant, secretos de Supabase en cada cuenta de Grok. Con el gateway de
-correo en producción, el mail ya no pasa por el box, y esa premisa se cae.
+Lo que definió Biguá:
 
-**La idea de esta versión: la plataforma decide y ejecuta lo determinístico; Grok aporta
-criterio y manos en el navegador.**
+1. **Grok Bot orquesta.** Los bots conversan entre sí sobre sus tareas y deciden el próximo
+   paso con criterio. El proceso no es lineal ni lo dicta un motor de reglas externo.
+2. **El gateway sólo controla y documenta el correo:** límites de envío, respuestas y
+   seguimiento de los hilos.
+3. **Un bot prospecta de punta a punta por mail:** busca cuentas nuevas en ASCI, usa Apollo a
+   través del MCP de ASCI, encuentra a los tomadores de decisión, arma el contenido del correo y
+   lo envía por el gateway.
+4. **LinkedIn por Dripify:** con campañas ya armadas en Dripify, un bot carga leads por la URL
+   de LinkedIn y la prospección por ese canal la corre Dripify.
+5. **WhatsApp para seguimiento,** sólo cuando hay un dato de contacto y consentimiento de la
+   persona.
+6. **El CRM documenta.** En este caso, HubSpot: ahí queda cada empresa, contacto, toque,
+   respuesta y oportunidad.
+7. **Supabase** tiene el gateway y además **las reglas de operación de cada bot,** para que el
+   contexto de los bots (el harness) sea el mismo para todos los clientes.
 
-| Tema | v1 (`02`) | v2 (este documento) |
-|---|---|---|
-| Dónde vive la lógica | Scripts en el box de cada tenant (`scripts@tag`) | En la plataforma SDRBOT (`sdrbot.bigua.lat` + Supabase `sdrbot`). El box no corre código |
-| Envío de mail | Script en el box por Gmail API / Graph | La plataforma, por el gateway (IMAP hoy, Microsoft y Google según `08`) |
-| Cómo hablan los bots con la base | SDK de Supabase + RPC con un usuario de Auth por tenant | Herramientas MCP `sdr.*` en la plataforma, con el token del tenant |
-| Instrucciones de los bots | Skills en el repo, copiados al box por un instalador | Manual versionado en Supabase, servido por MCP (§4) |
-| Paso de trabajo entre bots | Routines a horario que leen la base | Cola de trabajo en la plataforma (§6) |
-| Capa MCP `sdr.*` | Fase 2, dentro de `mcp.bigua.lat` (ASCI) | Desde ya, en la plataforma SDRBOT, junto al gateway |
-| Bots por tenant | Siete | Cinco (§5) |
-| Secretos en cada cuenta de Grok | Ocho (`SUPABASE_*`, `SDR_BOT_*`, `ASCI_KEY`, `MAIL_CREDENTIAL`, …) | Ninguno de entorno: dos conectores MCP (SDRBOT y ASCI) |
-| Reveal de ASCI (gasta créditos) | Script del box | La plataforma, con reglas; los bots sólo proponen (§7.5) |
+## 1. Revisión: dónde choca con lo decidido antes
 
-Lo que **no** cambia: una cuenta de Grok por cliente; ASCI como universo compartido con un
-usuario por tenant; Supabase `sdrbot` separado de `locasci` con RLS por cliente; aprobación
-humana donde hay riesgo; idempotencia y cupos en la base; el manifiesto como entrada única del
-alta.
+Cada fila es una decisión anterior que este modelo cambia. Fuente: **v1.1** (documento
+original, revisado en `01`), **02** (`02-arquitectura.md`), **09a** (la propuesta anterior de
+este documento).
 
-## 1. Principios
-
-1. **La plataforma es el sistema de registro.** Todo estado del SDR vive en Supabase `sdrbot`:
-   cuentas, contactos, señales, secuencias, toques, respuestas, aprobaciones, trabajo. Grok no
-   guarda estado que importe; si una cuenta de Grok se pierde, se rearma y sigue.
-2. **El LLM decide y redacta; el código ejecuta.** Calificar, elegir decisores, escribir,
-   clasificar respuestas: bots. Cuándo toca un envío, cupos, rotación de buzones, gastar
-   créditos, sincronizar el CRM, frenar una secuencia: plataforma.
-3. **Los bots no tienen herramientas de envío libre.** Un bot propone un mensaje; la plataforma
-   lo envía si las reglas lo permiten (destinatario en secuencia, aprobado, dentro del cupo).
-   Es la defensa principal contra la inyección de instrucciones en mails entrantes (§10).
-4. **El comportamiento es dato versionado.** Instrucciones, esquemas de salida y ajustes por
-   cliente salen de la plataforma con versión; cada resultado guarda con qué versión se hizo.
-5. **El trabajo pasa por la cola, no por el chat.** Los bots no se pasan trabajo hablándose:
-   lo que termina uno crea el trabajo del siguiente en la plataforma.
-6. **Un dueño por sesión de navegador** (de `06` A2): `linkedin` y `whatsapp`.
-7. **Todo deja un evento.** Cada cambio de estado escribe una línea en la línea de tiempo del
-   contacto; el seguimiento y el CRM se arman desde ahí.
+| # | Antes | Ahora | A favor | En contra | ¿Viable? | Cómo queda |
+|---|---|---|---|---|---|---|
+| 1 | La base hace cumplir las reglas: cupos, no contactar, deduplicación, follow-ups, aprobaciones «viven en la base, no en la memoria de un bot» (v1.1, 02 §1) | Las decisiones las toman los bots | Proceso con criterio: un bot puede cambiar de canal, esperar, pedir ayuda a otro; mucho menos código propio | Un LLM puede olvidarse una regla, repetir un envío o equivocarse de persona; más difícil de auditar | **Sí, con barandas.** Las reglas que si se rompen cuestan plata, reputación o un problema legal tienen que estar fuera del LLM | §6: cada regla queda clasificada como **dura** (la impone el gateway, ASCI, Dripify o HubSpot) o **guía** (la sigue el bot por el manual) |
+| 2 | Estado del SDR en Supabase: contactos, secuencias, envíos, respuestas, aprobaciones (v1.1, 02 §3) | El estado vive en HubSpot | El cliente ve todo en su CRM; HubSpot ya deduplica, tiene propiedades, tareas y línea de tiempo; no hay que construir una base de prospectos | Límites de pedidos por segundo y por día **(verificar)**; propiedades a crear en cada portal; si el cliente toca o borra datos, el bot pierde el hilo; un cliente sin HubSpot necesita otra cosa | **Sí** para clientes con HubSpot | §7: propiedades estándar de SDR en HubSpot, creadas en el alta; HubSpot es la memoria de los bots |
+| 3 | Los bots no se pasan trabajo hablando; pasa por la base (02 §7) o por una cola (09a §6) | Los bots conversan entre sí | Es lo que da el proceso no lineal; Grok lo soporta (`06` 4.5) | No sabemos si un mensaje entre bots despierta al otro, si queda registrado, ni si dos bots corren a la vez (`06` 3.3, sin dato); riesgo de bucles y de trabajo duplicado | **A validar con Grok** (`10` §1, bloqueante) | §4.3: protocolo de conversación (qué se pide, a quién, con qué referencia de HubSpot, máximo de idas y vueltas), y cada pedido deja nota en HubSpot |
+| 4 | Revelar contactos con filtro programático y presupuesto validado antes de gastar (02 §6.2) | El bot prospector revela por el MCP de ASCI | Simple: un solo bot decide a quién y lo hace | El bot puede gastar de más o revelar a quien no corresponde | **Sí**: ASCI ya corta por **presupuesto diario por usuario** | El tope diario de ASCI es la baranda dura; falta el **tope mensual** y el rol `sdr_bot` (`04` §4.2). Las reglas de a quién revelar van en el manual |
+| 5 | Aprobación humana de textos base y de leads calientes y tibios (v1.1) | El bot arma y envía | Velocidad | Un mail malo sale con el nombre del cliente | **Sí, por etapas:** el token del gateway ya separa `draft` de `send` | Semanas 1 y 2 con token sin `send`: el bot deja borradores y una persona los manda o aprueba. Después se habilita `send`. La respuesta a un interesado sigue con aprobación (§5.4) |
+| 6 | Envíos de mail desde scripts del box por API (02 §4.2) o desde la plataforma (09a) | El bot envía por el MCP del gateway | Ya funciona en el piloto | El tope y la idempotencia dependen de que el bot mande bien la clave | **Sí** | El gateway ya exige `idempotency_key`, cupo diario y máximo de destinatarios. El manual fija cómo armar la clave (§5.2) |
+| 7 | El gateway sin memoria de los hilos: el bot guarda el cursor y cruza las respuestas | El gateway documenta respuestas y seguimiento | Una sola fuente de verdad del correo, por cliente | Hay que construirlo | **Sí** | §8: el gateway relaciona cada respuesta con su envío, guarda el cursor de cada buzón, lleva la lista de supresión y responde «enviados sin respuesta hace N días» |
+| 8 | LinkedIn con un bot que opera Sales Navigator y Dripify (02) | Dripify con campañas armadas; el bot sólo carga leads por URL | Dripify corre la cadencia y sus límites; el bot hace poco en el navegador, que es lo lento | Si el prospecto contesta por mail, Dripify sigue escribiéndole por LinkedIn hasta que alguien lo saque; cargar leads depende de qué deja hacer Dripify **(verificar)** | **Sí** | Bot `linkedin`, dueño de la sesión. Regla dura de cruce de canales en §6 |
+| 9 | WhatsApp: tandas aprobadas, sólo seguimientos, teléfono que llega a la persona (v1.1, 02 §7.4) | Seguimiento por WhatsApp con consentimiento | Igual en lo esencial | El consentimiento hay que poder probarlo | **Sí** | Consentimiento como propiedad de HubSpot con su evidencia (§7). Sin ella, el bot `whatsapp` no escribe |
+| 10 | Siete bots (02) o cinco (09a) | Los que pida el flujo de §2 | — | — | — | Cinco bots (§4.1) |
+| 11 | Manual de los bots en la plataforma, servido por MCP (09a §4) | Reglas de operación en Supabase | Es lo mismo que pide el modelo | — | **Sí** | §3: se mantiene |
+| 12 | Plan de alta con usuario de Supabase, ocho secretos e instalador en el box (02, 03) | Grok con conectores | Menos piezas | — | **Sí** | En Grok: conectores de ASCI, gateway (con las reglas) y HubSpot. Ningún programa propio en el box salvo que HubSpot no tenga conector (§9) |
+| 13 | Varios CRM (HubSpot, Dynamics 365, NetHunt, Excel) por adaptadores (09a §7.4) | HubSpot para este cliente | Foco | Otro cliente con otro CRM cambia la memoria de los bots | **Sí**, uno por vez | HubSpot primero. Para otro CRM hace falta su conector en Grok y las mismas propiedades (§9.2). Excel no sirve como memoria de los bots |
 
 ## 2. Vista general
 
 ```mermaid
 flowchart LR
-  subgraph BIGUA["Plano de control · Biguá"]
-    direction TB
-    ASCI[(ASCI · mcp.bigua.lat<br/>cuentas · señales · decisores · reveal)]
-    subgraph PLAT["Plataforma SDRBOT · sdrbot.bigua.lat"]
-      CORE[Núcleo SDR<br/>secuencias · cola de trabajo · reglas<br/>aprobaciones · eventos]
-      MAN[Manual versionado<br/>playbooks · esquemas · ajustes por cliente]
-      MAIL[Gateway de correo<br/>IMAP · Microsoft · Google]
-      CRM[Adaptadores de CRM<br/>HubSpot · D365 · NetHunt · Excel]
-      MCP[MCP sdr.* por cliente]
-      PANEL[Panel /admin<br/>Biguá · aprobadores · vendedores]
-      CRON[Programador<br/>pg_cron · cron de Vercel]
+  subgraph G["Cuenta de Grok Bot del cliente: orquesta"]
+    ORQ[orquestador]
+    PRO[prospector]
+    SEG[seguimiento]
+    LI[linkedin<br/>sesión LinkedIn + Dripify]
+    WA[whatsapp<br/>sesión WhatsApp Web]
+    ORQ <--> PRO & SEG & LI & WA
+    SEG <--> LI & WA & PRO
+  end
+
+  subgraph B["Biguá"]
+    ASCI[(ASCI · MCP<br/>cuentas · señales · Apollo · reveal)]
+    subgraph PL["sdrbot.bigua.lat · Supabase sdrbot"]
+      GW[Gateway de correo<br/>cupos · hilos · respuestas · supresión]
+      REG[Reglas de operación<br/>manual por bot y tarea · ajustes por cliente]
+      BIT[Bitácora mínima de corridas]
     end
-    DB[(Supabase sdrbot<br/>RLS por cliente)]
-    PLAT --- DB
   end
 
-  subgraph TENANT["Cuenta de Grok Bot del cliente A"]
-    COORD[coordinador]
-    INV[investigador]
-    BAND[bandeja]
-    LI[linkedin<br/>Sales Nav · Dripify]
-    WA[whatsapp<br/>WhatsApp Web]
-  end
+  HS[(HubSpot del cliente<br/>empresas · contactos · actividad · tareas)]
+  DRIP[Dripify<br/>campañas armadas]
+  BUZ[(Buzones del cliente)]
 
-  COORD & INV & BAND & LI & WA -- token A --> MCP
-  INV -- clave de lectura A --> ASCI
-  CORE -- clave de reveal A --> ASCI
-  MAIL <--> BUZ[(Buzones del cliente)]
-  CRM <--> CRMC[(CRM del cliente)]
-  CRON -. webhook: hay trabajo urgente .-> BAND
-  PANEL --> PERS[Aprobador · vendedor del cliente · operador Biguá]
+  PRO -- MCP --> ASCI
+  PRO & SEG -- MCP --> GW
+  ORQ & PRO & SEG & LI & WA -- MCP --> REG
+  ORQ & PRO & SEG & LI & WA -- conector --> HS
+  LI -- navegador --> DRIP
+  GW <--> BUZ
 ```
 
-## 3. Quién hace qué
+## 3. Reglas de operación centralizadas (el harness)
 
-| Responsabilidad | Dónde | Por qué ahí |
-|---|---|---|
-| Ejecutar el playbook de señales (consultas fijas a ASCI) | Plataforma, cron | Es determinístico: no necesita LLM ni box |
-| Investigar la cuenta, elegir decisores, calificar, escribir la tesis y los mensajes | Bot `investigador` | Criterio y redacción |
-| Revelar contactos (créditos) | Plataforma, después de validar la propuesta del bot | Gasta plata: presupuesto, máximo por cuenta y DNC en código |
-| Decidir qué toque toca hoy, por qué canal, desde qué buzón | Plataforma (motor de secuencias) | Reglas, cupos, ventanas horarias, rotación |
-| Enviar mail | Plataforma, por el gateway | Ya existe; cupo e idempotencia ahí |
-| Enviar en LinkedIn y Dripify | Bot `linkedin`, con el ítem exacto que le da la cola | Sólo se puede por navegador con la sesión del vendedor |
-| Enviar por WhatsApp | Bot `whatsapp`, ítems aprobados | Ídem, con la sesión de WhatsApp Web |
-| Leer buzones y detectar respuestas y rebotes | Plataforma, por el gateway | Determinístico: cruce por `In-Reply-To`, rebotes por DSN |
-| Clasificar la respuesta y proponer qué contestar | Bot `bandeja` | Criterio |
-| Frenar secuencias, dar de baja, derivar al vendedor, crear el registro en el CRM | Plataforma, según la clasificación | Reglas |
-| Aprobar | Personas, en el panel (o respondiendo el mail de aviso) | Riesgo |
-| Contar cómo vamos, avisar anomalías, responder preguntas del cliente | Bot `coordinador` | Lenguaje natural sobre datos de la plataforma |
-| Salud de sesiones de navegador | `linkedin` y `whatsapp` informan; la plataforma alerta | Sólo el dueño de la sesión puede mirarla |
-
-## 4. Estandarizar el harness: el manual en Supabase
-
-### 4.1 Las capas
-
-Un bot de Grok tiene cuatro cosas configurables: el perfil (instrucciones permanentes), los
-skills, las routines y las memorias. Hoy cada cambio en cualquiera de ellas es manual, por
-cuenta, porque Grok no tiene API (`06` 4.3). La propuesta es que lo que está en Grok sea un
-**arranque mínimo que casi nunca cambia**, y que el comportamiento real venga de la plataforma:
+Es lo que pide el punto 7 y no cambia respecto de la propuesta anterior: el comportamiento de
+los bots es dato versionado en Supabase, igual para todos los clientes, con ajustes por cliente.
 
 | Capa | Qué tiene | Dónde | Cuánto cambia |
 |---|---|---|---|
-| **Arranque** | Perfil del bot: quién es, que su manual está en `sdr.manual`, que nunca envía fuera de la cola, que ante la duda crea una pregunta para un humano. Routines de una línea: «Tarea `bandeja.revisar`: seguí `sdr.manual`». Conectores SDRBOT y ASCI | Plantilla de Grok (equipo de Biguá), importada por tenant | Casi nunca. Cambiarlo es reimportar en cada cuenta |
-| **Manual** | Por tipo de tarea: instrucciones, herramientas a usar, esquema JSON de la salida, ejemplos buenos y malos, qué hacer ante cada error | Repo (`playbooks/`) → publicado en Supabase por CI | Seguido. Llega a todos los tenants sin tocar Grok |
-| **Ajustes del cliente** | ICP, oferta, tono, idioma, firma, objeciones frecuentes, casos de éxito, palabras prohibidas | Manifiesto y panel, en Supabase | Por cliente, cuando haga falta |
-| **Trabajo** | La tarea concreta: la cuenta, el contacto, la respuesta a clasificar | Cola de trabajo | En cada ítem |
+| **Arranque** | Perfil de cada bot: quién es, con quién habla, que sus reglas están en `reglas.manual`, que lo que sabe de un prospecto está en HubSpot y no en su memoria, que nunca envía a quien no está en HubSpot. Routines cortas: «Tarea `prospector.diaria`: seguí `reglas.manual`» | Plantillas de Grok (equipo de Biguá) | Casi nunca: cambiarlo es reimportar en cada cuenta |
+| **Manual** | Por bot y por tarea: objetivo, pasos, criterios de decisión, a quién pedirle qué, qué propiedades de HubSpot leer y escribir, formato de las notas, qué hacer ante cada error, ejemplos | Repo (`playbooks/`) → publicado en Supabase con versión | Seguido; llega a todos los clientes sin tocar Grok |
+| **Ajustes del cliente** | ICP, oferta, tono, idioma, firma, campañas de Dripify por segmento, límites propios, aprobadores | Supabase, editables en el panel | Por cliente |
 
-`sdr.manual(tarea)` devuelve las tres de abajo **ya combinadas** para ese cliente, con su
-versión. El bot no arma nada; lee y sigue.
+- `reglas.manual(bot, tarea)` devuelve las tres capas combinadas para ese cliente, con su
+  versión. Es una herramienta más del MCP de `sdrbot.bigua.lat`, de sólo lectura, con el mismo
+  token del cliente que usa el gateway: un conector en Grok sirve para las dos cosas.
+- Cada nota que un bot deja en HubSpot incluye la versión del manual con la que trabajó. Así se
+  puede saber qué versión escribió qué y volver atrás cambiando un número en el panel.
+- Versiones con canal `canario` (Biguá o un cliente que acepte probar) y `estable`.
+- Las **memorias de trabajo** de Grok pueden hacer que dos clientes con el mismo manual se
+  comporten distinto. Hay que saber si se pueden apagar o borrar (`10` 2.1); hasta entonces, el
+  arranque dice que no guarde memorias de comportamiento y el `orquestador` las revisa una vez
+  por semana.
 
-### 4.2 Versiones y despliegue
+## 4. Los bots y cómo conversan
 
-- El repo es la fuente: `playbooks/<tarea>/manual.md`, `schema.json`, `ejemplos/`. Se revisan
-  en PR como código.
-- CI publica cada versión en `sdr.playbook_version` (inmutable). Cada cliente sigue un canal:
-  `canario` (Biguá y quien quiera probar) o `estable`, o queda fijado a una versión.
-- Cada ítem de trabajo guarda `playbook_version`. Así se puede responder «desde qué versión
-  bajó la tasa de respuesta» o volver atrás en un minuto (cambiar el canal), sin tocar Grok.
-- **Banco de pruebas:** casos fijos por tarea (respuestas reales anonimizadas con su
-  clasificación correcta, cuentas con su calificación esperada). Una versión pasa de canario a
-  estable si en el tenant canario no empeora contra esos casos. Las correcciones humanas (un
-  aprobador que edita un borrador, un operador que reclasifica) se guardan y alimentan el banco.
+### 4.1 Quiénes son
 
-### 4.3 Por qué no los skills de Grok
+| Bot | Hace | Le pide a | Navegador |
+|---|---|---|---|
+| `orquestador` | Dueño del plan del día por cliente: decide prioridades entre canales, reparte y destraba, arma el resumen, responde preguntas de Biguá o del cliente, revisa calidad | A todos | No |
+| `prospector` | Cuentas nuevas en ASCI, decisores, reveal, contenido y envío del primer mail y sus seguimientos por el gateway; registra todo en HubSpot | `linkedin` (sumar a una campaña de Dripify), `orquestador` (dudas) | No |
+| `seguimiento` | Lee las respuestas que documenta el gateway y las de LinkedIn y WhatsApp, decide qué hacer con cada una (contestar, derivar, frenar, pasar a otro canal), avisa al vendedor | `prospector` (contestar por mail, buscar a la persona derivada), `linkedin` (sacar de la campaña), `whatsapp` (seguimiento), `orquestador` | No |
+| `linkedin` | Dueño de la sesión de LinkedIn y Dripify: carga leads por URL en la campaña que corresponde, los saca cuando otro canal respondió, lee las respuestas en Dripify y avisa a `seguimiento` | `seguimiento` | **Sí** |
+| `whatsapp` | Dueño de WhatsApp Web: manda los seguimientos que le pide `seguimiento` a contactos con consentimiento, lee respuestas y avisa | `seguimiento` | **Sí** |
 
-Los skills de Grok (`/home/box/agent-data/workflows/<slug>/SKILL.md`) son el mecanismo nativo,
-y `02` los usaba. Contra el manual en la plataforma pierden en tres cosas: para actualizarlos
-hay que escribir en el box de cada cuenta (un instalador por tenant, que se rompe con «Update
-Bot's Computer»); no hay forma de saber qué versión usó cada resultado; y no se combinan con los
-ajustes de cada cliente. Se pueden usar **como copia local** del manual si Grok resulta tener
-límites en las respuestas MCP (pregunta en `10`).
+Por qué separar `seguimiento` de `prospector`: el prospector trabaja en tandas largas
+(investigar y escribir), y una respuesta de un interesado no puede esperar a que termine. Si
+Grok no deja correr dos bots a la vez (`10` 1.1), se juntan.
 
-### 4.4 Lo que puede romper la estandarización
+### 4.2 Por qué un solo dueño por sesión de navegador
 
-- **Las memorias de trabajo de Grok.** Si cada bot acumula memorias por su cuenta, dos tenants
-  con el mismo manual empiezan a comportarse distinto sin que nadie lo vea. Hay que saber si se
-  pueden apagar, fijar o borrar (pregunta en `10`). Mientras tanto, el arranque le dice al bot
-  que no guarde memorias de comportamiento y la routine semanal del `coordinador` revisa.
-- **Cambios de modelo de Grok.** Un cambio de modelo cambia el comportamiento con el mismo
-  manual. El banco de pruebas lo detecta si se corre seguido.
+Dos bots en la misma sesión se pisan (`06` A2). Por eso, aunque `prospector` decida que alguien
+va a LinkedIn, el que entra a Dripify es `linkedin`: el prospector se lo pide.
 
-## 5. Los bots
+### 4.3 Protocolo de conversación
 
-Cinco por tenant. Los siete de `02` se reagrupan: `signals`, `qualify` y la redacción de
-`outreach` pasan a `investigador`; los envíos de `outreach` pasan a la plataforma;
-`handoff-desk` pasa a `bandeja`; `sdr-lead` pasa a `coordinador`.
+Los bots conversan, pero con una forma fija, que vive en el manual:
 
-| Bot | Qué hace | Routines | Navegador | Nunca |
-|---|---|---|---|---|
-| `coordinador` | Resumen del día, anomalías, preguntas del cliente o de Biguá en el chat, revisión semanal de calidad, dueño de las tareas «necesito un humano» | Resumen 18:50; chequeo 08:00; revisión semanal | No | Toca contactos o envíos |
-| `investigador` | Toma cuentas con señal: investiga con ASCI, elige decisores, califica, propone reveals, escribe la tesis y el paquete de mensajes de la secuencia | Cada 15 min en horario hábil mientras haya cola | No | Revela (sólo propone); envía |
-| `bandeja` | Clasifica respuestas, extrae datos (reunión, derivación a otra persona, fuera de oficina hasta tal fecha), propone la respuesta | Cada 15 min en horario hábil + webhook ante una respuesta urgente | No | Envía (propone) |
-| `linkedin` | Dueño de la sesión de LinkedIn, Sales Navigator y Dripify: ejecuta los ítems de la cola (conectar, mensaje, cargar contactos a una campaña), lee mensajes nuevos y los sube, informa la salud de la sesión | 2 pasadas por día + lectura cada hora | **Sí** | Hace algo que no esté en un ítem |
-| `whatsapp` | Dueño de WhatsApp Web: envía los ítems aprobados, lee respuestas, informa la salud de la sesión | Pasadas de envío a horario fijo + lectura cada hora | **Sí** | Escribe a alguien que no está en un ítem aprobado |
+- **Todo pedido nombra al prospecto por su id de HubSpot** y dice qué se pide, por qué y para
+  cuándo. Nada de «el de ayer».
+- **El estado no viaja en la conversación, está en HubSpot.** El que recibe el pedido lee el
+  contacto en HubSpot antes de actuar: si otro bot ya lo hizo, no lo repite.
+- **Cada pedido y cada respuesta dejan una nota en HubSpot** en el contacto (quién pidió qué a
+  quién). Es la auditoría de un proceso que no es lineal.
+- **Tope de idas y vueltas:** si un tema pasa más de tres veces entre bots sin resolverse, va al
+  `orquestador`, y si él no lo resuelve, a una persona (tarea en HubSpot al operador de Biguá).
+- **Nadie le pide a otro bot que envíe algo fuera de sus reglas.** El que envía vuelve a chequear
+  las reglas duras (§6), aunque se lo pida el `orquestador`.
 
-Si un tenant tiene mucho volumen, se agrega un segundo `investigador` desde la misma plantilla:
-la cola reparte (si Grok deja correr dos bots en paralelo: pregunta en `10`).
+Todo esto supone que un mensaje entre bots despierta al otro y queda registrado. Es la pregunta
+más importante para Grok (`10` §1). Si no fuera así, el plan B es que los pedidos se escriban
+como tareas de HubSpot asignadas a cada bot y que cada bot las lea en su routine.
 
-## 6. Flujo entre bots: la cola de trabajo
+## 5. El recorrido, sin ser lineal
 
-### 6.1 Cómo funciona
-
-- Tabla `sdr.work_item`: `client_id`, `tipo` (`investigar_cuenta`, `clasificar_respuesta`,
-  `linkedin_enviar`, `whatsapp_enviar`, `redactar_respuesta`, …), `prioridad`, `payload`,
-  `estado` (`pendiente`, `tomado`, `hecho`, `fallado`, `muerto`), intentos, quién lo tomó y
-  hasta cuándo, `playbook_version`, resultado.
-- Un bot pide trabajo con `sdr.siguiente(tipo)`: la plataforma le da uno con un permiso de
-  15 minutos (`FOR UPDATE SKIP LOCKED`), junto con el manual y el contexto necesario.
-- Lo entrega con `sdr.completar(id, resultado)`. La plataforma valida el resultado contra el
-  esquema; si no valida, se lo devuelve al bot con el error para que lo corrija en la misma
-  corrida. Si falla tres veces, pasa a `muerto` y a una persona.
-- **Completar dispara lo siguiente en la plataforma**, no en el bot. Un `investigar_cuenta`
-  completado puede crear reveals, una aprobación de textos y, cuando todo está, la inscripción
-  en la secuencia. Ningún bot necesita saber qué bot sigue.
-- Si se vence el permiso (el bot se colgó o la corrida terminó), el ítem vuelve a la cola.
-- Lo urgente (un interesado que contestó) no espera a la routine: la plataforma dispara la
-  routine de `bandeja` por webhook (`06` 3.6).
-
-Los mensajes entre bots que ofrece Grok (`06` 4.5) quedan para una sola cosa: que el
-`coordinador` le pida a otro bot que corra ya. El trabajo en sí siempre pasa por la cola: así
-queda registrado, es idempotente y no depende de que un bot entienda a otro.
-
-### 6.2 Recorrido de un prospecto
+### 5.1 Un ejemplo
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant P as Plataforma
-  participant A as ASCI
-  participant I as investigador
-  participant H as Aprobador / vendedor
-  participant G as Gateway de correo
+  participant O as orquestador
+  participant P as prospector
+  participant A as ASCI (MCP)
+  participant HS as HubSpot
+  participant GW as Gateway
   participant L as linkedin
-  participant B as bandeja
-  participant C as CRM del cliente
+  participant S as seguimiento
+  participant V as Vendedor
 
-  P->>A: playbook de señales (cron)
-  A-->>P: cuentas con señal
-  P->>P: filtra (ya trabajadas, clientes del CRM, DNC) y crea investigar_cuenta
-  I->>P: sdr.siguiente(investigar_cuenta)
-  I->>A: decisores, novedades, evidencia (lectura)
-  I->>P: completar: calificación, decisores, tesis, paquete de mensajes
-  P->>A: reveal de los decisores aprobados por reglas (presupuesto, máximo por cuenta)
-  P->>H: aprobación de textos (si el cliente la pide)
-  H-->>P: aprobado / editado
-  P->>P: inscribe en la secuencia
-  P->>G: toque 1 por mail (cupo, ventana, buzón)
-  P->>L: ítem linkedin_enviar (día 2)
-  L->>P: hecho (o sesión caída)
-  G-->>P: respuesta detectada en el buzón
-  P->>B: clasificar_respuesta (webhook si parece urgente)
-  B->>P: interesado + respuesta propuesta
-  P->>P: frena la secuencia en todos los canales
-  P->>H: derivación al vendedor con el hilo y la respuesta propuesta
-  H-->>P: aprueba la respuesta / toma la reunión
-  P->>G: envía la respuesta aprobada
-  P->>C: empresa, contacto, actividad y oportunidad
+  O->>P: plan del día: 15 cuentas de la vertical X, prioridad avisos nuevos
+  P->>A: prospectar, decisores, reveal (dentro del presupuesto)
+  P->>HS: empresa, contacto, señal, tesis (estado: listo para contactar)
+  P->>GW: enviar mail 1 (clave de idempotencia, cupo)
+  GW-->>P: enviado, Message-ID
+  P->>HS: actividad: mail 1 enviado
+  P->>L: sumá a la campaña de Dripify «X - decisores» (URL de LinkedIn, id HubSpot)
+  L->>HS: nota: cargado en Dripify
+  GW-->>S: respuesta nueva relacionada con el mail 1
+  S->>HS: lee contacto e historia
+  S->>L: sacalo de la campaña de Dripify (respondió por mail)
+  S->>HS: interesado: tarea al vendedor, respuesta propuesta
+  S->>V: aviso con el hilo
+  V-->>S: aprobado (o editado)
+  S->>P: contestá por mail en el hilo con este texto
+  P->>GW: responder (hilo, idempotencia)
+  S->>O: cerrado: interesado derivado
 ```
 
-### 6.3 Qué hace la plataforma con cada clasificación
+Lo no lineal está en las decisiones: el `orquestador` cambia el plan si un segmento no responde;
+`seguimiento` decide si pasa a WhatsApp porque la persona dejó su celular en la respuesta; el
+`prospector` busca a otra persona en la cuenta si le dicen «hablá con fulano».
 
-| Clasificación de `bandeja` | Efecto automático |
-|---|---|
-| Interesado / pide reunión | Frena la secuencia; derivación al vendedor con el hilo, la tesis y la respuesta propuesta; oportunidad en el CRM; SLA corriendo |
-| Pide información | Frena; respuesta propuesta para aprobar |
-| Derivó a otra persona | Frena con ese contacto; crea `investigar_contacto` con la persona nombrada |
-| Fuera de oficina hasta una fecha | Corre la secuencia a esa fecha |
-| No interesado | Frena; la cuenta vuelve a estar disponible en N meses (manifiesto) |
-| Baja / "no me escriban" | Frena y DNC del cliente, sin esperar aprobación |
-| Rebote | Lo detecta la plataforma sin LLM (DSN): DNC por mail y aviso si el buzón acumula rebotes |
-| Dudoso (confianza baja) | Revisión de un operador de Biguá, no del cliente (como en `02` §7.3) |
+### 5.2 Envío de mail
 
-## 7. Canales e integraciones
+- Siempre por el MCP del gateway. Clave de idempotencia fija por manual:
+  `<id HubSpot del contacto>:<paso>` (por ejemplo `1234567:mail-1`). Si el bot reintenta, el
+  gateway devuelve el envío anterior y no manda dos veces.
+- El gateway rechaza si el buzón llegó al cupo del día, si el destinatario está en la lista de
+  supresión del cliente (§8) o si son más de 10 destinatarios. El bot registra el rechazo en
+  HubSpot y sigue.
 
-### 7.1 Mail
+### 5.3 Dripify
 
-Por el gateway, como hoy, con los tipos de buzón de `08`. Dos cambios respecto del piloto: los
-envíos de secuencia los hace la plataforma (no el bot por MCP), y la lectura de respuestas
-también (la plataforma sincroniza los buzones y crea `clasificar_respuesta`). Las herramientas
-`mail.*` del gateway quedan para uso interno y para el puente del piloto.
+- Las campañas las arma una persona en Dripify (una por segmento o por idioma). Los ajustes del
+  cliente en Supabase dicen qué campaña corresponde a cada segmento.
+- `linkedin` carga a la persona por su URL de LinkedIn. Cómo se cargan leads de a uno o en lote
+  (pegar URLs, subir un CSV, una URL de búsqueda) depende de lo que permita Dripify **(verificar
+  con el plan de cada cliente)** y de que el navegador de Grok pueda subir archivos (`10` 5.1).
+- La URL de LinkedIn sale de ASCI o de Apollo. Si la persona no la tiene, no va a Dripify.
+- Las respuestas por LinkedIn: si el plan de Dripify manda webhooks, pueden llegar al gateway y
+  de ahí a `seguimiento`; si no, `linkedin` lee la bandeja de Dripify cada hora.
 
-### 7.2 LinkedIn y Dripify
+### 5.4 Lo que sigue necesitando una persona
 
-Sólo por el navegador del bot `linkedin`, con la sesión del vendedor. Dos modos, a definir con
-cada cliente (§13):
-
-- **Ítem por ítem:** la cola le da al bot «invitar a X con esta nota», «mandar este mensaje a
-  Y». Control total, volumen bajo (lo limita el navegador por visión).
-- **Campañas de Dripify:** la plataforma arma la lista; el bot la carga en una campaña de
-  Dripify y Dripify ejecuta la cadencia. Más volumen, menos control. Los eventos de Dripify
-  (aceptó, respondió) vuelven por su integración de webhooks si el plan la tiene, o por una
-  lectura periódica del bot.
-
-LinkedIn restringe cuentas por automatización: el riesgo es del titular de la sesión y va en el
-contrato (`06` A5).
-
-### 7.3 WhatsApp
-
-Como en `02` §7.4: sólo seguimientos de quien ya conversó o dio su número, tandas aprobadas,
-verificación visual antes de cada envío, volumen bajo. Alternativa a evaluar por cliente:
-**WhatsApp Business Platform (API oficial)**, sin navegador ni sesión que se caiga, con
-plantillas aprobadas por Meta y costo por conversación. No sirve para primer contacto en frío
-(Meta exige consentimiento), pero sí para seguimientos (§13).
-
-### 7.4 CRM
-
-Un puerto común con un adaptador por CRM, en la plataforma:
-
-| Operación | Para qué |
-|---|---|
-| `leer_exclusiones` | Clientes actuales, oportunidades abiertas y no contactar del CRM: la plataforma no prospecta esas cuentas |
-| `upsert_empresa`, `upsert_contacto` | Crear o actualizar sin duplicar (por dominio y por email) |
-| `registrar_actividad` | Toques y respuestas en la línea de tiempo del contacto |
-| `crear_oportunidad` | Al derivar un interesado, con el hilo y la tesis |
-| `leer_cambios` | Etapas y dueño que cambian en el CRM, para cerrar el seguimiento (reunión hecha, ganado, perdido) |
-
-| CRM | Cómo | Notas |
+| Qué | Por qué | Cómo |
 |---|---|---|
-| HubSpot | API con token de app privada del cliente | El más simple; contactos, empresas, negocios, notas y correos |
-| Dynamics 365 | Web API de Dataverse con una aplicación de Entra ID y un usuario de aplicación | Mismo patrón que Microsoft 365 en `08` (certificado, permisos acotados); los campos varían mucho por cliente |
-| NetHunt | API REST con clave | Carpetas y campos definidos por el cliente: el mapeo es por cliente |
-| Excel | Un libro en OneDrive/SharePoint (API de Graph) o una hoja de Google Sheets | Sin deduplicación de verdad: la plataforma es la fuente y la hoja es un espejo (escritura) más una pestaña de exclusiones (lectura) |
+| Respuesta a un interesado | Es el momento de más valor y más riesgo | `seguimiento` propone; el vendedor aprueba o edita (tarea en HubSpot o mail con token, `02` §7.2) |
+| Primeros mails de un cliente nuevo | Calibrar el tono | Token del gateway sin `send` las primeras semanas (fila 5 de §1) |
+| Primer WhatsApp a cada persona | Consentimiento y reputación del número | Tanda aprobada, como en `02` §7.4, hasta que haya confianza |
+| Cuando los bots no se ponen de acuerdo | Tope de idas y vueltas | Tarea al operador de Biguá |
 
-El mapeo de campos, etapas y dueños es por cliente, en el panel. Qué se escribe en el CRM (sólo
-interesados o toda la actividad) se decide por cliente (§13).
+## 6. Reglas duras y reglas guía
 
-### 7.5 ASCI
+La consecuencia práctica de la fila 1 de §1. **Duras:** las hace cumplir un sistema aunque el
+bot se equivoque o lo engañe un mail. **Guía:** las sigue el bot porque están en su manual.
 
-Dos claves por tenant, con roles distintos:
-
-- **Clave de lectura** en el conector de Grok: decisores, novedades, evidencia. Sin reveal.
-- **Clave de reveal** sólo en la plataforma (cifrada como las de buzones), usada después de
-  validar presupuesto, máximo por cuenta y DNC.
-
-Así un bot no puede gastar créditos aunque lo intente o lo engañen. Requiere partir el rol
-`sdr_bot` de `04` en dos (`sdr_bot_lectura` y `sdr_bot_reveal`); hasta entonces, el bot tiene
-reveal y lo protege sólo el presupuesto diario de ASCI.
-
-## 8. Seguimiento
-
-### 8.1 Modelo de datos
-
-Todo en el esquema `sdr` de Supabase `sdrbot`, con `client_id` y RLS como `mailgw`:
-
-| Tabla | Qué es |
-|---|---|
-| `account` | Cuenta del cliente (referencia a ASCI): estado (`disponible`, `en_investigacion`, `activa`, `en_pausa_hasta`, `excluida`), motivo |
-| `contact` | Persona: de qué cuenta, por qué fue elegida, email y teléfono con su calidad, canales permitidos |
-| `signal` | Señal de ASCI que originó el trabajo, con evidencia |
-| `sequence` | Definición por cliente: pasos por canal, esperas, condiciones |
-| `enrollment` | Contacto × secuencia: paso actual, próximo toque, estado (`activa`, `pausada`, `frenada`, `terminada`) y motivo |
-| `touch` | Cada toque planificado o hecho: canal, paso, estado, buzón o sesión, referencias del proveedor, `playbook_version`, variante, señal |
-| `reply` | Cada respuesta: canal, texto, clasificación, confianza, quién la revisó |
-| `handoff` | Derivación al vendedor: estado, SLA, resultado (reunión, oportunidad, descartado), referencia en el CRM |
-| `approval` | Como `02` §7.2 |
-| `work_item` | La cola (§6) |
-| `event` | Línea de tiempo de cada contacto y cuenta, sólo agregar: tipo, canal, actor (bot, persona, plataforma), referencias |
-| `crm_link` | Entidad de la plataforma ↔ id en el CRM del cliente |
-
-### 8.2 Estados de un prospecto
-
-```mermaid
-stateDiagram-v2
-  [*] --> Señal
-  Señal --> Investigado: investigador
-  Investigado --> Descartado: no califica
-  Investigado --> EnSecuencia: reveal + aprobación de textos
-  EnSecuencia --> Respondió: respuesta en cualquier canal
-  EnSecuencia --> SinRespuesta: terminó la secuencia
-  EnSecuencia --> Baja: baja o rebote
-  Respondió --> Derivado: interesado
-  Respondió --> EnPausa: no ahora / fuera de oficina
-  Derivado --> Reunión
-  Reunión --> Oportunidad
-  Oportunidad --> Ganado
-  Oportunidad --> Perdido
-  SinRespuesta --> EnPausa: vuelve en N meses
-  EnPausa --> Señal: señal nueva
-```
-
-### 8.3 Qué se mide
-
-| Para quién | Qué |
-|---|---|
-| Cliente (panel) | Embudo de la semana y del mes (señales → contactados → respondieron → interesados → reuniones → oportunidades); interesados pendientes con su SLA; reuniones; qué señales y qué mensajes funcionan |
-| Biguá por cliente | Lo anterior + entregabilidad (rebotes por buzón, dominios), cupos usados, créditos de ASCI, cola (atraso, fallidos), sesiones de navegador, corridas |
-| Biguá entre clientes | Tabla comparativa y alertas; costo por cliente (ASCI + Grok + infraestructura) contra lo que se factura |
-| Mejora del producto | Tasa de respuesta y de interés por tipo de señal, por versión del manual y por variante de mensaje |
-
-La atribución sale sola de `touch`: cada toque sabe de qué señal salió, con qué versión del
-manual se escribió y qué variante era.
-
-### 8.4 Alertas nuevas
-
-Además de las de `02` §9: cola atrasada (ítems de más de 2 horas en horario hábil), ítems
-muertos, interesado sin atender pasado el SLA, sesión de navegador caída (informada por su bot
-o por falta de informe), dominio que pasa a rojo en la pestaña «Dominios», cambio de versión
-del manual con caída de métricas en el canario.
-
-## 9. Herramientas MCP `sdr.*`
-
-En el mismo servidor que el gateway (`sdrbot.bigua.lat/mcp`), con el mismo token por cliente.
-
-| Herramienta | Para | Notas |
+| Regla | Tipo | Quién la hace cumplir |
 |---|---|---|
-| `sdr.manual(tarea)` | Todos | Instrucciones + esquema + ajustes del cliente, con versión |
-| `sdr.siguiente(tipo)` | Todos | Un ítem con permiso de 15 minutos |
-| `sdr.completar(id, resultado)` | Todos | Valida contra el esquema y dispara lo siguiente |
-| `sdr.fallar(id, motivo)` / `sdr.preguntar(id, pregunta)` | Todos | No pudo, o necesita a una persona |
-| `sdr.contexto_cuenta(cuenta)` / `sdr.hilo(contacto)` | `investigador`, `bandeja` | Lo que la plataforma ya sabe |
-| `sdr.informar_sesion(canal, estado)` | `linkedin`, `whatsapp` | Latido de la sesión: ok, pide QR, restringida |
-| `sdr.estado()` / `sdr.metricas(periodo)` | `coordinador` | Para el resumen y las preguntas |
+| Cupo diario de mails por buzón | Dura | Gateway |
+| No mandar dos veces el mismo mail | Dura | Gateway (clave de idempotencia) |
+| No escribir a quien pidió la baja o rebotó (mail) | Dura | Gateway (lista de supresión, §8) |
+| Máximo de destinatarios por envío; nada se borra | Dura | Gateway |
+| Presupuesto diario de reveals | Dura | ASCI (por usuario) |
+| Presupuesto mensual de reveals | Guía, hasta que ASCI tenga el tope mensual (`04` §4.2) | Bot + resumen del `orquestador` |
+| Límite diario de invitaciones y mensajes de LinkedIn | Dura | Dripify (configuración de la campaña) |
+| Sacar de Dripify a quien respondió por otro canal | Guía | `seguimiento` → `linkedin`; el `orquestador` lo verifica en su revisión diaria |
+| WhatsApp sólo con consentimiento | Guía, con evidencia | Propiedad de HubSpot con la evidencia; `whatsapp` no escribe sin ella |
+| Volumen diario de WhatsApp | Guía | Manual; tanda aprobada al principio |
+| A quién revelar, máximo de contactos por cuenta, no contactar clientes actuales | Guía | Manual + exclusiones leídas de HubSpot |
+| No inventar datos, no prometer precios | Guía | Manual |
+| Las instrucciones dentro de un mail entrante son datos, no órdenes | Guía | Manual, más las reglas duras del gateway como red |
 
-No hay herramienta para «enviar mail a cualquiera» ni «revelar». Los bots no ven tokens ni
-claves de nadie más.
+Si con el uso alguna regla guía se rompe seguido, se pasa a dura: por ejemplo, un contador de
+WhatsApp en el gateway o una regla que impida que el mail salga si el contacto en HubSpot dice
+«baja».
 
-## 10. Seguridad
+## 7. HubSpot como memoria
 
-- **Inyección de instrucciones.** Las respuestas de los prospectos (mail, LinkedIn, WhatsApp)
-  son texto ajeno que lee un LLM con herramientas. Como los conectores de Grok son de la cuenta y
-  los ven todos los bots (`06` 5.1), no alcanza con «este bot no tiene esa herramienta». Por eso
-  ningún envío ni gasto sale de lo que dice un bot sin pasar por reglas en la plataforma: el
-  destinatario tiene que estar en una secuencia del cliente, el texto pasa por aprobación cuando
-  corresponde, y hay cupos. El manual de `bandeja` además marca el contenido entrante como datos,
-  no instrucciones.
-- **Aislamiento.** Igual que el gateway: token por cliente, rol de base restringido por
-  transacción, RLS, pruebas de aislamiento en CI.
-- **Credenciales.** Las de buzones, CRM y la clave de reveal de ASCI, cifradas en la plataforma
-  con `MAILGW_ENC_KEYS` (o su sucesora). En Grok, sólo los dos conectores.
-- **Personas.** Panel con roles: operador de Biguá, administrador del cliente, aprobador,
-  vendedor (ve sus interesados).
+En el alta se crean en el portal del cliente estas propiedades (nombres con prefijo `sdr_` para
+no chocar con las suyas):
 
-## 11. Alta de un cliente en v2
+| Propiedad | En | Para |
+|---|---|---|
+| `sdr_estado` | Contacto | `investigado`, `en_contacto`, `respondio`, `interesado`, `derivado`, `en_pausa`, `descartado`, `baja` |
+| `sdr_canal_actual` y `sdr_proximo_paso` + `sdr_proximo_paso_fecha` | Contacto | Qué sigue y cuándo; es lo que lee el `orquestador` para armar el día |
+| `sdr_senal` y `sdr_tesis` | Empresa / contacto | Por qué se lo contactó |
+| `sdr_campana_dripify` | Contacto | Si está en Dripify y en cuál |
+| `sdr_whatsapp_consentimiento` + evidencia | Contacto | Fecha y texto o mensaje donde lo dio |
+| `sdr_fuente` | Contacto | `asci`, `apollo`, `derivado_por` |
+| `sdr_version_manual` | Notas | Qué versión del manual hizo cada cosa |
 
-1. Panel: cliente, manifiesto (ICP, oferta, secuencias, cupos, aprobadores), buzones y dominio,
-   CRM.
-2. ASCI: usuario del cliente, clave de lectura y clave de reveal.
-3. Grok: cuenta nueva, importar las cinco plantillas, dos conectores (SDRBOT con el token del
-   cliente, ASCI con la clave de lectura), zona horaria. **Sin secretos, sin instalador.**
-4. Videollamada: QR de WhatsApp Web y login de LinkedIn/Dripify en el box.
-5. Canario del cliente: una semana con aprobación de todo y volumen bajo.
+- **Actividad:** cada mail enviado y recibido como correo registrado en el contacto; LinkedIn y
+  WhatsApp como notas o actividades; las conversaciones entre bots como notas.
+- **Interesados:** tarea al vendedor y, si el cliente lo usa, negocio en su pipeline.
+- **Exclusiones:** el `prospector` no toca empresas que en HubSpot son clientes o tienen un
+  negocio abierto, ni contactos con `sdr_estado = baja`.
+- Los límites de pedidos de la API de HubSpot **(verificar)** alcanzan para el volumen de un SDR;
+  el manual pide leer en lote y no consultar el mismo contacto varias veces en una corrida.
 
-Comparado con `03` §3, desaparecen el instalador del box, el tag de scripts, los ocho secretos y
-el usuario de Supabase Auth por tenant.
+## 8. Lo que el gateway tiene que sumar
 
-## 12. Etapas
+El gateway de hoy controla el envío, pero no recuerda los hilos. Para «documentar respuesta y
+seguimiento» (punto 2 del modelo):
+
+| Qué | Para |
+|---|---|
+| **Relacionar cada respuesta con su envío** (por `In-Reply-To` y `References` contra el registro de envíos) y guardar el estado del hilo: enviado, respondido, rebotado | `seguimiento` pregunta «respuestas nuevas» y recibe cada una ya atada a su mail y a su contacto |
+| **Guardar el cursor de cada buzón en el gateway** | El bot ya no tiene que recordarlo |
+| **Lista de supresión por cliente**: rebotes duros y bajas, cargados solos (rebotes) o por el bot (bajas) | Regla dura de §6 |
+| **«Enviados sin respuesta hace N días»** | El `orquestador` arma los seguimientos del día |
+| **Detección de rebotes** (mensajes de entrega fallida) sin LLM | Supresión inmediata |
+| **Recibir webhooks de Dripify** (si el plan los tiene) y avisar a `seguimiento` | Respuestas de LinkedIn sin esperar a la lectura del navegador |
+| **`reglas.manual`** en el mismo MCP | El harness centralizado (§3) |
+| **Bitácora mínima de corridas**: cada routine anota inicio y fin | Saber si una routine no corrió (`02` §9, `run_stale`): Grok no avisa cuando una routine falla (`06` 7.4) |
+
+## 9. Lo que hay que validar
+
+### 9.1 Con Grok Bot
+
+Está en `10-preguntas-grokbot-v2.md`. Lo bloqueante: cómo funcionan los mensajes entre bots,
+si dos bots corren a la vez, si la revisión automática frena llamadas MCP en corridas
+desatendidas, si las memorias se pueden apagar, y **si hay conector de HubSpot**.
+
+### 9.2 HubSpot desde Grok
+
+| Opción | Cómo | A favor | En contra |
+|---|---|---|---|
+| Conector nativo de Grok | Si existe en su catálogo | Cero código | Hay que confirmar que exista y qué deja hacer |
+| MCP oficial de HubSpot | Conector MCP remoto | Mantenido por HubSpot | Pide OAuth; Grok confirmó MCP remoto con cabecera fija (`06` 5.2), no OAuth **(verificar)** |
+| Herramientas de HubSpot en el MCP de `sdrbot.bigua.lat` | El token de HubSpot del cliente, cifrado en Supabase como las claves de buzón | Funciona seguro; un solo conector | Es código nuestro que el modelo quería evitar |
+
+Orden: probar la primera, después la segunda; la tercera como plan B.
+
+### 9.3 Con Dripify
+
+Cómo se cargan leads por URL (de a uno, en lote, CSV) y si el plan manda webhooks de
+respuestas. Lo prueba Biguá con una campaña real.
+
+## 10. Riesgos de este modelo
+
+| Riesgo | Mitigación |
+|---|---|
+| Un mail entrante con instrucciones engaña a un bot que tiene herramientas de envío | Reglas duras del gateway (cupo, supresión, máximo de destinatarios); `responder` sólo dentro del hilo y al remitente; el manual trata lo entrante como datos; token sin `send` al principio |
+| Dos bots hacen lo mismo con el mismo prospecto | Leer HubSpot antes de actuar; idempotencia del gateway; un dueño por sesión |
+| Bucles de conversación entre bots (y costo) | Tope de idas y vueltas (§4.3) |
+| Alguien en el cliente edita o borra propiedades `sdr_` en HubSpot | Propiedades en un grupo propio, documentadas; el gateway tiene su propio registro del correo como respaldo |
+| Una routine no corre y nadie se entera | Bitácora mínima en el gateway y alerta (§8) |
+| El comportamiento se desvía entre clientes | Reglas en Supabase con versión; memorias controladas (§3) |
+| Costo de Grok por conversación entre bots | Medir en el piloto; pregunta a Grok (`10` §6) |
+
+## 11. Etapas
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **0** · hecho | Gateway, panel, dominios; piloto BairesQA con el bot usando `mail.*` directo | — |
-| **1** · núcleo | Esquema `sdr` (cuenta, contacto, evento, `work_item`), `sdr.manual`/`siguiente`/`completar`, registro de playbooks con publicación desde el repo; pasar la routine del piloto a `bandeja` con el manual servido | BairesQA clasifica respuestas con el manual desde la plataforma y queda la versión en cada ítem |
-| **2** · secuencias por mail | Motor de secuencias, envío y lectura por la plataforma, aprobaciones en el panel, efectos de §6.3 | Un contacto recorre toda la secuencia de mail y se frena solo al responder |
-| **3** · investigación | Playbook de señales en la plataforma, `investigador`, reveal con reglas, aprobación de textos | Señal → mensaje enviado sin intervención salvo aprobación |
-| **4** · LinkedIn y WhatsApp | Bots `linkedin` y `whatsapp` con ítems de la cola; latido de sesiones | Un paso de LinkedIn y uno de WhatsApp dentro de la misma secuencia |
-| **5** · CRM | Puerto común; HubSpot primero, después según los clientes (D365, NetHunt, Excel) | Un interesado aparece en el CRM con su historia y las exclusiones se respetan |
-| **6** · seguimiento | Vistas del panel para cliente y Biguá, alertas de §8.4, costo por cliente | El resumen del `coordinador` y el panel salen de los mismos datos |
+| **0** · hecho | Gateway, panel, dominios; BairesQA con un bot leyendo y escribiendo borradores | — |
+| **1** · reglas y HubSpot | `reglas.manual` en Supabase servido por el MCP; propiedades `sdr_` en HubSpot; conector de HubSpot en Grok (o plan B); bots `orquestador` y `prospector` con token sin `send` | El prospector deja borradores de 10 cuentas con todo registrado en HubSpot |
+| **2** · memoria del correo | Gateway: hilos, respuestas relacionadas, cursor, supresión, rebotes, «sin respuesta hace N días», bitácora | `seguimiento` trabaja sólo con lo que le da el gateway y HubSpot |
+| **3** · envío | Token con `send`, seguimientos por mail, respuesta a interesados con aprobación | Un prospecto recorre mail 1 → seguimiento → respuesta → derivación sin intervención salvo la aprobación |
+| **4** · Dripify | Bot `linkedin` cargando leads por URL; cruce de canales (sacar de Dripify al que respondió) | Un prospecto en mail y Dripify a la vez se frena en los dos al responder en uno |
+| **5** · WhatsApp | Bot `whatsapp` con consentimiento registrado | Un seguimiento por WhatsApp a quien lo pidió, registrado en HubSpot |
 
-Microsoft 365 y Google Workspace (`08`) entran en paralelo cuando un cliente los necesite.
+## 12. Para confirmar con Biguá
 
-## 13. Decisiones abiertas (para Biguá)
-
-| Tema | Pregunta | Inclinación |
-|---|---|---|
-| Rol de Grok | ¿Usar Grok es parte de la propuesta comercial («Grok Bot como SDR») o es un medio? Define cuánto conviene mover a la plataforma | Medio preferido: la v2 lo deja para criterio y navegador |
-| Autonomía | ¿Se aprueban los textos de cada contacto, los de la secuencia una vez, o ninguno? ¿Hay respuestas que salen sin aprobación (fuera de oficina, pedido de información con material estándar)? | Aprobar el paquete de cada cuenta las primeras semanas; después, sólo las respuestas |
-| Volumen | Contactos por día por cliente y por canal, y cantidad de clientes en 12 meses | Define el costo de Grok por cliente y si hace falta un segundo `investigador` |
-| CRM | ¿Qué se escribe: sólo interesados o toda la actividad? ¿Excel como CRM real o como reporte? | Interesados + actividad resumida; Excel como espejo |
-| WhatsApp | ¿Número del vendedor o dedicado? ¿API oficial de Meta con costo por conversación, o WhatsApp Web? | API oficial donde se pueda; Web como puente |
-| Dripify | ¿Campañas de Dripify o ítem por ítem? ¿El plan de cada cliente tiene webhooks? | Dripify para volumen, con eventos por webhook |
-| Quién usa el panel | ¿Sólo Biguá, o también aprobadores y vendedores del cliente? ¿Aprobar en el panel, por mail o en el chat de Grok? | Panel con roles para el cliente; el mail como alternativa |
-| Idiomas y mercados | ¿Español, inglés, portugués? | Manual por idioma desde el principio |
-| Modelo de negocio | ¿Se cobra por reunión, por interesado, fijo? | Define qué tiene que medir el seguimiento con precisión de facturación |
-| Datos | ¿Los contactos revelados son del cliente? ¿Qué se lleva al terminar? | Del cliente, con exportación en la baja (`02` §10) |
+1. **WhatsApp «en el caso de tener el correo»:** ¿quisiste decir el celular? El seguimiento por
+   WhatsApp necesita el número; el mail no alcanza. ¿El consentimiento cuenta si la persona da
+   su número en una respuesta, o tiene que pedirlo explícitamente?
+2. **¿Quién aprueba la respuesta a un interesado** y por dónde: tarea en HubSpot, mail o chat de
+   Grok?
+3. **¿Desde cuándo envía solo el `prospector`?** Propuesta: dos semanas con borradores por
+   cliente.
+4. **Clientes sin HubSpot** (Dynamics 365, NetHunt, Excel): ¿se atienden más adelante o hay
+   alguno en carpeta? Excel no sirve como memoria de los bots.
+5. **¿Cuántos bots?** Propuesta de cinco (§4.1); si Grok no deja correr dos a la vez, tres.
