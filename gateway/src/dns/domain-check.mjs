@@ -11,6 +11,7 @@
 import dns from 'node:dns/promises';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { detectProvider, dkimHints, dmarcHints, mxHints, providerOfHost, spfHints, unresolvableHint } from './hints.mjs';
 
 const SPF_MAX_LOOKUPS = 10;
 const DNS_TIMEOUT_MS = 4000;
@@ -62,8 +63,8 @@ const RANK = { ok: 0, warn: 1, error: 2 };
 const worst = (...s) => s.reduce((a, b) => (RANK[b] > RANK[a] ? b : a), 'ok');
 const statusOf = (checks) => worst(...checks.map((c) => c.level));
 const ok = (text) => ({ level: 'ok', text });
-const warn = (text) => ({ level: 'warn', text });
-const err = (text) => ({ level: 'error', text });
+const warn = (text, hint) => ({ level: 'warn', text, ...(hint ? { hint } : {}) });
+const err = (text, hint) => ({ level: 'error', text, ...(hint ? { hint } : {}) });
 
 // ---------------------------------------------------------------- SPF
 
@@ -109,13 +110,17 @@ async function spfTree(d, domain, state, depth = 0) {
   const { mechanisms, modifiers } = parseSpf(recs[0]);
   for (const m of mechanisms) {
     if (m.invalid) { state.invalid.push(m.invalid); continue; }
+    const before = state.lookups;
     if (LOOKUP_MECHS.has(m.name)) state.lookups += 1;
     if (m.name === 'ptr') state.ptr = true;
     if (m.name === 'include' && m.arg) await spfTree(d, m.arg, state, depth + 1);
+    if (depth === 0 && state.lookups > before) state.breakdown.push({ term: m.raw, lookups: state.lookups - before });
   }
   if (modifiers.redirect) {
+    const before = state.lookups;
     state.lookups += 1;
     await spfTree(d, modifiers.redirect, state, depth + 1);
+    if (depth === 0) state.breakdown.push({ term: `redirect=${modifiers.redirect}`, lookups: state.lookups - before });
   }
 }
 
@@ -175,39 +180,49 @@ export async function spfCheckHost(d, ip, domain, depth = 0) {
   return 'neutral';
 }
 
-async function checkSpf(d, domain, smtpTargets) {
+async function checkSpf(d, domain, smtpTargets, provider) {
   const checks = [];
   let recs;
   try { recs = await spfRecordsOf(d, domain); } catch (e) {
-    return { status: 'warn', record: null, checks: [warn(`No se pudo consultar el DNS (${e.message}). Reintentar.`)] };
+    return { status: 'warn', record: null, checks: [warn(`No se pudo consultar el DNS (${e.message}). Reintentar.`, spfHints.temp())] };
   }
   if (recs.length === 0) {
-    return { status: 'error', record: null, checks: [err('No hay registro SPF (TXT "v=spf1 …"). Los proveedores van a tratar los mails como no autorizados.')] };
+    const ips = [];
+    for (const t of smtpTargets) {
+      if (providerOfHost(t.host)) continue;
+      try { ips.push(...(net.isIP(t.host) ? [t.host] : await d.a(t.host))); } catch { /* sin IP */ }
+    }
+    return { status: 'error', record: null, checks: [err('No hay registro SPF (TXT "v=spf1 …"). Los proveedores van a tratar los mails como no autorizados.',
+      spfHints.missing(domain, provider, [...new Set(ips)].slice(0, 3)))] };
   }
   if (recs.length > 1) {
-    return { status: 'error', record: recs.join('\n'), checks: [err(`Hay ${recs.length} registros SPF. Tiene que haber uno solo: con más de uno el SPF entero se invalida. Unificarlos en uno.`)] };
+    return { status: 'error', record: recs.join('\n'), checks: [err(`Hay ${recs.length} registros SPF. Tiene que haber uno solo: con más de uno el SPF entero se invalida. Unificarlos en uno.`,
+      spfHints.multiple(domain, recs))] };
   }
   const record = recs[0];
   const { mechanisms, modifiers } = parseSpf(record);
   const all = [...mechanisms].reverse().find((m) => m.name === 'all');
-  if (!all && !modifiers.redirect) checks.push(warn('No termina en "all": lo que no está listado queda neutro. Agregar "~all" o "-all" al final.'));
-  else if (all?.qualifier === '+') checks.push(err('"+all" autoriza a cualquier servidor del mundo a mandar en nombre del dominio. Cambiar por "~all" o "-all".'));
-  else if (all?.qualifier === '?') checks.push(warn('"?all" no protege: lo que no está listado queda neutro. Usar "~all" o "-all".'));
+  if (!all && !modifiers.redirect) checks.push(warn('No termina en "all": lo que no está listado queda neutro. Agregar "~all" o "-all" al final.', spfHints.noAll(domain, record)));
+  else if (all?.qualifier === '+') checks.push(err('"+all" autoriza a cualquier servidor del mundo a mandar en nombre del dominio. Cambiar por "~all" o "-all".', spfHints.weakAll(domain, record)));
+  else if (all?.qualifier === '?') checks.push(warn('"?all" no protege: lo que no está listado queda neutro. Usar "~all" o "-all".', spfHints.weakAll(domain, record)));
   else if (all) checks.push(ok(`Termina en "${all.raw}".`));
 
-  const state = { lookups: 0, invalid: [], brokenIncludes: [], ptr: false, loop: false };
+  const state = { lookups: 0, invalid: [], brokenIncludes: [], ptr: false, loop: false, breakdown: [] };
   try { await spfTree(d, domain, state); } catch (e) {
-    checks.push(warn(`No se pudo recorrer todo el SPF (${e.message}).`));
+    checks.push(warn(`No se pudo recorrer todo el SPF (${e.message}).`, spfHints.temp()));
   }
-  if (state.invalid.length) checks.push(err(`Términos inválidos: ${state.invalid.join(', ')}.`));
-  if (state.brokenIncludes.length) checks.push(err(`Incluye dominios sin un SPF válido: ${state.brokenIncludes.join(', ')}.`));
-  if (state.loop) checks.push(err('Los include se llaman en bucle.'));
+  if (state.invalid.length) checks.push(err(`Términos inválidos: ${state.invalid.join(', ')}.`, spfHints.invalid(domain, record, state.invalid)));
+  if (state.brokenIncludes.length) {
+    checks.push(err(`Incluye dominios sin un SPF válido: ${state.brokenIncludes.join(', ')}.`, spfHints.broken(domain, record, state.brokenIncludes)));
+  }
+  if (state.loop) checks.push(err('Los include se llaman en bucle.', spfHints.loop(domain)));
   if (state.lookups > SPF_MAX_LOOKUPS) {
-    checks.push(err(`Hace ${state.lookups} consultas DNS; el máximo es ${SPF_MAX_LOOKUPS}. Pasado el límite el SPF falla entero. Sacar include que no se usen o reemplazarlos por ip4/ip6.`));
+    checks.push(err(`Hace ${state.lookups} consultas DNS; el máximo es ${SPF_MAX_LOOKUPS}. Pasado el límite el SPF falla entero.`,
+      spfHints.tooManyLookups(domain, state.lookups, state.breakdown)));
   } else {
     checks.push(ok(`${state.lookups} de ${SPF_MAX_LOOKUPS} consultas DNS.`));
   }
-  if (state.ptr) checks.push(warn('Usa "ptr", que está desaconsejado y muchos receptores ignoran.'));
+  if (state.ptr) checks.push(warn('Usa "ptr", que está desaconsejado y muchos receptores ignoran.', spfHints.ptr(domain, record)));
 
   // ¿Autoriza al servidor SMTP con el que manda el buzón?
   const smtp = [];
@@ -225,11 +240,19 @@ async function checkSpf(d, domain, smtpTargets) {
   const byHost = new Map();
   for (const s of smtp) byHost.set(s.host, [...(byHost.get(s.host) ?? []), s]);
   for (const [host, rows] of byHost) {
+    const hostProvider = providerOfHost(host);
+    const hasInclude = hostProvider && new RegExp(`include:${hostProvider.spfInclude.replace(/\./g, '\\.')}(\\s|$)`, 'i').test(record);
     if (rows.some((r) => r.result === 'pass')) checks.push(ok(`Autoriza al servidor SMTP del buzón (${host}).`));
-    else if (rows[0].result === 'unresolved') checks.push(warn(`No se pudo resolver el servidor SMTP ${host}.`));
+    else if (hasInclude) {
+      // Google y Microsoft reciben en un servidor y entregan desde otros: lo que cuenta es el include.
+      checks.push(ok(`El buzón manda por ${hostProvider.name} y el SPF incluye «${hostProvider.spfInclude}».`));
+    } else if (hostProvider) {
+      checks.push(err(`El buzón manda por ${hostProvider.name} (${host}), pero el SPF no incluye «${hostProvider.spfInclude}».`,
+        spfHints.smtpProviderMissing(domain, record, host, hostProvider)));
+    } else if (rows[0].result === 'unresolved') checks.push(warn(`No se pudo resolver el servidor SMTP ${host}.`, spfHints.temp()));
     else {
-      checks.push(warn(`La IP de ${host} (${rows.map((r) => r.ip).join(', ')}) no está autorizada en el SPF. `
-        + 'Si el proveedor reenvía desde otros servidores (Microsoft 365, Google) puede estar bien; si no, agregarla.'));
+      checks.push(warn(`La IP de ${host} (${rows.map((r) => r.ip).join(', ')}) no está autorizada en el SPF.`,
+        spfHints.smtpIpMissing(domain, record, host, rows.map((r) => r.ip))));
     }
   }
   return { status: statusOf(checks), record, lookups: state.lookups, smtp, checks };
@@ -251,7 +274,7 @@ async function dmarcAt(d, name) {
   return (await d.txt(`_dmarc.${name}`)).filter((t) => /^v=DMARC1\s*(;|$)/i.test(t.trim()));
 }
 
-async function checkDmarc(d, domain) {
+async function checkDmarc(d, domain, provider, ready) {
   const checks = [];
   let found = null;
   let at = domain;
@@ -264,27 +287,29 @@ async function checkDmarc(d, domain) {
       if (recs.length) { found = recs; break; }
     }
   } catch (e) {
-    return { status: 'warn', record: null, checks: [warn(`No se pudo consultar el DNS (${e.message}). Reintentar.`)] };
+    return { status: 'warn', record: null, checks: [warn(`No se pudo consultar el DNS (${e.message}). Reintentar.`, dmarcHints.temp())] };
   }
   if (!found) {
-    return { status: 'error', record: null, checks: [err(`No hay registro DMARC en _dmarc.${domain}. Gmail y Microsoft lo exigen a quien envía volumen. Empezar con "v=DMARC1; p=none; rua=mailto:…" y subir a quarantine.`)] };
+    return { status: 'error', record: null, checks: [err(`No hay registro DMARC en _dmarc.${domain}. Gmail y Microsoft lo exigen a quien envía volumen.`,
+      dmarcHints.missing(domain, provider))] };
   }
   if (found.length > 1) {
-    return { status: 'error', record: found.join('\n'), checks: [err('Hay más de un registro DMARC: los receptores lo ignoran. Dejar uno solo.')] };
+    return { status: 'error', record: found.join('\n'), checks: [err('Hay más de un registro DMARC: los receptores lo ignoran. Dejar uno solo.', dmarcHints.duplicate(at, found))] };
   }
   const record = found[0];
   const tags = parseTags(record);
   if (at !== domain) checks.push(ok(`Lo hereda de ${at}.`));
   const policy = tags.p?.toLowerCase();
   if (!['none', 'quarantine', 'reject'].includes(policy)) {
-    checks.push(err('Falta la política (p=none, quarantine o reject) o es inválida: el registro no tiene efecto.'));
+    checks.push(err('Falta la política (p=none, quarantine o reject) o es inválida: el registro no tiene efecto.', dmarcHints.noPolicy(at, tags)));
   } else if (policy === 'none') {
-    checks.push(warn('Política "p=none": sólo monitorea. Sirve para empezar, pero no frena suplantaciones y pesa menos para la entrega. Subir a quarantine cuando los reportes estén limpios.'));
+    checks.push(warn('Política "p=none": sólo monitorea. Sirve para empezar, pero no frena suplantaciones y pesa menos para la entrega.',
+      dmarcHints.monitorOnly(at, tags, ready)));
   } else {
     checks.push(ok(`Política "p=${policy}".`));
   }
-  if (tags.pct && Number(tags.pct) < 100) checks.push(warn(`Se aplica sólo al ${tags.pct}% de los mails (pct).`));
-  if (!tags.rua) checks.push(warn('Sin "rua": no llegan reportes, así que no hay forma de ver quién manda en nombre del dominio.'));
+  if (tags.pct && Number(tags.pct) < 100) checks.push(warn(`Se aplica sólo al ${tags.pct}% de los mails (pct).`, dmarcHints.pct(at, tags)));
+  if (!tags.rua) checks.push(warn('Sin "rua": no llegan reportes, así que no hay forma de ver quién manda en nombre del dominio.', dmarcHints.noRua(at, tags)));
   else checks.push(ok('Recibe reportes (rua).'));
   return { status: statusOf(checks), record, policy: policy ?? null, inherited_from: at !== domain ? at : null, checks };
 }
@@ -295,7 +320,7 @@ function keyInfo(record) {
   const tags = parseTags(record);
   if (tags.v && tags.v !== 'DKIM1') return { error: `Versión desconocida "${tags.v}".` };
   const p = (tags.p ?? '').replace(/\s+/g, '');
-  if (!p) return { error: 'La clave está revocada (p= vacío).' };
+  if (!p) return { error: 'La clave está dada de baja (p= vacío).', revoked: true };
   const k = (tags.k ?? 'rsa').toLowerCase();
   if (k === 'ed25519') return { type: 'ed25519', bits: 256 };
   try {
@@ -306,10 +331,10 @@ function keyInfo(record) {
   }
 }
 
-async function checkDkim(d, domain, { configured = [], detected = [], foreign = [], scanned = false }) {
+async function checkDkim(d, domain, { configured = [], detected = [], foreign = [], scanned = false }, provider) {
   const checks = [];
   if (foreign.length) {
-    checks.push(warn(`Hay mails firmados con d=${foreign.join(', ')}, que no es el dominio: esa firma no cuenta para DMARC. Pedirle al proveedor que firme con ${domain}.`));
+    checks.push(warn(`Hay mails firmados con d=${foreign.join(', ')}, que no es el dominio: esa firma no cuenta para DMARC.`, dkimHints.foreign(domain, foreign, provider)));
   }
   const sources = new Map();
   for (const s of COMMON_SELECTORS) sources.set(s, 'común');
@@ -325,25 +350,34 @@ async function checkDkim(d, domain, { configured = [], detected = [], foreign = 
     }
   }));
   const found = results.filter((r) => r.found);
+  const anyValid = found.some((r) => !r.error && !(r.type === 'rsa' && r.bits < 1024));
   // Los comunes sólo se informan si existen; los cargados y detectados, siempre.
   const shown = results.filter((r) => r.found || r.source !== 'común');
   for (const r of shown) {
     const label = `Selector "${r.selector}" (${r.source})`;
     if (!r.found) {
       checks.push(r.source === 'común' ? null
-        : r.temp ? warn(`${label}: no se pudo consultar (${r.temp}).`)
-          : err(`${label}: no existe ${r.selector}._domainkey.${domain}. ${r.source === 'detectado' ? 'Los mails salen firmados con una clave que no está publicada: fallan DKIM.' : 'Revisar el nombre.'}`));
+        : r.temp ? warn(`${label}: no se pudo consultar (${r.temp}).`, dkimHints.temp())
+          : r.source === 'detectado'
+            ? err(`${label}: no existe ${r.selector}._domainkey.${domain}. Los mails salen firmados con una clave que no está publicada: fallan DKIM.`,
+              dkimHints.notPublished(domain, r.selector, provider))
+            : err(`${label}: no existe ${r.selector}._domainkey.${domain}. Revisar el nombre.`, dkimHints.configuredMissing(domain, r.selector)));
       continue;
     }
-    if (r.error) checks.push(err(`${label}: ${r.error}`));
-    else if (r.type === 'rsa' && r.bits < 1024) checks.push(err(`${label}: clave RSA de ${r.bits} bits; los receptores la rechazan. Generar una de 2048.`));
-    else if (r.type === 'rsa' && r.bits < 2048) checks.push(warn(`${label}: clave RSA de ${r.bits} bits. Funciona, pero 2048 es lo recomendado.`));
+    if (r.revoked) {
+      // Una clave dada de baja es normal si hay otra válida: así se retira un selector viejo.
+      const msg = `${label}: ${r.error}`;
+      checks.push(anyValid ? warn(msg, dkimHints.revoked(domain, r.selector, provider, true)) : err(msg, dkimHints.revoked(domain, r.selector, provider, false)));
+    } else if (r.error) checks.push(err(`${label}: ${r.error}`, dkimHints.unreadable(domain, r.selector)));
+    else if (r.type === 'rsa' && r.bits < 1024) checks.push(err(`${label}: clave RSA de ${r.bits} bits; los receptores la rechazan.`, dkimHints.weakKey(domain, r.selector, provider)));
+    else if (r.type === 'rsa' && r.bits < 2048) checks.push(warn(`${label}: clave RSA de ${r.bits} bits. Funciona, pero 2048 es lo recomendado.`, dkimHints.weakKey(domain, r.selector, provider)));
     else checks.push(ok(`${label}: clave ${r.type.toUpperCase()}${r.bits ? ` de ${r.bits} bits` : ''}.`));
   }
   const cleaned = checks.filter(Boolean);
   if (!found.length && !cleaned.length) {
     cleaned.push(warn(`No se encontró ninguna clave DKIM en los selectores habituales${scanned ? ' ni en los mails del buzón' : ''}. `
-      + 'DKIM no se puede listar por DNS: si el dominio firma, cargar el selector (lo dice el proveedor de correo o la cabecera DKIM-Signature, en "s=").'));
+      + 'DKIM no se puede listar por DNS: si el dominio ya firma, cargar el selector (lo dice el proveedor de correo o la cabecera DKIM-Signature, en "s=").',
+    dkimHints.missing(domain, provider)));
   }
   return {
     status: statusOf(cleaned),
@@ -354,13 +388,13 @@ async function checkDkim(d, domain, { configured = [], detected = [], foreign = 
 
 // ---------------------------------------------------------------- MX
 
-async function checkMx(d, domain) {
+async function checkMx(d, domain, provider) {
   let mxs;
   try { mxs = await d.mx(domain); } catch (e) {
-    return { status: 'warn', records: [], checks: [warn(`No se pudo consultar el DNS (${e.message}).`)] };
+    return { status: 'warn', records: [], checks: [warn(`No se pudo consultar el DNS (${e.message}).`, mxHints.temp())] };
   }
   if (!mxs.length) {
-    return { status: 'error', records: [], checks: [err('El dominio no tiene MX: no puede recibir las respuestas de los prospectos.')] };
+    return { status: 'error', records: [], checks: [err('El dominio no tiene MX: no puede recibir las respuestas de los prospectos.', mxHints.missing(domain, provider))] };
   }
   const records = mxs.sort((a, b) => a.priority - b.priority).map((m) => `${m.priority} ${m.exchange}`);
   return { status: 'ok', records, checks: [ok(`${mxs.length} servidor(es) de entrada.`)] };
@@ -378,16 +412,22 @@ export async function checkDomain(domain, { resolver = systemResolver(), smtpTar
     return {
       domain, status: 'warn', resolvable: false, spf: null, dkim: null, dmarc: null, mx: null,
       checks: [warn(`El DNS no devolvió ningún registro para ${domain} (ni TXT, ni MX, ni A). `
-        + 'O el dominio está mal escrito, o el DNS no respondió: no se puede evaluar. Reintentar en unos minutos.')],
+        + 'O el dominio está mal escrito, o el DNS no respondió: no se puede evaluar.', unresolvableHint(domain))],
     };
   }
-  const [spf, dmarc, dkim, mx] = await Promise.all([
-    checkSpf(d, domain, smtpTargets),
-    checkDmarc(d, domain),
-    checkDkim(d, domain, { configured: selectors, detected, foreign, scanned }),
-    checkMx(d, domain),
+  const mxHosts = probes[1].status === 'fulfilled' ? probes[1].value.map((m) => m.exchange) : [];
+  const provider = detectProvider(mxHosts, smtpTargets.map((t) => t.host));
+  const [spf, dkim, mx] = await Promise.all([
+    checkSpf(d, domain, smtpTargets, provider),
+    checkDkim(d, domain, { configured: selectors, detected, foreign, scanned }, provider),
+    checkMx(d, domain, provider),
   ]);
-  return { domain, status: worst(spf.status, dmarc.status, dkim.status, mx.status), resolvable: true, spf, dkim, dmarc, mx, checks: [] };
+  // DMARC va después: el consejo de subir la política depende de que SPF y DKIM estén bien.
+  const dmarc = await checkDmarc(d, domain, provider, { spfOk: spf.status === 'ok', dkimOk: dkim.status === 'ok' });
+  return {
+    domain, status: worst(spf.status, dmarc.status, dkim.status, mx.status), resolvable: true,
+    provider: provider.id === 'hosting' ? null : provider.name, spf, dkim, dmarc, mx, checks: [],
+  };
 }
 
 // Firmas DKIM de cabeceras DKIM-Signature: selectores del propio dominio (alineados con

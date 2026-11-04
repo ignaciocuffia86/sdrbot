@@ -152,7 +152,7 @@ test('DKIM: sin selector conocido, cargado, detectado sin publicar, revocado, 10
 
   const revocado = await checkDomain('a.test', { resolver: z({ 'default._domainkey.a.test': ['v=DKIM1; p='] }) });
   assert.equal(revocado.dkim.status, 'error');
-  assert.match(revocado.dkim.checks[0].text, /revocada/);
+  assert.match(revocado.dkim.checks[0].text, /dada de baja/);
 
   const corta = await checkDomain('a.test', { resolver: z({ 'mail._domainkey.a.test': [`v=DKIM1; k=rsa; p=${KEY1024}`] }) });
   assert.equal(corta.dkim.status, 'warn');
@@ -161,6 +161,123 @@ test('DKIM: sin selector conocido, cargado, detectado sin publicar, revocado, 10
   const ajena = await checkDomain('a.test', { resolver: z({ 'default._domainkey.a.test': [`p=${KEY2048}`] }), foreign: ['hosting.test'] });
   assert.equal(ajena.dkim.status, 'warn');
   assert.match(ajena.dkim.checks[0].text, /d=hosting.test/);
+});
+
+// ---------------------------------------------------------------- qué hacer en cada caso
+
+const MX = (exchange) => ({ [exchange.split(' ')[0]]: [{ priority: 10, exchange: exchange.split(' ')[1] }] });
+const allChecks = (r) => [r.checks ?? [], r.spf?.checks ?? [], r.dkim?.checks ?? [], r.dmarc?.checks ?? [], r.mx?.checks ?? []].flat();
+const hintOf = (part, re) => part.checks.find((c) => re.test(c.text))?.hint;
+
+test('SPF faltante: el registro sugerido depende del proveedor', async () => {
+  const google = await checkDomain('g.test', { resolver: fakeDns({ MX: MX('g.test smtp.google.com') }) });
+  assert.equal(google.provider, 'Google Workspace');
+  const h = hintOf(google.spf, /No hay registro SPF/);
+  assert.deepEqual(h.record, { type: 'TXT', host: '@', fqdn: 'g.test', value: 'v=spf1 include:_spf.google.com ~all' });
+  assert.ok(h.links[0].url.startsWith('https://support.google.com'));
+
+  const ms = await checkDomain('m.test', { resolver: fakeDns({ MX: MX('m.test m-test.mail.protection.outlook.com') }) });
+  assert.equal(hintOf(ms.spf, /No hay registro SPF/).record.value, 'v=spf1 include:spf.protection.outlook.com ~all');
+
+  const hosting = await checkDomain('h.test', {
+    resolver: fakeDns({ MX: MX('h.test mail.h.test'), A: { 'mail.h.test': ['203.0.113.9'] } }),
+    smtpTargets: [{ host: 'mail.h.test' }],
+  });
+  assert.equal(hintOf(hosting.spf, /No hay registro SPF/).record.value, 'v=spf1 a mx ip4:203.0.113.9 ~all');
+});
+
+test('SPF: los registros sugeridos corrigen exactamente lo que está mal', async () => {
+  const mx = MX('a.test mx.a.test');
+  const two = await checkDomain('a.test', { resolver: fakeDns({ MX: mx, TXT: { 'a.test': ['v=spf1 include:x.test -all', 'v=spf1 ip4:203.0.113.1 include:x.test ~all'] } }) });
+  assert.equal(hintOf(two.spf, /registros SPF/).record.value, 'v=spf1 include:x.test ip4:203.0.113.1 ~all');
+  const twoStrict = await checkDomain('a.test', { resolver: fakeDns({ MX: mx, TXT: { 'a.test': ['v=spf1 mx -all', 'v=spf1 a -all'] } }) });
+  assert.equal(hintOf(twoStrict.spf, /registros SPF/).record.value, 'v=spf1 mx a -all');
+
+  const plus = await checkDomain('a.test', { resolver: fakeDns({ MX: mx, TXT: { 'a.test': ['v=spf1 ip4:203.0.113.1 +all'] } }) });
+  assert.equal(hintOf(plus.spf, /\+all/).record.value, 'v=spf1 ip4:203.0.113.1 ~all');
+
+  const noAll = await checkDomain('a.test', { resolver: fakeDns({ MX: mx, TXT: { 'a.test': ['v=spf1 mx'] } }) });
+  assert.equal(hintOf(noAll.spf, /No termina/).record.value, 'v=spf1 mx ~all');
+
+  const smtp = await checkDomain('a.test', {
+    resolver: fakeDns({ MX: mx, TXT: { 'a.test': ['v=spf1 mx -all'] }, A: { 'mail.hosting.test': ['203.0.113.50'] } }),
+    smtpTargets: [{ host: 'mail.hosting.test' }],
+  });
+  const hs = hintOf(smtp.spf, /no está autorizada/);
+  assert.equal(hs.record.value, 'v=spf1 mx ip4:203.0.113.50 -all');
+
+  const TXT = { 'a.test': [`v=spf1 ${Array.from({ length: 6 }, (_, i) => `include:i${i}.test`).join(' ')} -all`] };
+  for (let i = 0; i < 6; i += 1) TXT[`i${i}.test`] = ['v=spf1 a mx -all'];
+  const many = await checkDomain('a.test', { resolver: fakeDns({ MX: mx, TXT }) });
+  const hm = hintOf(many.spf, /consultas DNS/);
+  assert.match(hm.steps[0], /«include:i0.test»: 3/);
+});
+
+test('SMTP de Microsoft 365 o Google: con su include es correcto; sin él, error con el include agregado', async () => {
+  const zone = (spf) => fakeDns({
+    MX: MX('m.test m-test.mail.protection.outlook.com'),
+    TXT: { 'm.test': [spf], 'spf.protection.outlook.com': ['v=spf1 ip4:40.92.0.0/15 -all'] },
+    A: { 'smtp.office365.com': ['52.96.1.1'] },
+  });
+  const con = await checkDomain('m.test', { resolver: zone('v=spf1 include:spf.protection.outlook.com -all'), smtpTargets: [{ host: 'smtp.office365.com' }] });
+  assert.equal(con.spf.status, 'ok', JSON.stringify(con.spf.checks));
+  assert.ok(con.spf.checks.some((c) => /incluye «spf.protection.outlook.com»/.test(c.text)));
+
+  const sin = await checkDomain('m.test', { resolver: zone('v=spf1 ip4:203.0.113.1 -all'), smtpTargets: [{ host: 'smtp.office365.com' }] });
+  const h = hintOf(sin.spf, /no incluye/);
+  assert.equal(h.record.value, 'v=spf1 ip4:203.0.113.1 include:spf.protection.outlook.com -all');
+});
+
+test('DMARC: registro sugerido para crear, subir la política y sumar reportes', async () => {
+  const base = { MX: MX('a.test mx.a.test'), TXT: { 'a.test': ['v=spf1 mx -all'] } };
+  const missing = await checkDomain('a.test', { resolver: fakeDns(base) });
+  assert.deepEqual(hintOf(missing.dmarc, /No hay registro DMARC/).record,
+    { type: 'TXT', host: '_dmarc', fqdn: '_dmarc.a.test', value: 'v=DMARC1; p=none; rua=mailto:dmarc@a.test; fo=1' });
+
+  const none = await checkDomain('a.test', { resolver: fakeDns({ ...base, TXT: { ...base.TXT, '_dmarc.a.test': ['v=DMARC1; p=none; rua=mailto:r@a.test; adkim=s'] } }) });
+  const h = hintOf(none.dmarc, /p=none/);
+  assert.equal(h.record.value, 'v=DMARC1; p=quarantine; rua=mailto:r@a.test; adkim=s');
+  assert.match(h.steps[0], /arreglar DKIM/, 'DKIM no está: primero eso');
+
+  const noRua = await checkDomain('a.test', { resolver: fakeDns({ ...base, TXT: { ...base.TXT, '_dmarc.a.test': ['v=DMARC1; p=reject'] } }) });
+  assert.equal(hintOf(noRua.dmarc, /rua/).record.value, 'v=DMARC1; p=reject; rua=mailto:dmarc@a.test');
+});
+
+test('DKIM: pasos del proveedor, clave sin publicar y baja de un selector viejo', async () => {
+  const g = await checkDomain('g.test', { resolver: fakeDns({ MX: MX('g.test smtp.google.com') }) });
+  const hg = hintOf(g.dkim, /No se encontró/);
+  assert.ok(hg.steps.some((x) => /admin.google.com/.test(x)));
+
+  const ms = await checkDomain('m.test', { resolver: fakeDns({ MX: MX('m.test m-test.mail.protection.outlook.com') }), detected: ['selector1'] });
+  const hm = hintOf(ms.dkim, /no existe/);
+  assert.deepEqual(hm.record, { type: 'CNAME', host: 'selector1._domainkey', fqdn: 'selector1._domainkey.m.test', value: null });
+
+  const viejo = await checkDomain('a.test', { resolver: fakeDns({ MX: MX('a.test mx.a.test'), TXT: {
+    'default._domainkey.a.test': ['v=DKIM1; p='], 'k1._domainkey.a.test': [`v=DKIM1; p=${KEY2048}`] } }) });
+  const baja = viejo.dkim.checks.find((c) => /default/.test(c.text));
+  assert.equal(baja.level, 'warn', 'hay otra clave válida');
+  assert.match(baja.hint.steps[0], /selector viejo/);
+});
+
+test('ningún aviso ni error sale sin qué hacer', async () => {
+  const TXT = { 'a.test': ['v=spf1 include:roto.test ptr ip4: +all', 'v=spf1 -all'], '_dmarc.a.test': ['v=DMARC1; pct=50'],
+    'default._domainkey.a.test': ['v=DKIM1; p=nobase64!!'], 'mail._domainkey.a.test': [`v=DKIM1; p=${KEY1024}`] };
+  const scenarios = [
+    await checkDomain('a.test', { resolver: fakeDns({ TXT }), selectors: ['propio'], detected: ['s9'], foreign: ['h.test'] }),
+    await checkDomain('a.test', { resolver: fakeDns({ MX: MX('a.test mx.a.test'), TXT: { 'a.test': ['v=spf1 include:roto.test ptr ip4: ?all'], '_dmarc.a.test': ['v=DMARC1; p=none; pct=50'] } }), smtpTargets: [{ host: 'smtp.gmail.com' }] }),
+    await checkDomain('a.test', { resolver: fakeDns({ FAIL: { 'a.test': 'ESERVFAIL' }, A: { 'a.test': ['192.0.2.1'] } }) }),
+    await checkDomain('nada.test', { resolver: fakeDns({}) }),
+  ];
+  let count = 0;
+  for (const r of scenarios) {
+    for (const c of allChecks(r)) {
+      if (c.level === 'ok') continue;
+      count += 1;
+      assert.ok(c.hint?.steps?.length, `sin hint: ${c.text}`);
+      if (c.hint.record) assert.ok(c.hint.record.type && c.hint.record.host && c.hint.record.fqdn, c.text);
+    }
+  }
+  assert.ok(count >= 12, `se revisaron ${count} avisos`);
 });
 
 test('un DNS que falla avisa para reintentar, no dice "no configurado"', async () => {

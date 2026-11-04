@@ -107,6 +107,8 @@ Pestaña «Dominios» de cada cliente (la ven los dos roles). Los dominios salen
 
 Un DNS que no responde da aviso de reintentar, nunca "no configurado".
 
+Cada aviso y cada error trae «Cómo arreglarlo» (`src/dns/hints.mjs`): los pasos, y cuando el arreglo se puede calcular, el registro exacto a publicar (tipo, nombre y valor listo para copiar): el SPF con el `~all` agregado, dos SPF unificados en uno, la IP o el include del SMTP sumados antes del `all`, el DMARC inicial, el DMARC con `p=quarantine` conservando sus etiquetas. Lo que depende del proveedor de correo (activar DKIM, el include de SPF, los MX) sale con los pasos de ese proveedor, detectado por MX y SMTP: Google Workspace, Microsoft 365, Zoho o hosting con cPanel/Plesk, con el enlace a su guía. Si el buzón manda por Microsoft 365 o Google y el SPF incluye su include, no se marca la IP del SMTP como no autorizada: esos proveedores reciben en un servidor y entregan desde otros.
+
 El primer operador se crea con la CLI, que imprime su enlace de activación:
 
 ```bash
@@ -164,7 +166,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 70 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) la protección contra SSRF y el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 76 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) la protección contra SSRF y el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

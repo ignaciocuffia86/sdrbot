@@ -105,3 +105,12 @@ dialog h2 { margin-top: 0; }
 .c-warn .c-icon { color: var(--warn); }
 .c-error .c-icon { color: var(--danger); }
 .selectors { margin-top: 12px; }
+.c-body { flex: 1; min-width: 0; }
+.hint { margin: 6px 0 4px; }
+.hint summary { cursor: pointer; color: var(--accent); font-size: .85rem; font-weight: 600; }
+.hint ol { margin: 8px 0; padding-left: 20px; }
+.hint li { display: list-item; margin: 4px 0; }
+.hint-record { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
+.hint-record .secret { margin: 6px 0 0; align-items: flex-start; }
+.hint-record .record { flex: 1; margin: 0; }
+.hint a { margin-right: 12px; }

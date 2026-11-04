@@ -499,9 +499,36 @@ const levelBadge = (s) => {
 };
 const ICON = { ok: '✓', warn: '!', error: '✕' };
 
+function copyButton(value) {
+  return h('button', { type: 'button', class: 'sm', onclick: async (ev) => {
+    try { await navigator.clipboard.writeText(value); toast('Copiado.'); } catch {
+      const r = document.createRange(); r.selectNodeContents(ev.currentTarget.previousSibling);
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+    }
+  } }, 'Copiar');
+}
+
+// Qué hacer con un aviso: pasos, el registro listo para publicar y la guía del proveedor.
+function hintBox(hint) {
+  const r = hint.record;
+  return h('details', { class: 'hint' },
+    h('summary', {}, 'Cómo arreglarlo'),
+    h('ol', {}, hint.steps.map((step) => h('li', {}, step))),
+    r ? h('div', { class: 'hint-record' },
+      h('div', { class: 'small' },
+        h('strong', {}, 'Registro a publicar'), ` · tipo ${r.type} · nombre «${r.host}»`,
+        r.host !== '@' && r.fqdn !== r.host ? h('span', { class: 'muted' }, ` (en algunos paneles va completo: ${r.fqdn})`) : null,
+        r.host === '@' ? h('span', { class: 'muted' }, ` (el dominio raíz; algunos paneles piden dejarlo vacío o poner ${r.fqdn})`) : null),
+      r.value
+        ? h('div', { class: 'secret' }, h('pre', { class: 'record' }, r.value), copyButton(r.value))
+        : h('p', { class: 'small muted' }, 'El valor lo genera el proveedor de correo al activar DKIM: copiarlo de ahí.')) : null,
+    hint.links?.length ? h('p', { class: 'small' }, hint.links.map((l) => h('a', { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, `${l.label} ↗`))) : null);
+}
+
 function checkList(checks) {
   return h('ul', { class: 'checks' }, (checks ?? []).map((c) => h('li', { class: `c-${c.level}` },
-    h('span', { class: 'c-icon', 'aria-hidden': 'true' }, ICON[c.level]), h('span', {}, c.text))));
+    h('span', { class: 'c-icon', 'aria-hidden': 'true' }, ICON[c.level]),
+    h('div', { class: 'c-body' }, h('span', {}, c.text), c.hint ? hintBox(c.hint) : null))));
 }
 
 function section(title, part, extra) {
@@ -532,7 +559,8 @@ function domainCard(clientId, d, reload) {
   return h('div', { class: 'card domain' },
     h('div', { class: 'row spread' },
       h('div', {}, h('h2', { class: 'domain-name' }, d.domain),
-        h('div', { class: 'small muted' }, `${d.mailboxes.length} buzón(es) · ${d.checked_at ? `verificado ${fmtDate(d.checked_at)}` : 'sin verificar'}`)),
+        h('div', { class: 'small muted' }, `${d.mailboxes.length} buzón(es) · ${d.checked_at ? `verificado ${fmtDate(d.checked_at)}` : 'sin verificar'}`
+          + (r?.provider ? ` · correo en ${r.provider}` : ''))),
       h('div', { class: 'row' }, levelBadge(d.status), recheck)),
     r?.checks?.length ? checkList(r.checks) : null,
     r && r.resolvable !== false ? h('div', { class: 'dns-grid' },
