@@ -26,7 +26,7 @@ const forbidden = () => new GatewayError('forbidden', 'No tenés permiso para es
 const notFound = (what = 'No existe.') => new GatewayError('not_found', what, 404);
 
 const SLUG = '^[a-z0-9][a-z0-9-]{1,40}$';
-const SCOPES = ['read', 'draft', 'send', 'manage'];
+const SCOPES = ['read', 'draft', 'send', 'manage', 'sdr'];
 
 function validator(schema) {
   const v = ajv.compile(schema);

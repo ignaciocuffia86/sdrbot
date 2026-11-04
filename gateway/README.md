@@ -152,6 +152,39 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
+## Núcleo SDR (etapa 1 de `docs/09`)
+
+Con el permiso `sdr`, el mismo token y el mismo MCP suman 18 herramientas para los bots de Grok (`src/sdr/`, migración `005_sdr_nucleo`):
+
+| Grupo | Herramientas | Qué hacen |
+|---|---|---|
+| Reglas | `reglas_manual`, `reglas_alta` | Las reglas de operación de cada bot y tarea (índice y secciones), iguales para todos los clientes más los ajustes del cliente; las routines a crear en la cuenta de Grok |
+| Registro | `registro_buscar`, `registro_guardar_cuenta`, `registro_guardar_prospecto`, `registro_evento`, `registro_agenda`, `registro_historia`, `registro_resumen` | La memoria de la prospección: cuentas, personas, línea de tiempo con tipos fijos, agenda del día y números |
+| Pedidos | `registro_pedir`, `registro_pendientes`, `registro_resolver_pedido` | Pedidos entre bots; el mensaje de Grok sólo despierta. Tope de tres idas y vueltas, después al orquestador |
+| Aprobaciones | `registro_pedir_aprobacion`, `registro_aprobaciones`, `registro_aprobar` | Aprobaciones como datos. El gateway las exige |
+| Bitácora | `bitacora_inicio`, `bitacora_fin` | Cada corrida anota inicio y fin |
+| Pruebas | `prueba_carga` | Devuelve N KB después de N segundos, para medir el MCP en Grok |
+
+Lo que el gateway hace cumplir:
+
+- **Calibración:** mientras un cliente no haya mandado `calibracion_mails` mails aprobados (20 por defecto), `enviar` exige `aprobacion_id` de una aprobación con **exactamente** ese buzón, destinatario, asunto y texto (espacios aparte). Una aprobación se usa una vez; un reintento con la misma clave de idempotencia devuelve el envío anterior.
+- **Respuesta a un positivo:** `responder` con `prospecto_id` de un prospecto en estado `positivo` exige una aprobación de tipo `respuesta_positivo` con ese texto.
+- **Registro automático:** `enviar` y `responder` con `prospecto_id` dejan el evento `mail.enviado` y actualizan al prospecto.
+- **URLs de LinkedIn** normalizadas a `https://www.linkedin.com/in/<slug>`; las cortadas se rechazan.
+
+Un cliente sin configuración del SDR (`sdr.cliente_config`) usa el gateway como antes, sin calibración.
+
+**Reglas (playbooks).** Viven en `playbooks/` (raíz del repo): `comun.md`, `rutina.md` (prompt de las routines), `rutinas.json` y una carpeta por bot (`_bot.md` y una por tarea). Cada `## Título` es una sección; la línea `> …` que la sigue es su resumen. Se publican como versiones inmutables y cada cliente sigue el canal `estable` o `canario`, o una versión fija:
+
+```bash
+node bin/admin.mjs playbooks-publicar --version 2026.11.05-1 --canal canario   # con DATABASE_URL
+node bin/admin.mjs playbooks-canal estable 2026.11.05-1
+node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sql   # sin conexión: SQL para el MCP de Supabase
+node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
+```
+
+Publicado en producción: `2026.11.04-1` (estable y canario). La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`.
+
 ## Envíos cortados
 
 Un envío reserva su clave antes de hablar con el SMTP. Si la función se corta entre la reserva y la respuesta del SMTP (raro: un timeout de Vercel), la clave queda en `send_in_progress` para no duplicar, porque el mail pudo haber salido. Un operador mira la carpeta Enviados del buzón: si no está, libera la clave con `clear-send <cliente> <email> <clave>` y el reintento vuelve a enviar.
@@ -166,7 +199,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 77 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot) la protección contra SSRF y el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 92 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

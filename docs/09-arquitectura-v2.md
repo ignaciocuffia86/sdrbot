@@ -288,7 +288,7 @@ de Grok: son datos.
 | Etapa | Qué | Sale cuando |
 |---|---|---|
 | **0** · pruebas | En la cuenta canario de Biguá, las pruebas que Grok no corrió (`12` A.3): latencia de mensajes entre bots y receptor ocupado, dos routines a la vez, MCP de Biguá con y sin regla Allow, tamaño y tiempo de respuesta, error 500, webhook de routine. Dripify: Open API con la key real y el JSON del webhook | Cada supuesto pendiente queda probado o descartado |
-| **1** · reglas y registro | `reglas.*` (índice y secciones), `registro.*` (incluye pedidos y aprobaciones), `reglas.alta()`, bitácora; bots `orquestador` y `prospector`; calibración | El `prospector` envía 20 mails aprobados en el chat, todo en el registro |
+| **1** · reglas y registro · **en producción el 04/11** (`13`) | `reglas.*` (índice y secciones), `registro.*` (incluye pedidos y aprobaciones), `reglas.alta()`, bitácora; bots `orquestador` y `prospector`; calibración | El `prospector` envía 20 mails aprobados en el chat, todo en el registro |
 | **2** · memoria del correo | Hilos, respuestas atadas, cursor, supresión, rebotes, «sin respuesta», aprobaciones exigidas, despertar por webhook; bot `seguimiento` | `seguimiento` responde un mail con aprobación, sólo con lo que le dan el gateway y el registro |
 | **3** · Dripify | `dripify.*` sobre la Open API, webhooks entrantes, pausa cruzada entre canales | Un prospecto en mail y Dripify se frena en los dos al responder en uno |
 | **4** · CRM | `crm.*` con HubSpot; mapeo aprobado en el chat | Un positivo aprobado aparece en HubSpot con los campos del cliente, la conversación y una tarea |
@@ -330,6 +330,7 @@ Grok permite hasta 20 reglas **Allow** y 20 **Ask first** por cuenta (gana Ask f
 | Herramientas | Regla | Por qué |
 |---|---|---|
 | Todas las del MCP de Biguá (`gateway.*`, `reglas.*`, `registro.*`, `dripify.*`, `crm.*`) | **Allow** | Las barandas están en el servidor: cupo, idempotencia, supresión, aprobaciones exigidas, límites del CRM. Un Ask first en una routine vence a los 30 minutos y el trabajo no sale (`12` A.2) |
+| `registro_aprobar` | **Ask first** | Registra la decisión del operador; siempre se llama desde el chat del `orquestador`, con el operador presente, donde la confirmación no vence. Si un mail con instrucciones engañara a un bot para aprobarse algo solo, Grok le pide confirmación a una persona |
 | ASCI: consultas | **Allow** | Lectura |
 | ASCI: reveal | **Allow** | El presupuesto diario lo corta ASCI |
 | Cualquier otra app o conector | Sin regla (pregunta) | No es parte del flujo |

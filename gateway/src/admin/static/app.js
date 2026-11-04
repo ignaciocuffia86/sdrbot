@@ -453,9 +453,9 @@ function tokensView(data, reload) {
     openDialog('Nuevo token para Grok Bot', h('div', {},
       field('Nombre', h('input', { name: 'name', required: true, placeholder: 'grok-bot SDR' })),
       h('label', {}, 'Permisos'),
-      ['read', 'draft', 'send', 'manage'].map((s) => h('label', { class: 'check' },
+      ['read', 'draft', 'send', 'manage', 'sdr'].map((s) => h('label', { class: 'check' },
         h('input', { type: 'checkbox', name: 'scopes', value: s, checked: s !== 'manage' }),
-        { read: 'read — leer y sincronizar', draft: 'draft — crear borradores', send: 'send — enviar y responder', manage: 'manage — marcar, mover, crear carpetas' }[s])),
+        { read: 'read — leer y sincronizar', draft: 'draft — crear borradores', send: 'send — enviar y responder', manage: 'manage — marcar, mover, crear carpetas', sdr: 'sdr — reglas, registro, pedidos y aprobaciones (bots del SDR v2)' }[s])),
       field('Vence en (días)', h('input', { name: 'days', type: 'number', min: 1, max: 730, value: 120, required: true }))), {
       submitLabel: 'Generar',
       submit: async (fd) => {

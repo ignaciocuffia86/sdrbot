@@ -12,6 +12,8 @@ import {
 } from './mail/imap.mjs';
 import { buildMessage, replyFields } from './mail/compose.mjs';
 import { sendRaw, verifySmtp } from './mail/smtp.mjs';
+import { SDR_OPS } from './sdr/ops.mjs';
+import * as sdr from './sdr/store.mjs';
 
 // ---------------------------------------------------------------- esquemas comunes
 
@@ -31,6 +33,15 @@ const idem = {
 };
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
+
+// Lo que vincula un envío con el registro de prospección (docs/09 §5.2 y §5.4).
+const sdrSend = {
+  prospecto_id: { type: 'string', pattern: '^[0-9a-fA-F-]{36}$', description: 'Prospecto del registro: el envío queda en su línea de tiempo.' },
+  aprobacion_id: { type: 'string', pattern: '^[0-9a-fA-F-]{36}$', description: 'Aprobación registrada para este envío (calibración o respuesta a un positivo).' },
+  bot: { type: 'string', pattern: '^[a-z][a-z0-9_]{1,30}$' },
+  tarea: { type: 'string', pattern: '^[a-z][a-z0-9_]{1,40}$' },
+  corrida: { type: 'string', pattern: '^[0-9a-fA-F-]{36}$' },
+};
 
 // ---------------------------------------------------------------- utilidades
 
@@ -80,6 +91,8 @@ async function onMailbox(ctx, email, fn) {
 // Envío con idempotencia y cupo. La reserva se libera sólo si el servidor SMTP no aceptó
 // el mensaje: después de eso el envío existe y un reintento devuelve el mismo resultado.
 async function sendFlow(ctx, args, kind) {
+  // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón.
+  const aprobacion = await sdr.controlarEnvio(ctx.clientId, args, kind);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
     const res = await store.reserveSend(account, args.idempotency_key, today, kind);
@@ -143,6 +156,20 @@ async function sendFlow(ctx, args, kind) {
       message_id: built.messageId, recipients: built.recipients, subject: built.subject,
       smtp_response: smtp?.response ?? null, sent_folder: sent.folder, sent_uid: sent.uid,
     });
+    // El mail ya salió: lo que sigue no puede hacer fallar el envío.
+    if (aprobacion) {
+      await sdr.usarAprobacion(ctx.clientId, aprobacion.id, args.idempotency_key).catch((e) => {
+        warnings.push(`El mail salió pero no se pudo marcar la aprobación como usada: ${e.message}`);
+      });
+    }
+    if (args.prospecto_id) {
+      await sdr.registrarEnvio(ctx.clientId, args.prospecto_id, {
+        message_id: built.messageId, asunto: built.subject, buzon: account.email, respuesta: kind === 'reply',
+        idempotency_key: args.idempotency_key, aprobacion: aprobacion?.id ?? null,
+      }, { bot: args.bot, tarea: args.tarea, corrida: args.corrida }).catch((e) => {
+        warnings.push(`El mail salió pero no se pudo registrar en la línea de tiempo: ${e.message}`);
+      });
+    }
     return {
       duplicate: false,
       message_id: built.messageId,
@@ -160,7 +187,7 @@ async function sendFlow(ctx, args, kind) {
 
 // ---------------------------------------------------------------- operaciones
 
-export const OPS = [
+const MAIL_OPS = [
   {
     op: 'mailboxes', mcp: 'buzones', scope: 'read',
     description: 'Lista los buzones IMAP de este cliente con su estado, su cupo diario de envíos y cuántos van hoy. ' +
@@ -242,14 +269,15 @@ export const OPS = [
     op: 'send', mcp: 'enviar', scope: 'send',
     description: 'Envía un mail nuevo desde el buzón por su SMTP y guarda la copia en Enviados. Respeta el cupo ' +
       'diario del buzón y la clave de idempotencia. Para seguir un hilo pasar in_reply_to y references; para ' +
-      'contestar un mensaje recibido usar responder. Sólo enviar lo que ya está aprobado.',
+      'contestar un mensaje recibido usar responder. Con prospecto_id el envío queda en el registro. Si el cliente ' +
+      'está en calibración, exige aprobacion_id con una aprobación de exactamente este mail.',
     schema: obj({
       mailbox, to: addressList, cc: addressList, bcc: addressList,
       subject: { type: 'string', maxLength: 500 }, text, html: text,
       in_reply_to: { type: 'string', maxLength: 500 },
       references: { type: 'array', items: { type: 'string', maxLength: 500 }, maxItems: 50 },
       unsubscribe_mailto: { type: 'boolean', default: false, description: 'Agrega List-Unsubscribe con un mailto al buzón y asunto BAJA.' },
-      idempotency_key: idem,
+      idempotency_key: idem, ...sdrSend,
     }, ['mailbox', 'to', 'subject', 'idempotency_key']),
     handler: (ctx, a) => sendFlow(ctx, a, 'send'),
     summary: (r) => ({ message_id: r.message_id, duplicate: r.duplicate, recipients: r.accepted?.length ?? null }),
@@ -264,7 +292,7 @@ export const OPS = [
       reply_all: { type: 'boolean', default: false },
       quote: { type: 'boolean', default: true },
       mark_answered: { type: 'boolean', default: true },
-      idempotency_key: idem,
+      idempotency_key: idem, ...sdrSend,
     }, ['mailbox', 'uid', 'idempotency_key']),
     handler: (ctx, a) => {
       if (!a.text && !a.html) throw errors.invalid('Falta el cuerpo: text o html.');
@@ -334,6 +362,8 @@ export const OPS = [
       withImap(account, password, (c) => createFolder(c, a.path))),
   },
 ];
+
+export const OPS = [...MAIL_OPS, ...SDR_OPS];
 
 // ---------------------------------------------------------------- despacho
 

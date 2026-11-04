@@ -23,6 +23,13 @@
 //   node bin/admin.mjs pause|reactivate <cliente> <email>
 //   node bin/admin.mjs clear-send <cliente> <email> <clave_de_idempotencia>
 //   node bin/admin.mjs rekey
+//   node bin/admin.mjs playbooks-publicar --version <v> [--canal canario|estable] [--notas "…"]
+//        publica playbooks/ (en la raíz del repo) como una versión nueva e inmutable
+//   node bin/admin.mjs playbooks-sql --version <v> [--canal …] [--notas "…"]
+//        lo mismo, pero imprime el SQL (para aplicarlo en producción por el MCP de Supabase)
+//   node bin/admin.mjs playbooks-canal <canario|estable> <version>
+//   node bin/admin.mjs sdr-config <cliente>                 (JSON por stdin: ajustes, canal, bots_activos,
+//        zona_horaria, calibracion_mails, version_fija)
 //   node bin/admin.mjs add-admin <email> "<nombre>" [--client <cliente>] [--base-url https://sdrbot.bigua.lat]
 //        sin --client crea un operador de Biguá; con --client, un usuario de ese cliente.
 //        Imprime un enlace de activación de un solo uso (24 h) para elegir la contraseña.
@@ -39,7 +46,7 @@ import { withImap, listFolders } from '../src/mail/imap.mjs';
 import { verifySmtp } from '../src/mail/smtp.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const SCOPES = ['read', 'draft', 'send', 'manage'];
+const SCOPES = ['read', 'draft', 'send', 'manage', 'sdr'];
 
 function die(msg) {
   console.error(`Error: ${msg}`);
@@ -80,6 +87,7 @@ async function main() {
       timezone: { type: 'string' }, 'no-append-sent': { type: 'boolean' },
       'sent-folder': { type: 'string' }, 'drafts-folder': { type: 'string' },
       client: { type: 'string' }, 'base-url': { type: 'string' },
+      version: { type: 'string' }, canal: { type: 'string' }, notas: { type: 'string' },
     },
   });
 
@@ -198,6 +206,48 @@ async function main() {
         n += 1;
       }
       console.log(`Recifrados: ${n}. Ya se puede sacar la clave vieja de MAILGW_ENC_KEYS.`);
+      break;
+    }
+    case 'playbooks-publicar':
+    case 'playbooks-sql': {
+      if (!o.version) die('Falta --version (por ejemplo 2026.11.04-1).');
+      if (o.canal && !['canario', 'estable'].includes(o.canal)) die('--canal es canario o estable.');
+      const { cargarPlaybooks, sqlPublicacion } = await import('../src/sdr/playbooks.mjs');
+      const pb = cargarPlaybooks(path.join(here, '..', '..', 'playbooks'));
+      if (cmd === 'playbooks-sql') {
+        console.log(sqlPublicacion({ version: o.version, notas: o.notas, canal: o.canal }, pb));
+        break;
+      }
+      const sdr = await import('../src/sdr/store.mjs');
+      const r = await sdr.publicar({ version: o.version, notas: o.notas, ...pb });
+      console.log(`Versión ${r.version} publicada: ${r.secciones} secciones, ${r.rutinas} routines.`);
+      if (o.canal) {
+        await sdr.moverCanal(o.canal, o.version);
+        console.log(`Canal ${o.canal} → ${o.version}.`);
+      }
+      break;
+    }
+    case 'playbooks-canal': {
+      const [canal, version] = p;
+      if (!['canario', 'estable'].includes(canal) || !version) die('Uso: playbooks-canal <canario|estable> <version>');
+      const sdr = await import('../src/sdr/store.mjs');
+      await sdr.moverCanal(canal, version);
+      console.log(`Canal ${canal} → ${version}.`);
+      break;
+    }
+    case 'sdr-config': {
+      const [clientId] = p;
+      if (!clientId) die('Uso: sdr-config <cliente> < config.json');
+      const raw = await new Promise((resolve) => {
+        let d = '';
+        process.stdin.on('data', (c) => { d += c; });
+        process.stdin.on('end', () => resolve(d));
+      });
+      let cfg;
+      try { cfg = JSON.parse(raw); } catch { die('El stdin no es JSON válido.'); }
+      const sdr = await import('../src/sdr/store.mjs');
+      const r = await sdr.setConfig(clientId, cfg);
+      console.log(`Configuración de ${clientId}: canal ${r.canal}, bots ${r.bots_activos.join(', ')}, calibración ${r.calibracion_mails}.`);
       break;
     }
     case 'add-admin': {
