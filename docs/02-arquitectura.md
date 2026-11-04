@@ -4,6 +4,8 @@ Diseño de la solución a partir del documento v1.1 y de la revisión en `01-rev
 
 No hay código acá. Lo que se nombra como RPC, tool o script es contrato, no implementación.
 
+> **04/11/2026:** hay una propuesta de arquitectura v2 en `09-arquitectura-v2.md` que mueve la lógica del box a la plataforma SDRBOT. Su §0 dice qué partes de este documento reemplaza.
+
 ## 1. Principios
 
 1. **Un plano de control, N planos de ejecución.** Biguá opera lo compartido (ASCI, ingesta, base de control, plantilla, tablero, alertas). Cada cliente tiene su cuenta de Grok Bot, su box y sus sesiones. Nada de un tenant es visible desde otro.
