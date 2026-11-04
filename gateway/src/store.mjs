@@ -8,11 +8,21 @@ import { limits } from './config.mjs';
 
 let pool;
 
+// DATABASE_URL, o la POSTGRES_URL que la integración de Supabase en Vercel carga sola al
+// conectar la base al proyecto. Esa trae sslmode y parámetros propios del pooler (supa,
+// pgbouncer) que pg interpreta a su modo y pisan la configuración TLS de abajo: se sacan.
+export function connectionString() {
+  const raw = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!raw) throw errors.config('Falta DATABASE_URL (o POSTGRES_URL de la integración de Supabase).');
+  const url = new URL(raw);
+  for (const k of ['sslmode', 'sslrootcert', 'supa', 'pgbouncer']) url.searchParams.delete(k);
+  return url.toString();
+}
+
 export function getPool() {
   if (!pool) {
-    if (!process.env.DATABASE_URL) throw errors.config('Falta DATABASE_URL.');
     pool = new pg.Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: connectionString(),
       // El pooler de Supabase exige TLS. Igual que ASCI, sin validar la cadena: el
       // certificado del pooler no está en el almacén de Node.
       ssl: process.env.MAILGW_DB_SSL === 'off' ? false : { rejectUnauthorized: false },

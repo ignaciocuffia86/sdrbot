@@ -68,7 +68,7 @@ Requisitos: un proyecto de Supabase (el de la base de control del SDR BOT) y un 
    node bin/admin.mjs migrate
    ```
 
-2. **Vercel.** Proyecto nuevo desde el repo `sdrbot` con **Root Directory = `gateway`** (sin framework). Variables de entorno de producción: `DATABASE_URL` y `MAILGW_ENC_KEYS`, las mismas de arriba. Dominio sugerido: `mail.bigua.lat`.
+2. **Vercel.** Proyecto nuevo desde el repo `sdrbot` con **Root Directory = `gateway`** (sin framework). Variables de entorno de producción: `MAILGW_ENC_KEYS` (la misma de arriba) y la conexión a la base: si se conecta el proyecto de Supabase desde Storage de Vercel, la integración carga `POSTGRES_URL` sola y el gateway la usa; si no, `DATABASE_URL`. Dominio sugerido: `mail.bigua.lat`.
 
 3. **Verificar:** `curl https://mail.bigua.lat/health` devuelve `{"ok":true,...}`.
 
