@@ -5,8 +5,7 @@
   ],
   "functions": {
     "api/index.mjs": {
-      "maxDuration": 60,
-      "memory": 1024
+      "maxDuration": 60
     }
   },
   "rewrites": [

@@ -191,7 +191,7 @@ channels:                             # [cliente] qué canales se usan y con qu�
     # Sólo con provider: imap. Los datos de conexión se cargan con la CLI del gateway
     # (add-account); la contraseña nunca va en el manifiesto.
     # imap_gateway:
-    #   url: https://mail.bigua.lat
+    #   url: https://sdrbot.bigua.lat
     #   token_secret: MAILGW_TOKEN       # secreto de la cuenta de Grok Bot; el mismo token va en el conector MCP
     #   scopes: [read, draft, manage]    # send recién con los textos aprobados
     #   imap: { host: mail.cliente.com, port: 993, security: tls }

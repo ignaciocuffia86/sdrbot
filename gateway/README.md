@@ -68,9 +68,11 @@ Requisitos: un proyecto de Supabase (el de la base de control del SDR BOT) y un 
    node bin/admin.mjs migrate
    ```
 
-2. **Vercel.** Proyecto nuevo desde el repo `sdrbot` con **Root Directory = `gateway`** (sin framework). Variables de entorno de producción: `MAILGW_ENC_KEYS` (la misma de arriba) y la conexión a la base: si se conecta el proyecto de Supabase desde Storage de Vercel, la integración carga `POSTGRES_URL` sola y el gateway la usa; si no, `DATABASE_URL`. Dominio sugerido: `mail.bigua.lat`.
+2. **Vercel.** Proyecto nuevo desde el repo `sdrbot` con **Root Directory = `gateway`** (sin framework). Variables de entorno de producción: `MAILGW_ENC_KEYS` (la misma de arriba) y la conexión a la base: si se conecta el proyecto de Supabase desde Storage de Vercel, la integración carga `POSTGRES_URL` sola y el gateway la usa; si no, `DATABASE_URL`. Dominio: `sdrbot.bigua.lat`.
 
-3. **Verificar:** `curl https://mail.bigua.lat/health` devuelve `{"ok":true,...}`.
+3. **Verificar:** `curl https://sdrbot.bigua.lat/health` devuelve `{"ok":true,...}`.
+
+Desplegado el 04/11/2026 como proyecto `sdrbot-mail-gateway` de Vercel, en `https://sdrbot.bigua.lat`, región `gru1`, Node 22.
 
 ## Alta de un cliente y sus buzones
 
@@ -97,8 +99,8 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
 ## Conectar Grok Bot
 
-- **Bots (MCP):** agregar un MCP remoto con URL `https://mail.bigua.lat/mcp` y cabecera fija `Authorization: Bearer <token>`. Lista sólo las tools que el token puede usar.
-- **Scripts del box (REST):** secretos `MAILGW_URL=https://mail.bigua.lat` y `MAILGW_TOKEN=<token>`, y el cliente `clients/python/mailgw.py` (sólo biblioteca estándar):
+- **Bots (MCP):** agregar un MCP remoto con URL `https://sdrbot.bigua.lat/mcp` y cabecera fija `Authorization: Bearer <token>`. Lista sólo las tools que el token puede usar.
+- **Scripts del box (REST):** secretos `MAILGW_URL=https://sdrbot.bigua.lat` y `MAILGW_TOKEN=<token>`, y el cliente `clients/python/mailgw.py` (sólo biblioteca estándar):
 
   ```bash
   python3 clients/python/mailgw.py search --json '{"mailbox":"ventas@cliente.com","not_keyword":"SDR_procesado","since":"2026-11-10"}'

@@ -21,7 +21,7 @@ flowchart LR
     BOT[bots: handoff-desk, outreach] -- MCP + Bearer --> GW
     SCR[scripts del box] -- REST + Bearer --> GW
   end
-  GW[Gateway IMAP<br/>Vercel · mail.bigua.lat] -- IMAP 993 / SMTP 465 --> MS[(Servidor de correo<br/>del cliente)]
+  GW[Gateway IMAP<br/>Vercel · sdrbot.bigua.lat] -- IMAP 993 / SMTP 465 --> MS[(Servidor de correo<br/>del cliente)]
   GW --- DB[(Supabase · esquema mailgw<br/>buzones cifrados · tokens · envíos · auditoría)]
 ```
 
@@ -105,9 +105,9 @@ La base de control todavía no está construida, así que el piloto usa el propi
 | # | Paso | Quién | Estado |
 |---|---|---|---|
 | 1 | Crear el proyecto de Supabase `sdrbot` (misma organización y región que `locasci`) | Biguá | Hecho el 04/11: `rrieaxdmrikhhgzuvvzb`, `sa-east-1` |
-| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`; conectarle el Supabase `sdrbot` desde Storage (carga `POSTGRES_URL`); variable `MAILGW_ENC_KEYS`; dominio `mail.bigua.lat` | Biguá | En curso: proyecto `sdrbot-mail-gateway` creado el 04/11 y conectado al repo, con Root Directory `gateway`, Node 22 y región `gru1`. Faltan la variable, la base y el dominio |
+| 2 | Crear el proyecto de Vercel desde este repo con Root Directory `gateway`; conectarle el Supabase `sdrbot` desde Storage (carga `POSTGRES_URL`); variable `MAILGW_ENC_KEYS`; dominio `sdrbot.bigua.lat` | Biguá | Hecho el 04/11 salvo `MAILGW_ENC_KEYS`: proyecto `sdrbot-mail-gateway` conectado al repo y a la base, en `https://sdrbot.bigua.lat`, región `gru1`; `/health` responde |
 | 3 | Migración del esquema `mailgw` | Biguá | Hecho el 04/11: siete tablas con seguridad por filas, sin acceso para `anon` ni `authenticated` |
-| 3b | `add-client` del cliente piloto y `/health` respondiendo | Biguá | Pendiente: después del paso 2 |
+| 3b | `add-client` del cliente piloto | Biguá | Pendiente: falta el nombre del cliente |
 | 4 | Recibir del cliente los ítems de §5 | Cliente | Pendiente |
 | 5 | `add-account` y `check` por cada buzón, en videollamada con el cliente | Biguá + cliente | Pendiente |
 | 6 | `add-token` con `read,draft,manage`; cargarlo en la cuenta de Grok Bot como conector MCP y como secreto `MAILGW_TOKEN` | Biguá | Pendiente |
