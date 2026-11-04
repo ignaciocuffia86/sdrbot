@@ -51,6 +51,7 @@ Doce operaciones, cada una disponible como `POST /v1/<op>` (para los scripts) y 
 |---|---|
 | Biguá guarda la contraseña de un buzón del cliente | Cifrada con AES-256-GCM; la llave está sólo en Vercel (`MAILGW_ENC_KEYS`), nunca en la base; el texto cifrado está atado a su buzón. La contraseña entra por la CLI de un operador, sin pasar por mail ni chat. El DPA tiene que decir que Biguá guarda credenciales de acceso al correo |
 | Un token filtrado | Hash en la base, vencimiento, revocación, permisos separados (`read`, `draft`, `send`, `manage`) y alcance limitado a los buzones de su cliente |
+| Que se crucen datos entre clientes | Dos barreras. El gateway filtra cada consulta por el cliente del token, y además la base lo hace cumplir: cada pedido corre con un rol restringido y políticas por cliente en todas las tablas, así que un error en una consulta no puede leer ni escribir filas de otro cliente. Las credenciales cifradas están atadas a su buzón y cliente. Probado contra la base (`test/aislamiento.test.mjs`) y verificado en el proyecto `sdrbot` |
 | El bot manda de más o duplica | Cupo diario atómico por buzón, clave de idempotencia obligatoria (probado con pedidos simultáneos), máximo 10 destinatarios, permiso `send` aparte |
 | El bot borra algo | No hay operación para borrar, ni `\Deleted`, ni mover a la papelera |
 | El hosting bloquea la cuenta o la IP por intentos fallidos | Tres contraseñas rechazadas seguidas bloquean el buzón en el gateway y deja de intentar hasta que un operador lo reactiva |

@@ -87,11 +87,16 @@ trap 'dovecot -c "$T/dovecot.conf" stop 2>/dev/null || true' EXIT
 # --- Postgres
 pg_ctlcluster 16 main start 2>/dev/null || true
 for i in $(seq 1 20); do su postgres -c "psql -qAtc 'select 1'" >/dev/null 2>&1 && break; sleep 0.5; done
-su postgres -c "psql -qc \"alter user postgres password 'postgres'\"" >/dev/null
+# El dueño de la base es un usuario sin superusuario, con CREATEROLE: igual que postgres en
+# Supabase. Con un superusuario las pruebas pasarían aunque los permisos del rol de la
+# aplicación estuvieran mal, porque un superusuario puede tomar cualquier rol.
 su postgres -c "psql -qc 'drop database if exists mailgw_test'" >/dev/null
-su postgres -c "psql -qc 'create database mailgw_test'" >/dev/null
+su postgres -c "psql -qc 'drop role if exists mailgw_app'" >/dev/null
+su postgres -c "psql -qc 'drop role if exists mailgw_owner'" >/dev/null
+su postgres -c "psql -qc \"create role mailgw_owner login createrole nosuperuser password 'mailgw_owner'\"" >/dev/null
+su postgres -c "psql -qc 'create database mailgw_test owner mailgw_owner'" >/dev/null
 
-export DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/mailgw_test"
+export DATABASE_URL="postgres://mailgw_owner:mailgw_owner@127.0.0.1:5432/mailgw_test"
 export MAILGW_DB_SSL=off
 export MAILGW_ENC_KEYS="k2:$(openssl rand -base64 32),k1:$(openssl rand -base64 32)"
 export NODE_EXTRA_CA_CERTS="$T/ca.pem"

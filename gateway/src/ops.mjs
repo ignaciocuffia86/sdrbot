@@ -66,12 +66,12 @@ async function onMailbox(ctx, email, fn) {
   ctx.accountId = account.id;
   try {
     const r = await fn(account, password);
-    await store.recordAuth(account.id, true);
+    await store.recordAuth(account, true);
     return r;
   } catch (e) {
-    if (e instanceof GatewayError && e.code === 'mail_auth_failed') await store.recordAuth(account.id, false, e.message);
+    if (e instanceof GatewayError && e.code === 'mail_auth_failed') await store.recordAuth(account, false, e.message);
     else if (e instanceof GatewayError && ['mail_server_unreachable', 'mail_server_error'].includes(e.code)) {
-      await store.recordError(account.id, e.message);
+      await store.recordError(account, e.message);
     }
     throw e;
   }
@@ -134,12 +134,12 @@ async function sendFlow(ctx, args, kind) {
         }
       }
     } catch (e) {
-      if (!smtpDone) await store.releaseSend(res.id, account.id, today);
+      if (!smtpDone) await store.releaseSend(account, res.id, today);
       if (!smtpDone) throw e;
       warnings.push(`El mail salió; falló un paso posterior: ${e.message}`);
     }
 
-    await store.completeSend(res.id, {
+    await store.completeSend(account, res.id, {
       message_id: built.messageId, recipients: built.recipients, subject: built.subject,
       smtp_response: smtp?.response ?? null, sent_folder: sent.folder, sent_uid: sent.uid,
     });
@@ -151,7 +151,7 @@ async function sendFlow(ctx, args, kind) {
       subject: built.subject,
       sent_folder: sent.folder,
       sent_uid: sent.uid,
-      sends_today: await store.sendsToday(account.id, today),
+      sends_today: await store.sendsToday(account, today),
       daily_send_cap: account.daily_send_cap,
       warnings,
     };
@@ -169,7 +169,7 @@ export const OPS = [
     handler: async (ctx) => {
       const list = await store.listAccounts(ctx.clientId);
       return {
-        mailboxes: await Promise.all(list.map(async (a) => publicAccount(a, await store.sendsToday(a.id, dayIn(a.timezone))))),
+        mailboxes: await Promise.all(list.map(async (a) => publicAccount(a, await store.sendsToday(a, dayIn(a.timezone))))),
       };
     },
   },

@@ -38,6 +38,14 @@ export async function closePool() {
   if (pool) { const p = pool; pool = undefined; await p.end(); }
 }
 
+// Dos maneras de hablar con la base:
+//
+//   q / tx      con el usuario de la conexión, dueño de las tablas: sólo la CLI de
+//               administración (altas, migraciones, rotación de llave).
+//   asClient    todo lo que el gateway hace por un pedido: en una transacción con el rol
+//               mailgw_app y mailgw.client_id fijado al cliente del token. Las políticas de
+//               la 002 filtran cada tabla por ese cliente, así que una consulta con un error
+//               no puede leer ni escribir filas de otro cliente.
 const q = (text, params) => getPool().query(text, params);
 
 async function tx(fn) {
@@ -55,13 +63,24 @@ async function tx(fn) {
   }
 }
 
+// set_config(..., true) vale sólo para la transacción: con el pooler en modo transacción la
+// conexión física se comparte entre pedidos, y nada de un cliente queda pegado a la próxima.
+async function asClient(clientId, fn) {
+  return tx(async (c) => {
+    await c.query(`select set_config('role', 'mailgw_app', true), set_config('mailgw.client_id', $1, true)`,
+      [clientId ?? '']);
+    return fn(c);
+  });
+}
+
+const one = async (clientId, text, params) => (await asClient(clientId, (c) => c.query(text, params))).rows;
+
 // ---------------------------------------------------------------- tokens
 
+// Antes de saber de qué cliente es el pedido: el rol de la aplicación sin cliente fijado no
+// ve ninguna fila, y el token se busca por hash con mailgw.autenticar.
 export async function findToken(hash) {
-  const { rows } = await q(
-    `update mailgw.token set last_used_at = now()
-      where token_hash = $1 and revoked_at is null and (expires_at is null or expires_at > now())
-      returning id, client_id, name, scopes`, [hash]);
+  const rows = await one(null, `select id, client_id, name, scopes from mailgw.autenticar($1)`, [hash]);
   return rows[0] ?? null;
 }
 
@@ -71,14 +90,14 @@ const PUBLIC_COLS = `id, client_id, email, display_name, imap_host, imap_port, i
   smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder,
   drafts_folder, status, auth_failures, last_ok_at, last_error, last_error_at`;
 
+// El filtro por client_id se mantiene en las consultas además de la política: la política es
+// la segunda barrera, no la única.
 export async function listAccounts(clientId) {
-  const { rows } = await q(
-    `select ${PUBLIC_COLS} from mailgw.account where client_id = $1 order by email`, [clientId]);
-  return rows;
+  return one(clientId, `select ${PUBLIC_COLS} from mailgw.account where client_id = $1 order by email`, [clientId]);
 }
 
 export async function getAccount(clientId, email) {
-  const { rows } = await q(
+  const rows = await one(clientId,
     `select ${PUBLIC_COLS}, username, secret_enc from mailgw.account
       where client_id = $1 and email = lower($2)`, [clientId, email]);
   return rows[0] ?? null;
@@ -88,23 +107,26 @@ export async function getAccount(clientId, email) {
 // seguidas bloquean el buzón: los servidores de hosting compartido (cPanel, Plesk)
 // suelen bloquear la IP o la cuenta tras unos pocos intentos fallidos, y el gateway
 // reintentaría cada 15 minutos.
-export async function recordAuth(accountId, ok, message = null) {
+export async function recordAuth(account, ok, message = null) {
   if (ok) {
-    await q(`update mailgw.account set auth_failures = 0, last_ok_at = now(), updated_at = now()
-              where id = $1 and (auth_failures <> 0 or last_ok_at is null or last_ok_at < now() - interval '1 minute')`,
-    [accountId]);
+    await one(account.client_id,
+      `update mailgw.account set auth_failures = 0, last_ok_at = now(), updated_at = now()
+        where id = $1 and (auth_failures <> 0 or last_ok_at is null or last_ok_at < now() - interval '1 minute')`,
+      [account.id]);
     return;
   }
-  await q(`update mailgw.account
-              set auth_failures = auth_failures + 1,
-                  status = case when auth_failures + 1 >= $3 then 'auth_error' else status end,
-                  last_error = $2, last_error_at = now(), updated_at = now()
-            where id = $1`, [accountId, message, limits.maxAuthFailures]);
+  await one(account.client_id,
+    `update mailgw.account
+        set auth_failures = auth_failures + 1,
+            status = case when auth_failures + 1 >= $3 then 'auth_error' else status end,
+            last_error = $2, last_error_at = now(), updated_at = now()
+      where id = $1`, [account.id, message, limits.maxAuthFailures]);
 }
 
-export async function recordError(accountId, message) {
-  await q(`update mailgw.account set last_error = $2, last_error_at = now(), updated_at = now() where id = $1`,
-    [accountId, message]);
+export async function recordError(account, message) {
+  await one(account.client_id,
+    `update mailgw.account set last_error = $2, last_error_at = now(), updated_at = now() where id = $1`,
+    [account.id, message]);
 }
 
 // ---------------------------------------------------------------- envíos
@@ -113,12 +135,12 @@ export async function recordError(accountId, message) {
 // Devuelve { state: 'reserved', id } | { state: 'duplicate', row } | { state: 'in_progress' }
 //        | { state: 'cap_reached' }.
 export async function reserveSend(account, key, day, kind) {
-  return tx(async (c) => {
+  return asClient(account.client_id, async (c) => {
     const ins = await c.query(
-      `insert into mailgw.send_log (account_id, idempotency_key, day, kind, status)
-       values ($1, $2, $3, $4, 'reserved')
+      `insert into mailgw.send_log (client_id, account_id, idempotency_key, day, kind, status)
+       values ($1, $2, $3, $4, $5, 'reserved')
        on conflict (account_id, idempotency_key) do nothing
-       returning id`, [account.id, key, day, kind]);
+       returning id`, [account.client_id, account.id, key, day, kind]);
     if (!ins.rows.length) {
       const prev = await c.query(
         `select status, kind, message_id, recipients, subject, smtp_response, sent_folder, sent_uid, sent_at
@@ -127,10 +149,10 @@ export async function reserveSend(account, key, day, kind) {
       return row?.status === 'sent' ? { state: 'duplicate', row } : { state: 'in_progress' };
     }
     const cnt = await c.query(
-      `insert into mailgw.send_counter as s (account_id, day, count) values ($1, $2, 1)
+      `insert into mailgw.send_counter as s (client_id, account_id, day, count) values ($1, $2, $3, 1)
        on conflict (account_id, day) do update set count = s.count + 1
-         where s.count < $3
-       returning count`, [account.id, day, account.daily_send_cap]);
+         where s.count < $4
+       returning count`, [account.client_id, account.id, day, account.daily_send_cap]);
     if (!cnt.rows.length || cnt.rows[0].count > account.daily_send_cap) {
       throw Object.assign(new Error('cap'), { capReached: true });
     }
@@ -141,27 +163,28 @@ export async function reserveSend(account, key, day, kind) {
   });
 }
 
-export async function completeSend(id, r) {
-  await q(`update mailgw.send_log
-              set status = 'sent', message_id = $2, recipients = $3, subject = $4, smtp_response = $5,
-                  sent_folder = $6, sent_uid = $7, sent_at = now()
-            where id = $1`,
-  [id, r.message_id, r.recipients, r.subject, r.smtp_response, r.sent_folder, r.sent_uid]);
+export async function completeSend(account, id, r) {
+  await one(account.client_id,
+    `update mailgw.send_log
+        set status = 'sent', message_id = $2, recipients = $3, subject = $4, smtp_response = $5,
+            sent_folder = $6, sent_uid = $7, sent_at = now()
+      where id = $1`,
+    [id, r.message_id, r.recipients, r.subject, r.smtp_response, r.sent_folder, r.sent_uid]);
 }
 
 // Un envío que falló antes de que el servidor SMTP lo aceptara: se borra la reserva y se
 // devuelve el lugar en el cupo, así un reintento con la misma clave vuelve a intentar.
-export async function releaseSend(id, accountId, day) {
-  await tx(async (c) => {
+export async function releaseSend(account, id, day) {
+  await asClient(account.client_id, async (c) => {
     await c.query(`delete from mailgw.send_log where id = $1 and status = 'reserved'`, [id]);
     await c.query(`update mailgw.send_counter set count = greatest(count - 1, 0)
-                    where account_id = $1 and day = $2`, [accountId, day]);
+                    where account_id = $1 and day = $2`, [account.id, day]);
   });
 }
 
-export async function sendsToday(accountId, day) {
-  const { rows } = await q(`select count from mailgw.send_counter where account_id = $1 and day = $2`,
-    [accountId, day]);
+export async function sendsToday(account, day) {
+  const rows = await one(account.client_id,
+    `select count from mailgw.send_counter where account_id = $1 and day = $2`, [account.id, day]);
   return rows[0]?.count ?? 0;
 }
 
@@ -169,10 +192,11 @@ export async function sendsToday(accountId, day) {
 
 export async function audit(entry) {
   try {
-    await q(`insert into mailgw.audit_log (client_id, token_id, account_id, op, ok, error_code, detail)
-             values ($1, $2, $3, $4, $5, $6, $7)`,
-    [entry.clientId ?? null, entry.tokenId ?? null, entry.accountId ?? null, entry.op, entry.ok,
-      entry.errorCode ?? null, entry.detail ? JSON.stringify(entry.detail) : null]);
+    await one(entry.clientId,
+      `insert into mailgw.audit_log (client_id, token_id, account_id, op, ok, error_code, detail)
+       values ($1, $2, $3, $4, $5, $6, $7)`,
+      [entry.clientId ?? null, entry.tokenId ?? null, entry.accountId ?? null, entry.op, entry.ok,
+        entry.errorCode ?? null, entry.detail ? JSON.stringify(entry.detail) : null]);
   } catch (e) {
     // La auditoría no tumba la operación que ya se hizo.
     console.error('[mailgw] audit', e.message);

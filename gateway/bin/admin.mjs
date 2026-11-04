@@ -157,7 +157,7 @@ async function main() {
       console.table(folders.map((f) => ({ path: f.path, uso: f.special_use, mensajes: f.messages, no_leidos: f.unseen })));
       await verifySmtp(a, pw);
       console.log('SMTP ok: usuario y contraseña aceptados.');
-      await store.recordAuth(a.id, true);
+      await store.recordAuth(a, true);
       break;
     }
     case 'list': {

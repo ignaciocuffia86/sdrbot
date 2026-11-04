@@ -53,6 +53,7 @@ Respuesta REST: `{"ok": true, "data": ...}` o `{"ok": false, "error": {"code": "
 - **Máximo 10 destinatarios** por envío: es para mails uno a uno.
 - **Contraseñas cifradas** con AES-256-GCM. La clave vive sólo en la variable de entorno `MAILGW_ENC_KEYS` de Vercel; la base guarda el texto cifrado, atado a su buzón. Un volcado de la base sola no expone contraseñas.
 - **Tokens con hash** (sha256) y permisos `read`, `draft`, `send` y `manage`. No hay endpoints de administración: el alta se hace con la CLI.
+- **Aislamiento entre clientes en la base**, no sólo en el código. Cada pedido corre en una transacción con el rol `mailgw_app` (sin `BYPASSRLS`, sin ser dueño de nada) y con el cliente del token fijado; las políticas de cada tabla dejan ver y escribir sólo las filas de ese cliente. Todas las tablas llevan `client_id`, y un envío no puede quedar a nombre de un buzón de otro cliente (clave foránea compuesta). Los tokens no se leen directo: `mailgw.autenticar(hash)` devuelve el cliente. Lo prueba `test/aislamiento.test.mjs` contra la base, sin pasar por el gateway.
 - **Auditoría** por operación (`mailgw.audit_log`): quién, qué buzón, resultado y conteos, sin contenido de mensajes.
 
 ## Desplegar
@@ -122,7 +123,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 29 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes, permisos, MCP, CLI, cifrado y rotación de llave, y el cliente Python. Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`).
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 36 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, y el cliente Python. Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 
