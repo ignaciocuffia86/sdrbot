@@ -166,7 +166,7 @@ channels:                             # [cliente] qué canales se usan y con qu�
     enabled: true
     sending_domain: bairesqa.net      # dominio alternativo, distinto del principal
     dns_owner: cliente                # cliente | bigua (Biguá gestiona DNS y casillas)
-    provider: google_workspace        # google_workspace | microsoft_365 (el box no deja salir SMTP ni IMAP)
+    provider: google_workspace        # google_workspace | microsoft_365 | imap (hosting genérico, vía gateway IMAP: docs/07)
     api_auth: domain_wide_delegation  # google: domain_wide_delegation · microsoft: graph_app_only · respaldo: grokbot_connector
     api_credential_secret: MAIL_CREDENTIAL   # nombre del secreto en la cuenta de Grok Bot; el valor nunca va acá
     delegation_authorized_by: ti@bairesqa.com   # administrador del dominio que autorizó la delegación
@@ -188,6 +188,17 @@ channels:                             # [cliente] qué canales se usan y con qu�
     unsubscribe_keyword: BAJA
     forward_replies_to: augusto@bairesqa.com     # opcional
     read_every_minutes: 15            # lectura de respuestas y aprobaciones en horario hábil (mínimo de Grok Bot: 5)
+    # Sólo con provider: imap. Los datos de conexión se cargan con la CLI del gateway
+    # (add-account); la contraseña nunca va en el manifiesto.
+    # imap_gateway:
+    #   url: https://mail.bigua.lat
+    #   token_secret: MAILGW_TOKEN       # secreto de la cuenta de Grok Bot; el mismo token va en el conector MCP
+    #   scopes: [read, draft, manage]    # send recién con los textos aprobados
+    #   imap: { host: mail.cliente.com, port: 993, security: tls }
+    #   smtp: { host: mail.cliente.com, port: 465, security: tls }
+    #   append_sent: true                # false si el servidor ya guarda lo enviado
+    #   hosting_send_limit_per_hour: 100 # del plan del hosting; el cupo diario va por debajo
+    #   processed_keyword: SDR_procesado
   linkedin:
     enabled: true
     seat_owner: augusto@bairesqa.com  # el vendedor; login y 2FA los hace él

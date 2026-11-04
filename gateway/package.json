@@ -1,0 +1,26 @@
+{
+  "name": "sdrbot-mail-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gateway IMAP/SMTP del SDR BOT: expone por HTTPS (REST y MCP) los buzones IMAP que el box de Grok Bot no puede alcanzar.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "admin": "node bin/admin.mjs",
+    "test": "bash test/run.sh"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ajv": "^8.20.0",
+    "imapflow": "^2.4.2",
+    "mailparser": "^3.9.39",
+    "nodemailer": "^10.1.1",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "smtp-server": "^3.19.22"
+  }
+}

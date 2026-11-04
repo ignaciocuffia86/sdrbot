@@ -62,6 +62,7 @@ flowchart LR
 | **Repo `sdrbot`** | Fuente única de scripts, skills (prompts como archivos), definición de routines, migraciones, esquema del manifiesto, playbooks, tests de aislamiento | Git + CI (lint, tests de RLS con pgTAP, corrida en seco contra una base efímera) | Este repo |
 | **Plantilla SDR BOT** | Siete plantillas de bot (una por bot) más un skill de primeros pasos, en un **equipo** de Grok Bot de Biguá para que sean privadas. No llevan secretos ni el conector MCP de ASCI: eso lo agrega el alta | Grok Bot (plantillas por bot) | A construir; se mantiene **fina**: cada bot carga su skill desde el repo clonado en el box |
 | **Módulo de mail por API** | Envío y lectura de las casillas del tenant por HTTPS (Gmail API con delegación de dominio; Microsoft Graph como alternativa), con rotación, cupos, lotes y deduplicación en el script. Reemplaza a SMTP/IMAP, que el box no puede usar | Python en el repo, credencial de aplicación por tenant | A construir (`06-respuestas-grokbot.md` A.3) |
+| **Gateway IMAP/SMTP** | Para casillas en hostings IMAP genéricos: habla IMAP y SMTP con el servidor del cliente y expone 12 operaciones por REST y MCP, con contraseñas cifradas, tokens con permisos, cupo, idempotencia y auditoría | Node en Vercel (`gateway/`), esquema `mailgw` en Supabase | Construido y probado; falta desplegar (`07-gateway-imap.md`) |
 | **Cuenta Grok Bot de Biguá** | Resumen consolidado 19:00, alertas críticas, mantenimiento con MCP admin de Supabase, sincronización de uso de ASCI | Grok Bot | A construir |
 | **Tablero** | Vistas `v_*` consultadas por operadores; fase 2: app web mínima para Biguá y para aprobaciones del cliente | Fase 1: vistas + resumen por mail. Fase 2: app en Vercel sobre Supabase con magic link | Fase 1 / Fase 2 |
 | **Secretos** | Runtime: los secretos de la cuenta de Grok Bot de cada tenant. Plano de control: Supabase Vault del proyecto `sdrbot` (ASCI ya lo usa para las claves del MCP en `radar.usuario_mcp`) | Grok Bot secrets + Supabase Vault. Sin gestor de contraseñas externo | Decidido (ver §5.2) |
@@ -139,6 +140,8 @@ El box no deja salir SMTP ni IMAP (probado el 22/10). El mail va por API sobre H
 | Cuándo | Default para todo tenant nuevo | Cliente ya en Microsoft | Tenant chico sin administrador de dominio |
 
 Lo que no se usa para prospección: APIs transaccionales (Resend, SendGrid, Postmark, Mailgun), por reputación compartida y políticas que excluyen el mail en frío. El notificador de Biguá sí puede usar una.
+
+**Cuarto camino: IMAP/SMTP genérico.** Cuando las casillas del cliente están en un hosting o servidor propio (cPanel, Plesk, Zimbra), los scripts y los bots llegan por el **gateway IMAP de Biguá** (`gateway/`), un servicio en Vercel que habla IMAP y SMTP con el servidor del cliente y expone REST y MCP por HTTPS, con el mismo cupo, la misma idempotencia y sin borrar nada. Diseño, seguridad y plan del piloto en `07-gateway-imap.md`.
 
 Consecuencias para el modelo de datos: `mailboxes` pierde las credenciales por casilla (no existían en la base, estaban en `.env`) y gana `provider` (`google`, `microsoft`, `grokbot_connector`); `send_ledger.external_ref` guarda el `id` del mensaje del proveedor y una columna `message_id_header` guarda el `Message-ID` para cruzar respuestas.
 

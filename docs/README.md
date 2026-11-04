@@ -12,8 +12,9 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [04-rol-sdr-bot-asci.md](04-rol-sdr-bot-asci.md) | Especificación del rol `sdr_bot` en ASCI: definición, tools permitidas, presupuesto, alta y rotación, tools nuevas propuestas, borrador de migración y pruebas |
 | [05-preguntas-grokbot.md](05-preguntas-grokbot.md) | Preguntas a Grok Bot para cerrar el diseño: cuentas, box, routines, bots y plantilla, conectores y secretos, datos y cumplimiento, operación; cada una con prioridad, supuesto actual y plan B |
 | [06-respuestas-grokbot.md](06-respuestas-grokbot.md) | Respuestas de Grok Bot (22/10) e impacto en el diseño: mail por API en vez de SMTP/IMAP, un bot dueño de cada sesión de navegador, routines como prompts, plantillas por bot en un equipo, lo que queda para soporte y las pruebas del canario |
+| [07-gateway-imap.md](07-gateway-imap.md) | Gateway IMAP/SMTP para clientes con correo en un hosting genérico: por qué, decisión de construirlo, qué hace, seguridad, qué pedirle al cliente, cómo trabaja el bot en el piloto, riesgos y pasos de arranque. El código está en `gateway/` |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
 Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → preguntas y respuestas de Grok Bot → manifiesto.
 
-Estado: diseño. No hay implementación en este repositorio todavía.
+Estado: diseño, más el gateway IMAP/SMTP construido y probado en `gateway/` (falta desplegarlo).
