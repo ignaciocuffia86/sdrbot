@@ -215,7 +215,7 @@ node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sq
 node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
 ```
 
-Publicado en producción: `2026.11.05-2` (estable y canario), con el bot `seguimiento`. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
+Publicado en producción: `2026.11.05-3` (estable y canario), con el bot `seguimiento`. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
 
 ## Envíos cortados
 
