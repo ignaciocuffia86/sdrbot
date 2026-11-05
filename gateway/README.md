@@ -152,9 +152,9 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
-## Núcleo SDR (etapa 1 de `docs/09`)
+## Núcleo SDR (etapas 1 y 2 de `docs/09`)
 
-Con el permiso `sdr`, el mismo token y el mismo MCP suman 18 herramientas para los bots de Grok (`src/sdr/`, migración `005_sdr_nucleo`):
+Con el permiso `sdr`, el mismo token y el mismo MCP suman 21 herramientas para los bots de Grok (`src/sdr/`, migraciones `005_sdr_nucleo` y `006_memoria_del_correo`):
 
 | Grupo | Herramientas | Qué hacen |
 |---|---|---|
@@ -162,6 +162,7 @@ Con el permiso `sdr`, el mismo token y el mismo MCP suman 18 herramientas para l
 | Registro | `registro_buscar`, `registro_guardar_cuenta`, `registro_guardar_prospecto`, `registro_evento`, `registro_agenda`, `registro_historia`, `registro_resumen` | La memoria de la prospección: cuentas, personas, línea de tiempo con tipos fijos, agenda del día y números |
 | Pedidos | `registro_pedir`, `registro_pendientes`, `registro_resolver_pedido` | Pedidos entre bots; el mensaje de Grok sólo despierta. Tope de tres idas y vueltas, después al orquestador |
 | Aprobaciones | `registro_pedir_aprobacion`, `registro_aprobaciones`, `registro_aprobar` | Aprobaciones como datos. El gateway las exige |
+| Correo | `correo_revisar`, `correo_atendido`, `correo_sin_respuesta` | Lo que llegó, ya atado a su envío y a su prospecto; marcarlo atendido; quién no respondió hace N días |
 | Bitácora | `bitacora_inicio`, `bitacora_fin` | Cada corrida anota inicio y fin |
 | Pruebas | `prueba_carga` | Devuelve N KB después de N segundos, para medir el MCP en Grok |
 
@@ -171,6 +172,26 @@ Lo que el gateway hace cumplir:
 - **Respuesta a un positivo:** `responder` con `prospecto_id` de un prospecto en estado `positivo` exige una aprobación de tipo `respuesta_positivo` con ese texto.
 - **Registro automático:** `enviar` y `responder` con `prospecto_id` dejan el evento `mail.enviado` y actualizan al prospecto.
 - **URLs de LinkedIn** normalizadas a `https://www.linkedin.com/in/<slug>`; las cortadas se rechazan.
+- **Supresión:** nada sale a una dirección que rebotó o pidió la baja (`destinatario_suprimido`), desde ningún buzón del cliente.
+- **Quien respondió es de `seguimiento`:** `enviar` (un mail nuevo de la secuencia) se rechaza si la persona tiene una respuesta sin atender (`respuesta_sin_atender`) o ya respondió, es positivo, dijo que no, derivó o está en el CRM (`prospecto_respondio`). Se la encuentra por `prospecto_id` o por el destinatario. `responder` en el hilo sí se puede.
+
+### Memoria del correo (etapa 2)
+
+El gateway lee el INBOX de cada buzón con un cursor propio (`sdr.buzon_cursor`; la primera vez, los últimos 7 días) y, sin LLM, ata cada mensaje:
+
+1. por el hilo: `In-Reply-To` / `References` (o el `Message-ID` del original que rebotó) contra lo que mandó el gateway;
+2. por la dirección: el remitente, o el destinatario que falló, es un prospecto;
+3. por el dominio: alguien de una cuenta que estamos trabajando escribió desde otra dirección (`de_cuenta`).
+
+Clasifica en `respuesta`, `automatica` (fuera de oficina: `Auto-Submitted` y cabeceras de Exchange), `rebote` / `rebote_temporal` (informe de entrega RFC 3464 o remitente de sistema; definitivo si el estado es 5.x.x), `baja` (asunto o texto «BAJA», como el `List-Unsubscribe` del gateway) y `de_cuenta`. Lo que no se relaciona con la prospección no se guarda. Registra solo la respuesta, el rebote o la baja en la línea de tiempo, carga la supresión y deja el resto (qué contestar, si es positivo) para el bot, con `correo_revisar`.
+
+**El reloj.** `POST /cron/correo` (con el secreto del reloj; en Supabase lo llama `pg_cron` cada 5 minutos, ver `db/supabase/reloj.sql`) lee los buzones de los clientes que tienen `seguimiento` en `bots_activos` y, si hay correo nuevo, **despierta** al bot por el webhook de su routine (`sdr.despertador`): un aviso con la lista, como mucho uno cada 10 minutos, dentro del horario del cliente; si el webhook falla, reintenta en el próximo tick con espera creciente; lo avisado y no atendido se vuelve a avisar después de 90 minutos, hasta tres veces.
+
+```bash
+node bin/admin.mjs sdr-despertador bairesqa seguimiento --url https://…   # la clave del webhook, por stdin
+node bin/admin.mjs sdr-despertador bairesqa seguimiento --apagar
+node bin/admin.mjs reloj-tick                                              # una vuelta a mano
+```
 
 Un cliente sin configuración del SDR (`sdr.cliente_config`) usa el gateway como antes, sin calibración.
 
@@ -183,7 +204,7 @@ node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sq
 node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
 ```
 
-Publicado en producción: `2026.11.04-1` (estable y canario). La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`.
+Publicado en producción: `2026.11.05-1` (estable y canario), con el bot `seguimiento`. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
 
 ## Envíos cortados
 
@@ -191,7 +212,7 @@ Un envío reserva su clave antes de hablar con el SMTP. Si la función se corta 
 
 ## Rotar la llave de cifrado
 
-Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Vercel y en la máquina del operador, correr `node bin/admin.mjs rekey`, y después sacar `k1`.
+Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Vercel y en la máquina del operador, correr `node bin/admin.mjs rekey` (recifra las contraseñas de los buzones y las claves de los webhooks del despertador), y después sacar `k1`.
 
 ## Pruebas
 
@@ -199,7 +220,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 92 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 99 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real) y la memoria del correo (respuestas, rebotes, fuera de oficina y bajas sembrados en el Dovecot, supresión al enviar, despertador y reloj). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

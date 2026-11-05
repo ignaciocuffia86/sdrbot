@@ -5,6 +5,7 @@
 //   GET  /v1/mailboxes      atajo de POST /v1/mailboxes
 //   POST /v1/<op>           una operación (ver src/ops.mjs), cuerpo JSON
 //   POST /mcp               MCP (streamable HTTP, sin sesión)
+//   POST /cron/correo       el reloj (pg_cron en Supabase): lee los buzones y despierta a seguimiento
 //   GET  /admin             panel web (src/admin/static) · /admin/api/* su API (src/admin/api.mjs)
 //
 // Toda respuesta REST es { ok: true, data } o { ok: false, error: { code, message } }.
@@ -16,6 +17,9 @@ import { opByName, runOp } from './ops.mjs';
 import { handleMcp } from './mcp.mjs';
 import { handleAdminApi } from './admin/api.mjs';
 import { readFile } from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { hashToken } from './crypto.mjs';
+import { tick, hashReloj } from './sdr/correo.mjs';
 
 // Cabeceras del panel: sin scripts ni estilos de terceros ni en línea, sin marcos.
 const ADMIN_HEADERS = {
@@ -84,6 +88,18 @@ export async function handle(req, res) {
   try {
     if (path === '/health' && req.method === 'GET') {
       return send(res, 200, { ok: true, data: { service: 'sdrbot-mail-gateway', version: VERSION } });
+    }
+
+    if (path === '/cron/correo') {
+      if (req.method !== 'POST') throw new GatewayError('method_not_allowed', 'Usar POST.', 405);
+      const m = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? '');
+      const esperado = await hashReloj();
+      const dado = m ? hashToken(m[1]) : '';
+      if (!esperado || dado.length !== esperado.length
+          || !crypto.timingSafeEqual(Buffer.from(dado), Buffer.from(esperado))) {
+        throw new GatewayError('unauthorized', 'Secreto del reloj inválido.', 401);
+      }
+      return send(res, 200, { ok: true, data: await tick({ hasta: Date.now() + 40_000 }) });
     }
 
     if (path === '/admin' || path.startsWith('/admin/')) {

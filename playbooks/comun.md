@@ -119,6 +119,9 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `mailbox_paused`, `mailbox_blocked` | El buzón está frenado | Avisá al orquestador con un pedido; no uses otro buzón por tu cuenta |
 | `send_in_progress` | Un envío con esa clave quedó a medias | No reintentes con otra clave: avisá al orquestador |
 | `recipients_rejected` | El servidor rechazó el destinatario | Registrá `mail.rebotado` y no insistas |
+| `destinatario_suprimido` | Rebotó o pidió la baja antes | No le escribas más por mail |
+| `prospecto_respondio` | La persona ya respondió (o dijo que no, o es positivo) | No va otro mail de la secuencia: lo que sigue es de `seguimiento` |
+| `respuesta_sin_atender` | Tiene una respuesta que `seguimiento` no leyó | Esperá: la lee `seguimiento` |
 | Presupuesto de ASCI agotado | No hay más créditos hoy | Seguí con lo que no gasta; avisá en el resumen |
 
 **Clave de idempotencia** de un mail: `<id del prospecto>:<paso>` (por ejemplo

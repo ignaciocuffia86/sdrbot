@@ -14,6 +14,7 @@ import { buildMessage, replyFields } from './mail/compose.mjs';
 import { sendRaw, verifySmtp } from './mail/smtp.mjs';
 import { SDR_OPS } from './sdr/ops.mjs';
 import * as sdr from './sdr/store.mjs';
+import { controlarDestinatarios } from './sdr/correo.mjs';
 
 // ---------------------------------------------------------------- esquemas comunes
 
@@ -91,7 +92,8 @@ async function onMailbox(ctx, email, fn) {
 // Envío con idempotencia y cupo. La reserva se libera sólo si el servidor SMTP no aceptó
 // el mensaje: después de eso el envío existe y un reintento devuelve el mismo resultado.
 async function sendFlow(ctx, args, kind) {
-  // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón.
+  // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón. La supresión y el
+  // estado de quien recibe se controlan con los destinatarios ya armados, antes del SMTP.
   const aprobacion = await sdr.controlarEnvio(ctx.clientId, args, kind);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
@@ -132,12 +134,14 @@ async function sendFlow(ctx, args, kind) {
         await withImap(account, password, async (client) => {
           const original = await originalForReply(client, args.folder, args.uid);
           built = await buildMessage(account, replyFields(account, original, args));
+          await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
           smtp = await sendRaw(account, password, built);
           smtpDone = true;
           await afterSend(client);
         });
       } else {
         built = await buildMessage(account, args);
+        await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
         smtp = await sendRaw(account, password, built);
         smtpDone = true;
         if (account.append_sent) {

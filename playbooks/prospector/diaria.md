@@ -73,9 +73,10 @@
 Para cada prospecto que el orquestador te pidió seguir:
 
 1. `registro_historia`: ¿ya respondió? ¿pidió la baja? Si sí, no le escribas.
-2. Además, revisá el buzón: `buscar` en INBOX con `from` = su email desde la fecha del mail 1.
-   Si hay algo de esa persona, **no le escribas**: registralo con `registro_evento` tipo
-   `respuesta` y pedile a `seguimiento` que lo lea (`registro_pedir`).
+2. No hace falta revisar el buzón: el gateway lo lee solo, registra las respuestas, rebotes y
+   bajas, y no deja mandar otro mail de la secuencia a quien respondió
+   (`prospecto_respondio`, `respuesta_sin_atender`, `destinatario_suprimido`). Si te frena, no
+   insistas: esa persona ya es de `seguimiento`.
 3. Si no respondió: un mail corto en el mismo hilo (`in_reply_to` y `references` con el
    `Message-ID` del mail anterior, que está en el `ref` del evento `mail.enviado`), con un ángulo
    nuevo, no un «¿viste mi mail?». Misma regla de calibración que el primero. Clave

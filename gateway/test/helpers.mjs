@@ -11,7 +11,7 @@ import { ImapFlow } from 'imapflow';
 export const T = process.env.MAILGW_TEST_DIR;
 export const HOST = '127.0.0.1';
 export const PORTS = { imaps: 11993, imap: 11143, smtps: 11465, submission: 11587 };
-export const USERS = { 'ana@cliente.test': 'clave-ana-1', 'beto@cliente.test': 'clave-beto-2', 'carla@cliente.test': 'clave-carla-3' };
+export const USERS = { 'ana@cliente.test': 'clave-ana-1', 'beto@cliente.test': 'clave-beto-2', 'carla@cliente.test': 'clave-carla-3', 'dario@cliente.test': 'clave-dario-4' };
 
 export function startSmtp() {
   const received = [];

@@ -30,6 +30,12 @@
 //   node bin/admin.mjs playbooks-canal <canario|estable> <version>
 //   node bin/admin.mjs sdr-config <cliente>                 (JSON por stdin: ajustes, canal, bots_activos,
 //        zona_horaria, calibracion_mails, version_fija)
+//   node bin/admin.mjs sdr-despertador <cliente> <bot> --url https://… [--desde 8] [--hasta 20]
+//        [--dias 1,2,3,4,5] [--espera 10]                     (clave del webhook de la routine por stdin)
+//   node bin/admin.mjs sdr-despertador <cliente> <bot> --apagar
+//   node bin/admin.mjs reloj-secreto        genera el secreto de POST /cron/correo, guarda su hash e imprime
+//        el secreto UNA vez (en producción se genera en Supabase: docs/14)
+//   node bin/admin.mjs reloj-tick           una vuelta del reloj desde la terminal (lee buzones y despierta)
 //   node bin/admin.mjs add-admin <email> "<nombre>" [--client <cliente>] [--base-url https://sdrbot.bigua.lat]
 //        sin --client crea un operador de Biguá; con --client, un usuario de ese cliente.
 //        Imprime un enlace de activación de un solo uso (24 h) para elegir la contraseña.
@@ -88,6 +94,8 @@ async function main() {
       'sent-folder': { type: 'string' }, 'drafts-folder': { type: 'string' },
       client: { type: 'string' }, 'base-url': { type: 'string' },
       version: { type: 'string' }, canal: { type: 'string' }, notas: { type: 'string' },
+      url: { type: 'string' }, desde: { type: 'string' }, hasta: { type: 'string' }, dias: { type: 'string' },
+      espera: { type: 'string' }, apagar: { type: 'boolean' },
     },
   });
 
@@ -205,6 +213,13 @@ async function main() {
         await store.setSecretById(r.id, encryptSecret(decryptSecret(r.secret_enc, aad), aad));
         n += 1;
       }
+      const correo = await import('../src/sdr/correo.mjs');
+      for (const d of await correo.clavesDespertador()) {
+        if (keyIdOf(d.clave_enc) === current) continue;
+        const aad = correo.aadDespertador(d.client_id, d.bot);
+        await correo.setClaveDespertador(d.client_id, d.bot, encryptSecret(decryptSecret(d.clave_enc, aad), aad));
+        n += 1;
+      }
       console.log(`Recifrados: ${n}. Ya se puede sacar la clave vieja de MAILGW_ENC_KEYS.`);
       break;
     }
@@ -233,6 +248,37 @@ async function main() {
       const sdr = await import('../src/sdr/store.mjs');
       await sdr.moverCanal(canal, version);
       console.log(`Canal ${canal} → ${version}.`);
+      break;
+    }
+    case 'sdr-despertador': {
+      const [clientId, bot] = p;
+      if (!clientId || !bot) die('Uso: sdr-despertador <cliente> <bot> --url https://… (clave por stdin) | --apagar');
+      const correo = await import('../src/sdr/correo.mjs');
+      if (o.apagar) {
+        const r = await correo.configurarDespertador(clientId, bot, { apagar: true });
+        console.log(r.apagado ? `Despertador de ${clientId}/${bot} apagado.` : 'No había despertador.');
+        break;
+      }
+      const num = (v) => (v === undefined ? undefined : Number(v));
+      const clave = await readPassword();
+      const r = await correo.configurarDespertador(clientId, bot, {
+        url: o.url, clave, hora_desde: num(o.desde), hora_hasta: num(o.hasta), espera_min: num(o.espera),
+        dias: o.dias ? o.dias.split(',').map(Number) : undefined,
+      });
+      console.log(`Despertador de ${r.client_id}/${r.bot} → ${r.url}.`);
+      break;
+    }
+    case 'reloj-secreto': {
+      const correo = await import('../src/sdr/correo.mjs');
+      const { token, hash } = newToken();
+      await correo.setSecretoReloj(hash);
+      console.log('Secreto del reloj (se muestra UNA vez; la base guarda sólo el hash):');
+      console.log(token);
+      break;
+    }
+    case 'reloj-tick': {
+      const correo = await import('../src/sdr/correo.mjs');
+      console.log(JSON.stringify(await correo.tick(), null, 2));
       break;
     }
     case 'sdr-config': {

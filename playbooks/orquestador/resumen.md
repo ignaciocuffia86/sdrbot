@@ -4,7 +4,9 @@
 
 1. `registro_resumen()` de hoy.
 2. Un mensaje en el chat con:
-   - cuentas investigadas, personas reveladas, mails enviados, respuestas y positivos;
+   - cuentas investigadas, personas reveladas, mails enviados, respuestas, positivos, rebotes
+     y bajas;
+   - correo sin atender (de `registro_agenda`), si hay;
    - cómo va la calibración (cuántos de cuántos);
    - corridas con error o parciales, con su motivo (de la bitácora);
    - lo que espera al operador (aprobaciones, pedidos escalados).

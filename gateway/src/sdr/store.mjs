@@ -128,7 +128,7 @@ export async function alta(clientId) {
 
 // ---------------------------------------------------------------- eventos
 
-async function insertarEvento(c, clientId, e, meta = {}) {
+export async function insertarEvento(c, clientId, e, meta = {}) {
   const { rows } = await c.query(
     `insert into sdr.evento (client_id, prospecto_id, cuenta_id, tipo, canal, datos, ref, interno, bot, tarea, corrida, version_reglas)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id, at`,
@@ -139,7 +139,7 @@ async function insertarEvento(c, clientId, e, meta = {}) {
 
 // Lo que un evento cambia en el prospecto, para que el estado y la agenda no dependan de que
 // cada bot se acuerde de actualizarlos.
-async function aplicarEvento(c, clientId, e) {
+export async function aplicarEvento(c, clientId, e) {
   if (!e.prospecto_id) return;
   if (SALIENTES.has(e.tipo) || e.tipo === 'respuesta') {
     await c.query(
@@ -158,12 +158,20 @@ async function aplicarEvento(c, clientId, e) {
     await c.query(`update sdr.prospecto set estado = $3, actualizado_at = now() where client_id = $1 and id = $2`,
       [clientId, e.prospecto_id, estado]);
   }
+  // Una baja o un rebote: a esa dirección no se le escribe más desde ningún buzón del cliente.
+  if (e.tipo === 'baja' || e.tipo === 'mail.rebotado') {
+    await c.query(
+      `insert into sdr.supresion (client_id, email, motivo, origen)
+       select client_id, email, $3, $4 from sdr.prospecto where client_id = $1 and id = $2 and email is not null
+       on conflict (client_id, email) do nothing`,
+      [clientId, e.prospecto_id, e.tipo === 'baja' ? 'baja' : 'rebote', `evento ${e.tipo}`]);
+  }
   if (e.tipo === 'crm.cargado' && e.ref) {
     await c.query(`update sdr.prospecto set crm_id = $3 where client_id = $1 and id = $2`, [clientId, e.prospecto_id, e.ref]);
   }
 }
 
-async function versionActual(c, clientId) {
+export async function versionActual(c, clientId) {
   try { return await versionDe(c, await configDe(c, clientId)); } catch { return null; }
 }
 
@@ -333,8 +341,10 @@ export async function agenda(clientId, { fecha, canal, limite }) {
     const { rows: aprob } = await c.query(
       `select estado, count(*)::int as n from sdr.aprobacion where client_id = $1 and estado in ('pendiente', 'aprobada') group by estado`,
       [clientId]);
+    const { rows: correo } = await c.query(
+      `select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`, [clientId]);
     return {
-      fecha: dia, prospectos,
+      fecha: dia, prospectos, correo_sin_atender: correo[0].n,
       pedidos_pendientes: Object.fromEntries(pedidos.map((r) => [r.para_bot, r.n])),
       aprobaciones: { pendientes: aprob.find((r) => r.estado === 'pendiente')?.n ?? 0, aprobadas_sin_usar: aprob.find((r) => r.estado === 'aprobada')?.n ?? 0 },
     };

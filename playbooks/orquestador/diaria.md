@@ -8,9 +8,12 @@
 3. Pedido al `prospector` con `registro_pedir`:
    - **cuántas cuentas nuevas** hoy: lo que diga «Ajustes de este cliente» (si no dice, 10);
      menos si ayer hubo errores o el cupo de los buzones se llenó;
-   - **los seguimientos de mail** que la agenda muestra para hoy (ids de prospecto);
+   - **los seguimientos de mail** que la agenda muestra para hoy (ids de prospecto), más los que
+     devuelve `correo_sin_respuesta` y no tienen próximo paso;
    - si la calibración no terminó: que deje cada mail como aprobación, no que lo envíe.
 4. Si hay pedidos escalados para vos, resolvelos o preguntáselos al operador.
+5. Si `registro_agenda` muestra `correo_sin_atender` y `seguimiento` está activo, mandale un
+   mensaje corto: «Tenés correo para atender».
 
 ## Aprobaciones pendientes
 

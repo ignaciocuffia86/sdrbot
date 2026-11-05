@@ -67,12 +67,39 @@ export function stripQuoted(text) {
   return kept.join('\n').trim();
 }
 
+// Detalle de un rebote, sin LLM: a quién no llegó, por qué, si es definitivo y qué mensaje
+// nuestro rebotó. Sale del informe de entrega (RFC 3464: Final-Recipient, Status, Action) o,
+// en los rebotes en texto libre, de las cabeceras del original citadas en el cuerpo.
+export function bounceInfo(source, ownMessageId) {
+  const raw = Buffer.isBuffer(source) ? source.toString('utf8', 0, Math.min(source.length, 300_000)) : String(source).slice(0, 300_000);
+  const recipients = new Set();
+  for (const m of raw.matchAll(/^(?:Final|Original)-Recipient:\s*rfc822;\s*<?([^\s<>;]+@[^\s<>;]+)>?/gim)) recipients.add(m[1].toLowerCase());
+  for (const m of raw.matchAll(/^X-Failed-Recipients:\s*(.+)$/gim)) {
+    for (const a of m[1].split(',')) if (/@/.test(a)) recipients.add(a.trim().replace(/^<|>$/g, '').toLowerCase());
+  }
+  const status = /^Status:\s*([245]\.\d{1,3}\.\d{1,3})/im.exec(raw)?.[1] ?? null;
+  const action = /^Action:\s*([a-z]+)/im.exec(raw)?.[1]?.toLowerCase() ?? null;
+  const diagnostic = /^Diagnostic-Code:\s*(.+)$/im.exec(raw)?.[1]?.trim().slice(0, 500) ?? null;
+  // El Message-ID del original está en el cuerpo (la parte citada), no en las cabeceras del aviso.
+  const corte = raw.search(/\r?\n\r?\n/);
+  const cuerpo = corte >= 0 ? raw.slice(corte) : raw;
+  const ids = [...cuerpo.matchAll(/^Message-ID:\s*(<[^>\s]+>)/gim)].map((m) => m[1]).filter((id) => id !== ownMessageId);
+  const temporary = status ? status.startsWith('4') : action ? action === 'delayed' : /delayed|delay notification|retrasad|demorad/i.test(raw.slice(0, 4000));
+  return {
+    recipients: [...recipients],
+    status, action, diagnostic,
+    original_message_id: ids[0] ?? null,
+    permanent: !temporary,
+  };
+}
+
 export async function parseMessage(source, meta = {}) {
   const parsed = await simpleParser(source, { skipImageLinks: true, skipTextToHtml: true });
   const from = addr(parsed.from?.value?.[0]);
   let text = parsed.text ?? '';
   const truncated = text.length > limits.maxTextChars;
   if (truncated) text = text.slice(0, limits.maxTextChars);
+  const bounce = isBounce(parsed, from);
   return {
     uid: meta.uid ?? null,
     folder: meta.folder ?? null,
@@ -95,7 +122,8 @@ export async function parseMessage(source, meta = {}) {
       filename: a.filename ?? null, content_type: a.contentType ?? null, size: a.size ?? null,
     })),
     is_auto_reply: isAutoReply(parsed),
-    is_bounce: isBounce(parsed, from),
+    is_bounce: bounce,
+    ...(bounce ? { bounce: bounceInfo(source, parsed.messageId ?? null) } : {}),
   };
 }
 
