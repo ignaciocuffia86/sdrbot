@@ -57,7 +57,7 @@ Antes de dejarlo correr solo:
 | ☐ | Ajustes revisados por el cliente y por Biguá |
 | ☐ | Dominio: SPF y DKIM en verde |
 | ☐ | Cupo de cada buzón por debajo del límite del hosting |
-| ☐ | Siete routines habilitadas y despertador cargado |
+| ☐ | Siete routines habilitadas y los dos despertadores cargados |
 | ☐ | Notificaciones del `orquestador` llegando al operador |
 | ☐ | Calibración en curso o terminada |
 
@@ -67,10 +67,10 @@ Nadie tiene que arrancar nada: lo arrancan las routines. Un día hábil, en la h
 
 | Hora | Quién | Qué |
 |---|---|---|
-| Todo el día, cada 5 min | Gateway | Lee los buzones, ata respuestas, rebotes y bajas; despierta a `seguimiento` (8 a 20 h) |
+| Todo el día, cada 5 min | Gateway | Lee los buzones, ata respuestas, rebotes y bajas; despierta a `seguimiento` si llegó correo y al `orquestador` si hay aprobaciones (8 a 20 h) |
 | 8:45 | `orquestador` | Arma el día y le pide al `prospector` cuántas cuentas nuevas y qué seguimientos |
 | 9:15 | `prospector` | La tanda: cuentas con señal, decisores, contactos y mails (en calibración, como aprobaciones) |
-| 12:00 y 16:00 | `orquestador` | Te presenta las aprobaciones |
+| 12:00 y 16:00, o cuando hay una nueva | `orquestador` | Te presenta las aprobaciones |
 | 11:30 y 15:30 | `prospector` | Manda lo aprobado |
 | 10, 13, 16, 19 o cuando llega algo | `seguimiento` | Lee las respuestas y decide qué sigue |
 | 18:30 | `orquestador` | Resumen del día |
@@ -85,7 +85,7 @@ interesados. Preguntas útiles: «¿cómo vamos?», «¿qué pasó con <persona>
 - No llegó el resumen de las 18:30, o dice cero mails en un día hábil.
 - El resumen menciona corridas con error o rebotes.
 - Un buzón aparece **bloqueado** o con error en la pestaña Buzones.
-- La pestaña SDR muestra el despertador con fallas.
+- La pestaña SDR muestra un despertador con fallas.
 
 En cualquiera de esos casos, preguntale al `orquestador` qué pasó (lee la bitácora) y, si no se
 resuelve, al equipo técnico.
@@ -97,7 +97,7 @@ resuelve, al equipo técnico.
 | Oferta, ICP, cargos, tono, firma, objeciones, positivos | Pestaña SDR → Ajustes | Cliente u operador |
 | Cuentas por día, buzón a usar, mails extrapolados | Pestaña SDR → Ajustes | Operador |
 | Calibración, bots activos, canal, zona horaria | Pestaña SDR → Configuración técnica | Operador |
-| Horario del despertador | Pestaña SDR → Despertador | Operador |
+| Horario de los despertadores | Pestaña SDR → Despertadores | Operador |
 | Buzones y cupo | Pestaña Buzones | Cliente u operador |
 | Reglas de trabajo de los bots (iguales para todos los clientes) | Repositorio y publicación (§8) | Equipo técnico |
 

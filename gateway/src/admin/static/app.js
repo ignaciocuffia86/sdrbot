@@ -317,14 +317,22 @@ function sdrTecnico(clientId, sdr, reload) {
 
 const DIAS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
 
-function despertadorCard(clientId, sdr, reload) {
-  const d = sdr.despertador;
+const AVISOS = {
+  seguimiento: { titulo: 'Despertador de seguimiento', rutina: 'SDR · respuestas', bot: 'seguimiento',
+    que: 'Cuando llega correo, el gateway despierta la routine «SDR · respuestas» del bot seguimiento por su webhook.' },
+  orquestador: { titulo: 'Despertador del orquestador', rutina: 'SDR · aprobaciones', bot: 'orquestador',
+    que: 'Cuando hay aprobaciones pendientes (por ejemplo, la respuesta a un positivo), el gateway despierta la routine «SDR · aprobaciones» del orquestador por su webhook, sin esperar a las 12 o las 16.' },
+};
+
+function despertadorCard(clientId, sdr, reload, bot = 'seguimiento') {
+  const a = AVISOS[bot];
+  const d = sdr.despertadores?.[bot] ?? (bot === 'seguimiento' ? sdr.despertador : null);
   const estado = !d ? h('span', { class: 'badge b-mute' }, 'sin cargar')
     : !d.activo ? h('span', { class: 'badge b-mute' }, 'apagado')
       : d.fallas ? h('span', { class: 'badge b-err' }, `falla (${d.fallas})`) : h('span', { class: 'badge b-ok' }, 'activo');
   const form = h('form', { class: 'card' },
-    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Despertador de seguimiento'), estado),
-    h('p', { class: 'muted small' }, 'Cuando llega correo, el gateway despierta la routine «SDR · respuestas» del bot seguimiento por su webhook. Copiá la URL y la clave desde esa routine en la app de Grok.'),
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, a.titulo), estado),
+    h('p', { class: 'muted small' }, `${a.que} Copiá la URL y la clave desde esa routine en la app de Grok.`),
     d?.ultimo_aviso_at ? h('p', { class: 'small' }, `Último aviso: ${fmtDate(d.ultimo_aviso_at)} · respuesta ${d.ultimo_estado ?? '—'}`,
       d.ultimo_error ? h('span', { class: 'err' }, ` · ${d.ultimo_error}`) : null) : null,
     field('URL del webhook', h('input', { name: 'url', type: 'url', required: true, value: d?.url ?? '', placeholder: 'https://…' })),
@@ -341,15 +349,15 @@ function despertadorCard(clientId, sdr, reload) {
   const err = h('p', { class: 'err', role: 'alert' });
   const btn = h('button', { type: 'submit', class: 'primary' }, d ? 'Guardar' : 'Cargar despertador');
   const off = d?.activo ? h('button', { type: 'button', class: 'danger', onclick: async (ev) => {
-    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/sdr/despertador`, { apagar: true }), err);
-    if (r) { toast('Despertador apagado: seguimiento corre sólo en su horario.'); reload(); }
+    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/sdr/despertador`, { apagar: true, bot }), err);
+    if (r) { toast(`Despertador apagado: ${bot} corre sólo en su horario.`); reload(); }
   } }, 'Apagar') : null;
   form.append(err, h('div', { class: 'row' }, btn, off));
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = new FormData(form);
     const body = {
-      url: String(fd.get('url')).trim(), hora_desde: Number(fd.get('hora_desde')), hora_hasta: Number(fd.get('hora_hasta')),
+      bot, url: String(fd.get('url')).trim(), hora_desde: Number(fd.get('hora_desde')), hora_hasta: Number(fd.get('hora_hasta')),
       dias: fd.getAll('dia').map(Number), espera_min: Number(fd.get('espera_min')),
       ...(fd.get('clave') ? { clave: String(fd.get('clave')).trim() } : {}),
     };
@@ -417,7 +425,8 @@ async function sdrView(clientId, bigua) {
           h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
           otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null),
         bigua ? sdrTecnico(clientId, sdr, reload) : null,
-        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload) : null)),
+        bigua && sdr.tecnico?.bots_activos.includes('orquestador') ? despertadorCard(clientId, sdr, reload, 'orquestador') : null,
+        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null)),
     h('h2', {}, 'Historial de cambios'),
     historial);
 }

@@ -1,6 +1,6 @@
 [
   {"bot": "orquestador", "nombre": "SDR · plan del día", "tarea": "diaria", "cron": "45 8 * * 1-5", "descripcion": "armar el plan del día, repartirlo y presentar las aprobaciones pendientes.", "etapa": 1},
-  {"bot": "orquestador", "nombre": "SDR · aprobaciones", "tarea": "aprobaciones", "cron": "0 12,16 * * 1-5", "descripcion": "presentar al operador las aprobaciones que esperan.", "etapa": 1},
+  {"bot": "orquestador", "nombre": "SDR · aprobaciones", "tarea": "aprobaciones", "cron": "0 12,16 * * 1-5", "descripcion": "presentar al operador las aprobaciones que esperan.", "etapa": 1, "disparo": "horario_y_webhook"},
   {"bot": "orquestador", "nombre": "SDR · resumen", "tarea": "resumen", "cron": "30 18 * * 1-5", "descripcion": "resumen del día para el operador.", "etapa": 1},
   {"bot": "orquestador", "nombre": "SDR · memorias", "tarea": "memorias", "cron": "0 17 * * 5", "descripcion": "revisión semanal de lo que recuerda cada bot.", "etapa": 1},
   {"bot": "prospector", "nombre": "SDR · tanda", "tarea": "diaria", "cron": "15 9 * * 1-5", "descripcion": "la tanda del día: cuentas nuevas, decisores, contactos y mails, más los seguimientos que tocan.", "etapa": 1},

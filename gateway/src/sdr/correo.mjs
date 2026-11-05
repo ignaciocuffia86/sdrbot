@@ -409,7 +409,40 @@ function enHorario(d, tz, ahora = new Date()) {
   return d.dias.includes(dia) && hora >= d.hora_desde && hora < d.hora_hasta;
 }
 
-// Despierta al bot de un cliente si hay correo nuevo sin avisar. Agrupa: un aviso con la lista,
+// Qué despierta a cada bot: correo nuevo a seguimiento, aprobaciones pendientes al orquestador.
+// $1 cliente, $2 tope de avisos por ítem, $3 minutos antes de volver a avisar lo mismo.
+const FUENTES = {
+  seguimiento: {
+    tabla: 'correo', columna: 'avisado_at',
+    sql: `select id, tipo, de, asunto from sdr.correo
+           where client_id = $1 and estado = 'nuevo' and avisos < $2
+             and (avisado_at is null or avisado_at < now() - make_interval(mins => $3))
+           order by id limit 50`,
+    cuerpo: (r) => ({
+      motivo: 'correo',
+      correos_nuevos: r.length,
+      correos: r.slice(0, 20).map((x) => ({ id: Number(x.id), tipo: x.tipo, de: x.de, asunto: x.asunto })),
+      instruccion: 'Llegó correo para atender. Seguí tus reglas de la tarea respuestas: correo_revisar te da el detalle.',
+    }),
+  },
+  orquestador: {
+    tabla: 'aprobacion', columna: 'avisada_at',
+    sql: `select a.id, a.tipo, a.pedida_por, p.nombre as prospecto from sdr.aprobacion a
+            left join sdr.prospecto p on p.id = a.prospecto_id
+           where a.client_id = $1 and a.estado = 'pendiente' and a.avisos < $2
+             and (a.avisada_at is null or a.avisada_at < now() - make_interval(mins => $3))
+           order by (a.tipo = 'respuesta_positivo') desc, a.creado_at limit 50`,
+    cuerpo: (r) => ({
+      motivo: 'aprobaciones',
+      aprobaciones_nuevas: r.length,
+      aprobaciones: r.slice(0, 20).map((x) => ({ id: x.id, tipo: x.tipo, pedida_por: x.pedida_por, prospecto: x.prospecto })),
+      instruccion: 'Hay aprobaciones para presentarle al operador. Seguí tus reglas de la tarea aprobaciones: registro_aprobaciones te da el detalle.',
+    }),
+  },
+};
+export const BOTS_CON_AVISO = Object.keys(FUENTES);
+
+// Despierta al bot de un cliente si hay algo nuevo sin avisar. Agrupa: un aviso con la lista,
 // a lo sumo uno cada espera_min minutos; si el webhook falla, reintenta en el próximo tick con
 // una espera que crece (2, 4, 8… hasta 60 minutos).
 export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fetch, ahora = new Date() } = {}) {
@@ -423,19 +456,11 @@ export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fet
   const desde = d.ultimo_aviso_at ? (ahora - new Date(d.ultimo_aviso_at)) / 60_000 : Infinity;
   const espera = d.fallas > 0 ? Math.min(2 ** d.fallas, 60) : d.espera_min;
   if (desde < espera) return { despertado: false, motivo: 'esperando para agrupar' };
-  const { rows: nuevos } = await asClient(clientId, (c) => c.query(
-    `select id, tipo, de, asunto from sdr.correo
-      where client_id = $1 and estado = 'nuevo' and avisos < $2
-        and (avisado_at is null or avisado_at < now() - make_interval(mins => $3))
-      order by id limit 50`, [clientId, AVISOS_MAX, REAVISO_MIN]));
+  const fuente = FUENTES[bot];
+  if (!fuente) return { despertado: false, motivo: `el bot ${bot} no tiene aviso` };
+  const { rows: nuevos } = await asClient(clientId, (c) => c.query(fuente.sql, [clientId, AVISOS_MAX, REAVISO_MIN]));
   if (!nuevos.length) return { despertado: false, motivo: 'nada nuevo' };
-  const cuerpo = {
-    motivo: 'correo',
-    cliente: clientId,
-    correos_nuevos: nuevos.length,
-    correos: nuevos.slice(0, 20).map((r) => ({ id: Number(r.id), tipo: r.tipo, de: r.de, asunto: r.asunto })),
-    instruccion: 'Llegó correo para atender. Seguí tus reglas de la tarea respuestas: correo_revisar te da el detalle.',
-  };
+  const cuerpo = { cliente: clientId, ...fuente.cuerpo(nuevos) };
   let estado = null;
   let error = null;
   try {
@@ -457,11 +482,11 @@ export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fet
               fallas = case when $4::text is null then 0 else fallas + 1 end
         where client_id = $1 and bot = $2`, [clientId, bot, estado, error]);
     if (!error) {
-      await c.query(`update sdr.correo set avisado_at = now(), avisos = avisos + 1 where client_id = $1 and id = any($2)`,
+      await c.query(`update sdr.${fuente.tabla} set ${fuente.columna} = now(), avisos = avisos + 1 where client_id = $1 and id = any($2)`,
         [clientId, nuevos.map((r) => r.id)]);
     }
   });
-  return { despertado: !error, correos: nuevos.length, estado, ...(error ? { error } : {}) };
+  return { despertado: !error, items: nuevos.length, estado, ...(error ? { error } : {}) };
 }
 
 // ---------------------------------------------------------------- reloj (dueño)
@@ -492,11 +517,14 @@ export async function tick({ hasta = Date.now() + 40_000, fetchImpl } = {}) {
     buzones.push({ cliente: r.client_id, ...(await revisarBuzon(r.client_id, r.email, { hasta })) });
   }
   const despertados = [];
-  for (const clientId of [...new Set(rows.map((r) => r.client_id))]) {
+  const { rows: conAviso } = await asOwner((c) => c.query(
+    `select d.client_id, d.bot from sdr.despertador d join sdr.cliente_config k on k.client_id = d.client_id
+      where d.activo and d.bot = any(k.bots_activos) order by d.client_id, d.bot`));
+  for (const { client_id: clientId, bot } of conAviso) {
     try {
-      despertados.push({ cliente: clientId, ...(await despertar(clientId, 'seguimiento', { fetchImpl })) });
+      despertados.push({ cliente: clientId, bot, ...(await despertar(clientId, bot, { fetchImpl })) });
     } catch (e) {
-      despertados.push({ cliente: clientId, despertado: false, error: e.message });
+      despertados.push({ cliente: clientId, bot, despertado: false, error: e.message });
     }
   }
   const resultado = { ms: Date.now() - inicio, buzones, despertados };

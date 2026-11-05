@@ -257,7 +257,7 @@ test('despertador: agrupa, avisa con la clave, reintenta con espera y no se repi
   const dentroDe3 = new Date(Date.now() + 3 * 60_000);
   const d = await correo.despertar(C, 'seguimiento', { fetchImpl, ahora: dentroDe3 });
   assert.equal(d.despertado, true);
-  assert.equal(d.correos, 4);
+  assert.equal(d.items, 4);
   const ultima = llamadas.at(-1);
   assert.equal(ultima.url, 'https://grok.test/hook/1');
   assert.equal(ultima.init.headers.authorization, 'Bearer clave-del-webhook');
@@ -293,4 +293,32 @@ test('reloj: /cron/correo exige su secreto y lee los buzones de los clientes con
   assert.ok(!body.data.buzones.some((b) => b.cliente === D), 'sólo clientes con seguimiento activo');
   const h = await ok(tok.c, 'registro_historia', { prospecto_id: P.cuatro.id });
   assert.equal(h.prospecto.estado, 'respondio');
+});
+
+test('despertador del orquestador: avisa las aprobaciones pendientes, primero las de un positivo', async () => {
+  await correo.configurarDespertador(C, 'orquestador', {
+    url: 'https://grok.test/hook/orq', clave: 'clave-orquestador', hora_desde: 0, hora_hasta: 24, dias: [1, 2, 3, 4, 5, 6, 7], espera_min: 10,
+  });
+  const llamadas = [];
+  const fetchImpl = async (url, init) => { llamadas.push({ url, init }); return { ok: true, status: 200 }; };
+  assert.equal((await correo.despertar(C, 'orquestador', { fetchImpl })).motivo, 'nada nuevo');
+  await sdr.pedirAprobacion(C, { tipo: 'calibracion_mail', prospecto_id: P.cuatro.id,
+    contenido: { buzon: BUZON, destinatario: 'cuatro@empresa.test', asunto: 'Hola', texto: 'Hola' } }, { bot: 'prospector' });
+  await sdr.pedirAprobacion(C, { tipo: 'respuesta_positivo', prospecto_id: P.uno.id,
+    contenido: { buzon: BUZON, texto: '¿Jueves a las 11?' } }, { bot: 'seguimiento' });
+  const d = await correo.despertar(C, 'orquestador', { fetchImpl });
+  assert.equal(d.despertado, true);
+  assert.equal(d.items, 2);
+  const cuerpo = JSON.parse(llamadas.at(-1).init.body);
+  assert.equal(cuerpo.motivo, 'aprobaciones');
+  assert.equal(cuerpo.aprobaciones[0].tipo, 'respuesta_positivo', 'primero la respuesta a un positivo');
+  assert.equal(llamadas.at(-1).init.headers.authorization, 'Bearer clave-orquestador');
+  assert.match(cuerpo.instruccion, /registro_aprobaciones/);
+  const luego = await correo.despertar(C, 'orquestador', { fetchImpl, ahora: new Date(Date.now() + 30 * 60_000) });
+  assert.equal(luego.motivo, 'nada nuevo', 'lo avisado no se repite enseguida');
+
+  // El reloj despierta a cada bot que tenga despertador.
+  const t = await correo.tick({ fetchImpl });
+  assert.ok(t.despertados.some((x) => x.cliente === C && x.bot === 'orquestador'));
+  await correo.configurarDespertador(C, 'orquestador', { apagar: true });
 });

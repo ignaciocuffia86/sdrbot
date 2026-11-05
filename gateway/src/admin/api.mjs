@@ -18,7 +18,7 @@ import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { CAMPOS, aplicarCambios, diferencias, tituloDe } from '../sdr/ajustes.mjs';
 import { renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
-import { configurarDespertador, verDespertador } from '../sdr/correo.mjs';
+import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -106,6 +106,7 @@ const V = {
       dias: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: 7 } },
       espera_min: { type: 'integer', minimum: 1, maximum: 240 },
       apagar: { type: 'boolean' },
+      bot: { enum: ['seguimiento', 'orquestador'], default: 'seguimiento' },
     } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
@@ -476,6 +477,8 @@ async function leerSdr(c, user, clientId) {
     } : null;
     out.bots = BOTS;
     out.despertador = await verDespertador(c, clientId, 'seguimiento');
+    out.despertadores = {};
+    for (const b of BOTS_CON_AVISO) out.despertadores[b] = await verDespertador(c, clientId, b);
   }
   return out;
 }
@@ -557,9 +560,10 @@ route('PUT', '/clients/:client/sdr/despertador', async ({ user, params, body }) 
   if (b.hora_desde !== undefined && b.hora_hasta !== undefined && b.hora_desde >= b.hora_hasta) {
     throw errors.invalid('La hora de inicio tiene que ser anterior a la de fin.');
   }
-  await configurarDespertador(params.client, 'seguimiento', b);
+  const { bot, ...datos } = b;
+  await configurarDespertador(params.client, bot, datos);
   await asOwner((c) => audit(c, user, params.client, b.apagar ? 'admin.sdr.despertador.apagar' : 'admin.sdr.despertador',
-    b.apagar ? {} : { url_host: new URL(b.url).host, clave_nueva: Boolean(b.clave) }));
+    b.apagar ? { bot } : { bot, url_host: new URL(b.url).host, clave_nueva: Boolean(b.clave) }));
   return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
 });
 

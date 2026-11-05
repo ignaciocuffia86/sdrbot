@@ -12,9 +12,10 @@
    con el cron, el timing y el prompt tal cual. Avisame cuando estén.» Esperá su respuesta antes
    de dar el alta por terminada.
 4. Si un bot de la lista no existe en la cuenta, no lo crees vos: decíselo al operador.
-5. Las routines con disparo `webhook` o `horario_y_webhook` (la de `seguimiento`): pasale al
+5. Las routines con disparo `webhook` o `horario_y_webhook` (la de `seguimiento` y tu «SDR ·
+   aprobaciones»): pasale al
    operador la URL del webhook y pedile que copie la clave desde la routine en la app de Grok y
-   la cargue en el panel (pestaña SDR → Despertador de seguimiento). **No escribas la clave vos
+   la cargue en el panel (pestaña SDR → el despertador de ese bot). **No escribas la clave vos
    en el chat.** Hasta que la cargue, el bot corre sólo en su horario.
 6. Al final, una lista para el operador: qué creaste, qué actualizaste y qué no pudiste.
 

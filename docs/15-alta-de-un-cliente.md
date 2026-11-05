@@ -182,7 +182,7 @@ Tienen que quedar **siete**, en la zona horaria del cliente:
 | Bot | Routine | Cuándo |
 |---|---|---|
 | `orquestador` | SDR · plan del día | Lunes a viernes 8:45 |
-| `orquestador` | SDR · aprobaciones | Lunes a viernes 12:00 y 16:00 |
+| `orquestador` | SDR · aprobaciones | Lunes a viernes 12:00 y 16:00, **más webhook** |
 | `orquestador` | SDR · resumen | Lunes a viernes 18:30 |
 | `orquestador` | SDR · memorias | Viernes 17:00 |
 | `prospector` | SDR · tanda | Lunes a viernes 9:15 |
@@ -191,17 +191,25 @@ Tienen que quedar **siete**, en la zona horaria del cliente:
 
 Fijate en la app de Grok que estén las siete y habilitadas.
 
-## 10. Despertador de seguimiento
+## 10. Los dos despertadores
 
-Para que `seguimiento` lea una respuesta apenas llega, sin esperar a su horario:
+El gateway despierta a dos bots por el webhook de su routine, sin esperar a su horario:
 
-1. En la app de Grok, abrí la routine **«SDR · respuestas»** del bot `seguimiento` y copiá la
-   **URL** y la **clave** del webhook.
-2. Panel → cliente → pestaña **SDR** → **Despertador de seguimiento**: pegá las dos. El horario por
+| Despertador | Routine en Grok | Cuándo avisa |
+|---|---|---|
+| **De seguimiento** | «SDR · respuestas» del bot `seguimiento` | Llegó correo para atender (una respuesta, un rebote, una baja) |
+| **Del orquestador** | «SDR · aprobaciones» del bot `orquestador` | Hay aprobaciones pendientes; primero la respuesta a un positivo |
+
+Para cada uno:
+
+1. En la app de Grok, abrí esa routine y copiá la **URL** y la **clave** del webhook.
+2. Panel → cliente → pestaña **SDR** → el despertador de ese bot: pegá las dos. El horario por
    defecto (8 a 20 h, lunes a viernes, 10 minutos entre avisos) sirve para arrancar.
 3. **Cargar despertador.**
 
-La clave se guarda cifrada y no se vuelve a mostrar. Si sólo cambiás el horario, dejala vacía.
+La clave se guarda cifrada y no se vuelve a mostrar. Si sólo cambiás el horario, dejala vacía. Sin
+despertador el bot corre igual, pero sólo en su horario: una respuesta a un positivo puede esperar
+hasta la routine de las 12 o de las 16.
 
 ## 11. Comprobar
 
@@ -227,5 +235,5 @@ Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, la
 | 7 | Token del gateway con `read`, `draft`, `send` y `sdr` | Biguá | ☐ |
 | 8 | Cuenta de Grok: tres bots, conectores, Allow y Ask first, Privacy Mode, notificaciones | Biguá | ☐ |
 | 9 | Siete routines creadas y habilitadas | Biguá (con los bots) | ☐ |
-| 10 | Despertador de seguimiento cargado | Biguá | ☐ |
+| 10 | Despertadores de seguimiento y del orquestador cargados | Biguá | ☐ |
 | 11 | Comprobado: agenda sin errores y llamadas en Actividad | Biguá | ☐ |
