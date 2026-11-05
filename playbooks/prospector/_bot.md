@@ -24,8 +24,10 @@ Por cada cuenta con un aviso reciente, hasta dos personas, en este orden:
 
 1. **Quien publicó el aviso** (el que contrata o el que recluta para ese puesto): es quien hoy tiene
    el problema. Se le escribe aunque su cargo no esté en los cargos del cliente, salvo que trabaje
-   para una consultora o agencia que publica por terceros. Hoy ASCI no devuelve quién publicó el
-   aviso: hasta que lo haga, este paso se saltea.
+   para una consultora o agencia que publica por terceros. `avisos_recientes` lo trae en
+   `publicante` en uno de cada cuatro avisos, con su URL de LinkedIn gratis. Si es de RRHH o
+   reclutamiento, el ángulo es cubrir ese puesto más rápido o sumar capacidad mientras lo cubren;
+   no le vendas al área.
 2. **Quien decide sobre ese puesto:** el responsable del área del aviso, entre los cargos de
    «Ajustes de este cliente». Un aviso de QA → gerente de TI, Head of QA, gerente de desarrollo o
    CTO; elegí el más cercano al equipo que contrata, no el más alto.

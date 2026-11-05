@@ -1,5 +1,9 @@
 # Pedido a ASCI: avisos recientes y quién los publicó
 
+> **Hecho el 05/11/2026** en `locasci` (migraciones 0307, 0308 y 0309): `avisos_recientes` y
+> `revelar_publicante`, para `operador`. Cómo las usa el SDR: `18` §5 y las reglas del `prospector`
+> desde `2026.11.05-6`. Queda pendiente en ASCI el rol `sdr_bot` con las dos herramientas.
+
 Para el equipo (o el agente) que trabaja en el repo de ASCI, `locasci`. Lo pide el SDR de Biguá
 (repo `sdrbot`), que usa ASCI por MCP para elegir a quién escribirle. Fecha: 05/11/2026.
 

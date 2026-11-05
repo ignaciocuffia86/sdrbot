@@ -10,41 +10,57 @@
 
 ## Buscar cuentas
 
-> Cuentas con un aviso de los últimos días, que encajan con el cliente y que no estemos trabajando.
+> Empresas que publicaron en los últimos días un aviso de lo que vende el cliente, que no estemos trabajando.
 
 La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; si no dice, **14 días**.
 
-1. **Candidatas:** con el ICP de «Ajustes de este cliente», `prospectar` (país obligatorio) con
-   `ordenar_por: "avisos"` y `limite` 60. Ojo: ese orden cuenta los avisos de los últimos 12 meses
-   y **no dice cuán nuevo es el último**; por eso el paso 3.
-2. **Fuera lo que ya trabajamos:** para cada candidata, `registro_buscar(dominio)`. Salteá las que
-   están en contacto, excluidas o descartadas, y las en pausa cuya fecha no llegó.
-3. **Frescura:** con las que quedan, de a 10 empresas, `novedades(empresas, desde: hoy menos la
-   ventana)`. Quedate **sólo** con las que tienen al menos un aviso publicado dentro de la ventana
-   y que sea de lo que vende el cliente (por título y señales). Anotá de cada una el aviso más
-   nuevo: título, fecha y link. `novedades` es la herramienta más cara de ASCI: no la llames para
-   cuentas que ya descartaste.
-4. **Orden:** primero el aviso más nuevo. A igual fecha, la cuenta con más avisos en la ventana.
-5. Descartá agencias, consultoras y staffing que publican para terceros: tiene que haber evidencia
-   de que la empresa necesita lo que el cliente vende.
-6. Hasta la cantidad pedida: `registro_guardar_cuenta` con nombre, dominio, país, vertical, tamaño,
-   **señales** con el aviso (tipo `aviso`, fecha de publicación, evidencia = link del aviso,
-   resumen = título) y la **tesis** en una o dos líneas: por qué ese aviso importa hoy.
-7. Si no llegás a la cantidad pedida con avisos dentro de la ventana, **no completes con cuentas
-   sin aviso reciente**: hacé menos y decilo en el cierre del pedido.
+1. **Candidatas:** `avisos_recientes` con `pais` (del ICP), `dias` (la ventana), `limite` 60 y la
+   señal como dice «Señal en los avisos» de los ajustes del cliente. Si no dice, armala con la
+   oferta: quien vende capacidad por un rol (QA, datos, soporte) va con `texto` («qa | tester |
+   testing») y `solo_titulo: true`; para una marca, `fabricante`; tecnología, `categorias`;
+   modernización, `ciclos_vida: ["legado", "eol"]`. Trae empresas **con o sin cuenta resuelta**,
+   ordenadas por el aviso más nuevo, sin consultoras ni staffing.
+2. **Fuera lo que ya trabajamos:** para cada candidata, `registro_buscar` por `dominio` (o por
+   `nombre` si no hay dominio). Salteá las que están en contacto, excluidas o descartadas, y las en
+   pausa cuya fecha no llegó.
+3. **Fuera lo que no encaja:** lo que excluyen los ajustes, y el ruido de la búsqueda por texto
+   (un aviso que no es del rol aunque lo nombre). `industrias` y `tamano` sólo filtran a las
+   empresas con cuenta resuelta (`cuenta_resuelta: true`): a las demás mirá el nombre, el aviso y,
+   si hace falta, su LinkedIn.
+4. **Orden:** como viene (lo más nuevo primero). A igual fecha, las reposteadas (`reposteado`: un
+   puesto que no se llena) y las que tienen más `avisos_en_ventana`.
+5. Hasta la cantidad pedida: `registro_guardar_cuenta` con nombre, dominio si lo hay, país,
+   vertical, tamaño, `asci_id` = `account_id` si está resuelta, **señales** con el aviso más nuevo
+   (tipo `aviso`, fecha = `publicado_en`, evidencia = su `url`, resumen = su `titulo`, y si es
+   reposteo) y la **tesis** en una o dos líneas: por qué ese aviso importa hoy.
+6. Si no llegás a la cantidad pedida con avisos dentro de la ventana, **no completes con cuentas
+   sin aviso reciente**: hacé menos y decilo en el cierre del pedido. `ventana` y `filtros` dicen
+   cuántas había y cuántas quedaron afuera: contalo así, no como «no hay más».
+7. Si `avisos_recientes` falla, usá lo de antes: `prospectar` con `ordenar_por: "avisos"` y, de a
+   10 empresas, `novedades(empresas, desde: hoy menos la ventana)`, quedándote sólo con las que
+   tienen un aviso dentro de la ventana.
 
 ## Elegir y revelar a quién escribirle
 
 > Quien publicó el aviso y quien decide sobre ese puesto (sección «A quién escribirle»).
 
-1. **Quien publicó el aviso:** cuando ASCI lo devuelva, buscalo y revelalo. Hoy no lo devuelve:
-   salteá este paso.
+1. **Quien publicó el aviso** (`publicante` en la fila de `avisos_recientes`), si lo trae:
+   - su **URL de LinkedIn ya viene** en `publicante.linkedin`, gratis: guardalo con esa URL, su
+     nombre, el `cargo` si viene y `eleccion.rol_compra: "publicante"`. **No lo reveles para
+     tener la URL.**
+   - **mail:** si `contacto_cacheado` dice que ya tiene mail, `revelar_publicante(job_id)` (sale
+     gratis de la caché). Si no, revelá a lo sumo **3 publicantes por tanda** (1 crédito cada uno
+     que Apollo encuentre), los de cargo más cercano al área del aviso, y contá en el cierre
+     cuántos trajeron mail. Muchos publicantes son de RRHH y Apollo no tiene su mail: sin mail, va
+     sólo por LinkedIn.
 2. **Quien decide:** `tomadores_de_decision` (gratis, de la caché) con los cargos del área del aviso
    que estén entre los del cliente. Si no hay nadie, `buscar_contactos` (gratis, cuota diaria) con
    `rol`, `titulos` y `seniority`. Una persona por cuenta, la más cercana al equipo que contrata.
-3. Guardalas y revelalas como dice «A quién escribirle»: email y su calidad (`verificado` o
-   `extrapolado`), URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen los
-   ajustes), no le escribas a ese.
+   Revelala (`revelar_lote`) **aunque después no traiga mail**: la URL de LinkedIn vuelve casi
+   siempre, y con eso va a la campaña de LinkedIn.
+3. Guardalas como dice «A quién escribirle»: email y su calidad (`verificado` o `extrapolado`),
+   URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen los ajustes), a ese
+   no le va mail (sí LinkedIn).
 4. Sin mail, no hay mail: guardalo igual. Si tiene LinkedIn, va sólo por LinkedIn (sección
    «Escribir los textos de LinkedIn»).
 

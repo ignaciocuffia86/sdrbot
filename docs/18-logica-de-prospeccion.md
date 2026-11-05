@@ -89,3 +89,18 @@ que ningún mail salga con un aviso viejo.
 | 3 | `avisos_recientes` y el reveal del publicante se le piden a ASCI: `19-pedido-asci-avisos-recientes.md` |
 | 4 | En cada cuenta, **dos personas**: primero quien publicó el aviso (aunque su cargo no esté entre los del cliente, salvo que publique para una consultora o agencia) y, un día hábil después, quien decide sobre ese puesto, buscado por Apollo a través de ASCI (para un aviso de QA, el gerente de TI). Con ángulos distintos. Si responde uno, el otro queda en pausa |
 | 5 | Si no hay suficientes cuentas con aviso reciente, la tanda es más chica: no se completa con avisos viejos |
+
+**En ASCI desde el 05/11:** `avisos_recientes` y `revelar_publicante` (migraciones 0307 a 0309 de
+`locasci`). Las reglas del `prospector` las usan desde `2026.11.05-6`:
+
+- descubre con `avisos_recientes` (con o sin cuenta resuelta, lo más nuevo primero), con la señal
+  de «Señal en los avisos» de los ajustes (campo nuevo, lo carga Biguá) o armada con la oferta;
+  `prospectar` + `novedades` quedan de respaldo si falla;
+- la **URL de LinkedIn del publicante viene gratis** en el aviso (uno de cada cuatro avisos dice
+  quién lo publicó): va a la campaña de LinkedIn sin revelarlo;
+- el mail del publicante, con `revelar_publicante`: gratis si ya está en la caché, y si no, a lo
+  sumo 3 por tanda mientras se mide. En las primeras pruebas de ASCI los publicantes eran de
+  reclutamiento y Apollo no tenía su mail;
+- a un publicante de RRHH se le escribe con el ángulo de cubrir el puesto, no de venderle al área;
+- quien decide se revela aunque no traiga mail: la URL de LinkedIn vuelve en el 99,7 % de los
+  reveals medidos.

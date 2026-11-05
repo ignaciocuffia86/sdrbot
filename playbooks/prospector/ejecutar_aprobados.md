@@ -5,7 +5,8 @@
 1. `registro_pendientes(prospector)`: mirá `aprobaciones_para_ejecutar`.
 2. Para cada una de tipo `calibracion_mail`:
    - **la señal sigue viva:** si pasaron más de 7 días desde la fecha del aviso de la cuenta,
-     confirmá con `novedades` que el aviso siga publicado. Si ya no está, no lo mandes: dejá el
+     confirmá que siga publicado: `avisos_recientes` con la misma señal y `dias: 60` tiene que
+     seguir trayendo ese aviso (el mismo link) para esa empresa (sólo devuelve avisos activos). Si ya no está, no lo mandes: dejá el
      prospecto con `proximo_paso: "aviso cerrado: buscar otra señal"` y contalo en el cierre;
    - el contenido a mandar es `decision_contenido` (la versión que aprobó el operador, quizás
      corregida). Mandá **eso**, sin cambiar una coma;

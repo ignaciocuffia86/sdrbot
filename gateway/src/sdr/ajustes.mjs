@@ -32,6 +32,8 @@ export const CAMPOS = [
     ayuda: 'Lo que el orquestador le pide al prospector cada día.' },
   { clave: 'dias_aviso', titulo: 'Antigüedad máxima del aviso (días)', tipo: 'numero', min: 3, max: 60, cliente: false,
     ayuda: 'Sólo se prospecta una cuenta con un aviso publicado en estos últimos días. Vacío: 14.' },
+  { clave: 'senal_avisos', titulo: 'Señal en los avisos', tipo: 'parrafo', max: 500, cliente: false,
+    ayuda: 'Cómo le pide el prospector los avisos a ASCI (avisos_recientes). Por ejemplo: «texto: qa | tester | testing, solo_titulo: sí» o «fabricante: SAP». Vacío: lo arma con la oferta.' },
   { clave: 'acepta_mails_extrapolados', titulo: 'Acepta mails extrapolados', tipo: 'si_no', cliente: false,
     ayuda: 'Si se le escribe a un mail deducido del patrón de la empresa y no verificado.' },
 ];
