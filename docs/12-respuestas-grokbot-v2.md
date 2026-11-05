@@ -60,6 +60,20 @@ Grok corrió 2 de las 6 pruebas. Quedan, y las corre Biguá en la cuenta canario
 | Webhook de routine: latencia real y cuerpo en el prompt | Es como el gateway despierta a `seguimiento` |
 | Dripify: que el plan tenga Open API (si no, 403) y el JSON real del webhook | Todo el canal LinkedIn depende de eso |
 
+#### Resultados (05/11, en la cuenta de BairesQA)
+
+Las pruebas se corren directo sobre BairesQA (`14` §3). Cada resultado se cruzó con la auditoría del
+gateway, que registra tamaño, tiempo y resultado de cada llamada.
+
+| Prueba | Resultado | Qué cambia |
+|---|---|---|
+| Tamaño de respuesta MCP (`prueba_carga` 8, 32, 128, 512 y 1024 KB) | Las cinco llegaron enteras, con la marca final y los bytes exactos. **Desde 128 KB Grok no la mete en la conversación: la guarda en un archivo de la computadora del bot y la lee de ahí** | Hasta ~100 KB la respuesta entra directo; por encima funciona pero con un paso más. Las herramientas del registro devuelven bastante menos (`registro_historia` con 100 eventos ronda 30–60 KB); no hace falta achicar nada |
+| Tiempo de respuesta (30 y 55 s) | Las dos llegaron. El gateway las cerró en 30,0 y 55,0 s; el bot las midió en 37,5 y 63,7 s: **unos 8 s de ida y vuelta de Grok** | 55 s de herramienta entran, pero junto con el tope de 60 s de Vercel no hay margen: `correo_revisar` mantiene su corte en 35 s |
+| Error del servidor (`registro_historia` con un id que no existe → 404 `no_existe`) | Informó el código y el mensaje, **no reintentó** ni buscó por otro lado | Lo esperado por las reglas |
+| Reintentos | En la prueba de 30 s el gateway registró **dos** llamadas seguidas (una detrás de otra, no a la vez); el bot informó una sola | Grok puede repetir una llamada sin decirlo. Para los envíos no importa (clave de idempotencia), pero confirma que toda herramienta que escribe tiene que tolerar la repetición |
+| Alta de routines | El `orquestador` creó sus 4 routines; **las de los otros bots no las pudo crear**: les pidió por mensaje que las crearan ellos, y `seguimiento` lo hizo | En Grok cada bot crea sólo sus propias routines. La regla del alta pasa a pedirle a cada bot que cree las suyas |
+| Webhook de routine | La URL que da Grok para la routine de `seguimiento` está en `api2.cursor.sh` (confirmado por Biguá) | Falta medir la latencia real cuando llegue la primera respuesta |
+
 ---
 
 ## Parte B · Respuesta textual

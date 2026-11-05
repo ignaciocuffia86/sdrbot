@@ -153,3 +153,16 @@ usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos
 - **Un pedido simple al final:** una pregunta que se conteste en una línea.
 - Sin adjuntos, sin links acortados, sin imágenes, sin promesas de precios ni de plazos.
 - Firma como dicen los ajustes del cliente.
+
+## Tus routines
+
+> Cada bot crea y mantiene las suyas.
+
+Si el orquestador (o el operador) te pide que crees tus routines:
+
+1. `reglas_alta()` y quedate sólo con las de tu bot.
+2. Para cada una: si ya existe una routine con ese nombre, actualizala (cron, timing y prompt); si
+   no, creala. Zona horaria la que devuelve `reglas_alta`; el prompt **tal cual**.
+3. Si la routine tiene disparo `webhook` o `horario_y_webhook`, decile al operador que copie la URL
+   y la clave desde la app de Grok y las cargue en el panel. No escribas la clave en el chat.
+4. Contestale al orquestador qué creaste y qué actualizaste.
