@@ -30,6 +30,8 @@ export const CAMPOS = [
     ayuda: 'Por ejemplo: «ventas@ para Argentina, info@ para Chile».' },
   { clave: 'cuentas_por_dia', titulo: 'Cuentas nuevas por día', tipo: 'numero', min: 0, max: 100, cliente: false,
     ayuda: 'Lo que el orquestador le pide al prospector cada día.' },
+  { clave: 'dias_aviso', titulo: 'Antigüedad máxima del aviso (días)', tipo: 'numero', min: 3, max: 60, cliente: false,
+    ayuda: 'Sólo se prospecta una cuenta con un aviso publicado en estos últimos días. Vacío: 14.' },
   { clave: 'acepta_mails_extrapolados', titulo: 'Acepta mails extrapolados', tipo: 'si_no', cliente: false,
     ayuda: 'Si se le escribe a un mail deducido del patrón de la empresa y no verificado.' },
 ];

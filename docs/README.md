@@ -24,6 +24,7 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [16-guia-del-cliente.md](16-guia-del-cliente.md) | **Guía para el cliente:** activar su usuario, cargar sus buzones, verificar su dominio y configurar los ajustes de su SDR (oferta, ICP, cargos, tono, firma, objeciones, positivos) |
 | [17-puesta-en-marcha-operacion-y-baja.md](17-puesta-en-marcha-operacion-y-baja.md) | Lo que queda fuera del alta: pruebas de arranque, calibración, lanzamiento, el día a día del operador, cambios, renovaciones, pausa y baja, tareas del equipo técnico y pendientes |
 | [18-logica-de-prospeccion.md](18-logica-de-prospeccion.md) | Cómo elige el prospector a quién escribirle: la lógica de hoy, lo medido en ASCI (el orden por avisos mira 12 meses, el 90 % de los avisos nuevos no tiene cuenta), la lógica propuesta con avisos de los últimos 14 días y la herramienta que hace falta en ASCI |
+| [19-pedido-asci-avisos-recientes.md](19-pedido-asci-avisos-recientes.md) | Pedido al equipo de ASCI: herramienta `avisos_recientes` (avisos de los últimos días con o sin cuenta resuelta, con quién los publicó) y el reveal del publicante por Apollo, con lo medido, la especificación y cómo saber que está |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
 **Para dar de alta un cliente, empezar por `15`, `16` y `17`.**

@@ -10,43 +10,58 @@
 
 ## Buscar cuentas
 
-> Cuentas con señal que encajan con el cliente y que no estemos trabajando ya.
+> Cuentas con un aviso de los últimos días, que encajan con el cliente y que no estemos trabajando.
 
-1. Con el ICP de «Ajustes de este cliente», buscá en ASCI con `prospectar` (país obligatorio).
-   Para un cliente que vende capacidad (desarrollo, QA, staffing), `ordenar_por: "avisos"`: un
-   aviso abierto es una necesidad sin cubrir.
-2. Para cada candidata, `registro_buscar(dominio)`:
-   - si ya está **en contacto**, **excluida** o **descartada**, salteala;
-   - si está **en pausa** y la fecha no llegó, salteala.
-3. Descartá agencias, consultoras y staffing que aparezcan como si contrataran directo: tiene que
-   haber evidencia de que la empresa necesita lo que el cliente vende.
-4. Con las que quedan, hasta la cantidad pedida: `registro_guardar_cuenta` con nombre, dominio,
-   país, vertical, tamaño, **señales** (tipo, fecha, evidencia, resumen) y la **tesis** en una o
-   dos líneas (por qué esta cuenta, por qué ahora). Si querés más contexto, `novedades` o
-   `evidencia` de ASCI, sin pasarte: son herramientas caras.
+La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; si no dice, **14 días**.
 
-## Elegir y revelar decisores
+1. **Candidatas:** con el ICP de «Ajustes de este cliente», `prospectar` (país obligatorio) con
+   `ordenar_por: "avisos"` y `limite` 60. Ojo: ese orden cuenta los avisos de los últimos 12 meses
+   y **no dice cuán nuevo es el último**; por eso el paso 3.
+2. **Fuera lo que ya trabajamos:** para cada candidata, `registro_buscar(dominio)`. Salteá las que
+   están en contacto, excluidas o descartadas, y las en pausa cuya fecha no llegó.
+3. **Frescura:** con las que quedan, de a 10 empresas, `novedades(empresas, desde: hoy menos la
+   ventana)`. Quedate **sólo** con las que tienen al menos un aviso publicado dentro de la ventana
+   y que sea de lo que vende el cliente (por título y señales). Anotá de cada una el aviso más
+   nuevo: título, fecha y link. `novedades` es la herramienta más cara de ASCI: no la llames para
+   cuentas que ya descartaste.
+4. **Orden:** primero el aviso más nuevo. A igual fecha, la cuenta con más avisos en la ventana.
+5. Descartá agencias, consultoras y staffing que publican para terceros: tiene que haber evidencia
+   de que la empresa necesita lo que el cliente vende.
+6. Hasta la cantidad pedida: `registro_guardar_cuenta` con nombre, dominio, país, vertical, tamaño,
+   **señales** con el aviso (tipo `aviso`, fecha de publicación, evidencia = link del aviso,
+   resumen = título) y la **tesis** en una o dos líneas: por qué ese aviso importa hoy.
+7. Si no llegás a la cantidad pedida con avisos dentro de la ventana, **no completes con cuentas
+   sin aviso reciente**: hacé menos y decilo en el cierre del pedido.
 
-> Una o dos personas por cuenta, según el cliente.
+## Elegir y revelar a quién escribirle
 
-1. `tomadores_de_decision` (gratis, de la caché) con el rol o los cargos del cliente. Si no hay
-   nadie, `buscar_contactos` (gratis, cuota diaria) con `rol`, `titulos` y `seniority`.
-2. Elegí **una o dos** personas por cuenta (o lo que digan los ajustes), siguiendo la sección «A
-   quién revelar» de tus reglas de bot.
-3. Revelá y completá el prospecto con lo que devuelva: email y su calidad (`verificado` o
-   `extrapolado`), URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen
-   los ajustes), no le escribas a ese.
+> Quien publicó el aviso y quien decide sobre ese puesto (sección «A quién escribirle»).
+
+1. **Quien publicó el aviso:** cuando ASCI lo devuelva, buscalo y revelalo. Hoy no lo devuelve:
+   salteá este paso.
+2. **Quien decide:** `tomadores_de_decision` (gratis, de la caché) con los cargos del área del aviso
+   que estén entre los del cliente. Si no hay nadie, `buscar_contactos` (gratis, cuota diaria) con
+   `rol`, `titulos` y `seniority`. Una persona por cuenta, la más cercana al equipo que contrata.
+3. Guardalas y revelalas como dice «A quién escribirle»: email y su calidad (`verificado` o
+   `extrapolado`), URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen los
+   ajustes), no le escribas a ese.
 4. Sin mail, no hay mail: guardalo igual y dejá `proximo_canal: "linkedin"` si tiene LinkedIn.
 
 ## Escribir el primer mail
 
-> Corto, con la señal y la tesis, como dice «Cómo escribimos».
+> Corto, con el aviso como señal y la tesis, como dice «Cómo escribimos».
 
 1. Leé de nuevo la sección «Cómo escribimos» de las reglas comunes y los ajustes del cliente
    (tono, oferta, firma, objeciones).
-2. Un mail por persona: asunto, texto y firma. La señal concreta de su empresa en la primera o
-   segunda línea; la tesis; una pregunta al final.
-3. Elegí el buzón del cliente que corresponda (lo dicen los ajustes; si hay varios, repartí).
+2. **El aviso va nombrado** en la primera o segunda línea, con su fecha («vi que el 3/11 publicaron
+   una búsqueda de QA Automation»). Nada de «vi que están creciendo».
+3. **Un ángulo por persona:**
+   - a **quien publicó el aviso**: cubrir ese puesto más rápido o sumar capacidad mientras lo
+     cubren;
+   - a **quien decide**: lo que gana el equipo (la tesis), sin repetir el mail del otro.
+4. Si en la cuenta van dos personas, el de quien decide sale **un día hábil después** que el de
+   quien publicó (`proximo_fecha`), para no llegar los dos el mismo día.
+5. Elegí el buzón del cliente que corresponda (lo dicen los ajustes; si hay varios, repartí).
 
 ## Enviar o pedir aprobación
 
@@ -72,7 +87,8 @@
 
 Para cada prospecto que el orquestador te pidió seguir:
 
-1. `registro_historia`: ¿ya respondió? ¿pidió la baja? Si sí, no le escribas.
+1. `registro_historia`: ¿ya respondió? ¿pidió la baja? ¿Respondió **otra persona de la misma
+   cuenta**? En cualquiera de esos casos, no le escribas: esa cuenta ya es de `seguimiento`.
 2. No hace falta revisar el buzón: el gateway lo lee solo, registra las respuestas, rebotes y
    bajas, y no deja mandar otro mail de la secuencia a quien respondió
    (`prospecto_respondio`, `respuesta_sin_atender`, `destinatario_suprimido`). Si te frena, no

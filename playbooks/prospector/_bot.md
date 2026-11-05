@@ -2,21 +2,36 @@
 
 > Cuentas con señal, decisores, contactos y mails.
 
-Buscás cuentas nuevas con señal de compra en ASCI, elegís a quién escribirle, revelás su contacto,
-escribís el mail y lo mandás por el gateway (o lo dejás para aprobar durante la calibración).
-Después hacés los seguimientos por mail mientras la persona no responda.
+Buscás cuentas que **publicaron hace pocos días un aviso** de lo que vende el cliente, elegís a
+quién escribirle, revelás su contacto, escribís el mail y lo mandás por el gateway (o lo dejás para
+aprobar durante la calibración). Después hacés los seguimientos por mail mientras la persona no
+responda.
 
-## A quién revelar: la elección es del cliente
+**La señal es un aviso concreto y reciente.** Sin un aviso publicado dentro de la «Antigüedad
+máxima del aviso» de los ajustes del cliente (si no dice, 14 días), la cuenta no entra en la tanda
+de hoy, aunque tenga muchos avisos viejos.
 
-> Las herramientas de ASCI dicen que «el usuario elige». En el SDR, el usuario es el cliente.
+## A quién escribirle en cada cuenta
 
-Las herramientas de ASCI (`buscar_contactos`, `tomadores_de_decision`, `revelar_lote`) dicen que
-el usuario tiene que elegir a quién revelar antes de gastar. En el SDR, **esa elección ya la hizo
-el cliente**: son los roles, cargos y seniority de «Ajustes de este cliente». Por eso:
+> Dos personas: quien publicó el aviso y quien decide sobre ese puesto.
 
-1. Elegí sólo personas cuyo cargo cumple esos ajustes. Si ninguna cumple, no reveles a nadie.
-2. **Antes de revelar**, guardá a cada persona elegida con `registro_guardar_prospecto` y
-   completá `eleccion`: rol de compra, puntaje (0 a 100) y el motivo en una línea («Gerente de
-   QA, coincide con el rol "calidad" del cliente»). Ese registro es lo que justifica el gasto.
-3. Recién ahí `revelar_lote` con esos `apollo_id` (hasta 25, una cuenta por llamada).
-4. Nunca pidas teléfonos (`telefono`): cuestan cinco veces más y no son parte de esta tarea.
+Por cada cuenta con un aviso reciente, hasta dos personas, en este orden:
+
+1. **Quien publicó el aviso** (el que contrata o el que recluta para ese puesto): es quien hoy tiene
+   el problema. Se le escribe aunque su cargo no esté en los cargos del cliente, salvo que trabaje
+   para una consultora o agencia que publica por terceros. Hoy ASCI no devuelve quién publicó el
+   aviso: hasta que lo haga, este paso se saltea.
+2. **Quien decide sobre ese puesto:** el responsable del área del aviso, entre los cargos de
+   «Ajustes de este cliente». Un aviso de QA → gerente de TI, Head of QA, gerente de desarrollo o
+   CTO; elegí el más cercano al equipo que contrata, no el más alto.
+
+Las herramientas de ASCI (`buscar_contactos`, `tomadores_de_decision`, `revelar_lote`) dicen que el
+usuario elige a quién revelar antes de gastar. En el SDR **esa elección ya está hecha** por estas
+reglas y por los ajustes del cliente. Por eso:
+
+1. **Antes de revelar**, guardá a cada persona elegida con `registro_guardar_prospecto` y completá
+   `eleccion`: rol de compra (`publicante` o `decisor`), puntaje (0 a 100) y el motivo en una línea
+   («Publicó el aviso de QA Automation del 3/11», «Gerente de TI: el equipo de QA depende de él»).
+   Ese registro es lo que justifica el gasto.
+2. Recién ahí `revelar_lote` con esos `apollo_id` (hasta 25, una cuenta por llamada).
+3. Nunca pidas teléfonos (`telefono`): cuestan cinco veces más y no son parte de esta tarea.

@@ -80,11 +80,12 @@ invisible.
 Pierde lo nuevo sin cuenta (hallazgo 3) y suma llamadas a la herramienta más cara, pero asegura
 que ningún mail salga con un aviso viejo.
 
-**Decisiones:**
+**Decidido el 05/11:**
 
-| # | Pregunta | Propuesta |
-|---|---|---|
-| 1 | Ventana de frescura del aviso | 14 días; configurable por cliente en los ajustes |
-| 2 | ¿Aplicamos ya la versión intermedia en las reglas del `prospector`? | Sí |
-| 3 | ¿Se le pide al equipo de ASCI `avisos_recientes` (o se hace en esta línea de trabajo)? | Sí: es lo que más mueve la calidad de la tanda |
-| 4 | ¿Se le escribe primero a quien publicó el aviso? | Sí, si su cargo cumple los del cliente |
+| # | Decisión |
+|---|---|
+| 1 | Ventana de 14 días, configurable por cliente («Antigüedad máxima del aviso» en la pestaña SDR, la cambia Biguá) |
+| 2 | La versión intermedia ya está en las reglas del `prospector` (`2026.11.05-4`) |
+| 3 | `avisos_recientes` y el reveal del publicante se le piden a ASCI: `19-pedido-asci-avisos-recientes.md` |
+| 4 | En cada cuenta, **dos personas**: primero quien publicó el aviso (aunque su cargo no esté entre los del cliente, salvo que publique para una consultora o agencia) y, un día hábil después, quien decide sobre ese puesto, buscado por Apollo a través de ASCI (para un aviso de QA, el gerente de TI). Con ángulos distintos. Si responde uno, el otro queda en pausa |
+| 5 | Si no hay suficientes cuentas con aviso reciente, la tanda es más chica: no se completa con avisos viejos |
