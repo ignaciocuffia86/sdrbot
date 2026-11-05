@@ -47,7 +47,7 @@ Para ver cómo le va: `select ultimo_tick_at, ultimo_resultado from sdr.reloj;`.
    gateway. La clave va por la entrada estándar, nunca en el chat:
 
    ```bash
-   node bin/admin.mjs sdr-despertador <cliente> seguimiento --url <URL del webhook>
+   node bin/admin.mjs sdr-despertador <cliente> seguimiento --url <URL del webhook>   # o en el panel: pestaña SDR → Despertador
    # pega la clave y Ctrl+D
    ```
 

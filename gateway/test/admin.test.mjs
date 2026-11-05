@@ -459,3 +459,34 @@ test('SDR: con el rol del portal la base no deja tocar la calibración ni ver ot
   assert.equal(otro.rows.length, 1);
   assert.notEqual(otro.rows[0].ajustes.oferta, 'secreta');
 });
+
+test('SDR: el despertador se carga desde el panel; la clave no vuelve y el cliente no lo toca', async () => {
+  const sinClave = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador', { url: 'https://grok.test/hook/9' });
+  assert.equal(sinClave.status, 400, 'la primera vez hace falta la clave');
+  const http = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador', { url: 'http://grok.test/hook/9', clave: 'clave-larga-123' });
+  assert.equal(http.status, 400);
+  const ok = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador',
+    { url: 'https://grok.test/hook/9', clave: 'clave-larga-123', hora_desde: 9, hora_hasta: 19, dias: [1, 2, 3, 4, 5], espera_min: 15 });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const d = ok.body.data.sdr.despertador;
+  assert.equal(d.url, 'https://grok.test/hook/9');
+  assert.equal(d.espera_min, 15);
+  assert.ok(!JSON.stringify(ok.body).includes('clave-larga-123'), 'la clave no vuelve');
+  assert.equal(d.clave_enc, undefined);
+
+  const horario = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador', { url: 'https://grok.test/hook/9', hora_desde: 8, hora_hasta: 20 });
+  assert.equal(horario.status, 200, 'sin clave nueva conserva la guardada');
+  const { rows } = await store.asOwner((c) => c.query(`select clave_enc from sdr.despertador where client_id = 'adm-b'`));
+  const { decryptSecret } = await import('../src/crypto.mjs');
+  assert.equal(decryptSecret(rows[0].clave_enc, 'despertador:adm-b:seguimiento'), 'clave-larga-123');
+
+  const cli = await browser().call('POST', '/login', { email: 'ajustes@cliente-b.test', password: PW.cliente });
+  assert.equal(cli.status, 200);
+  const b = browser();
+  await b.call('POST', '/login', { email: 'ajustes@cliente-b.test', password: PW.cliente });
+  assert.equal((await b.call('PUT', '/clients/adm-b/sdr/despertador', { apagar: true })).status, 403);
+  assert.equal((await b.call('GET', '/clients/adm-b/sdr')).body.data.despertador, undefined);
+
+  const apagado = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador', { apagar: true });
+  assert.equal(apagado.body.data.sdr.despertador.activo, false);
+});

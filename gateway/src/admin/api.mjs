@@ -18,6 +18,7 @@ import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { CAMPOS, aplicarCambios, diferencias, tituloDe } from '../sdr/ajustes.mjs';
 import { renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
+import { configurarDespertador, verDespertador } from '../sdr/correo.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -95,6 +96,16 @@ const V = {
       calibracion_mails: { type: 'integer', minimum: 0, maximum: 500 },
       bots_activos: { type: 'array', uniqueItems: true, minItems: 1, items: { enum: ['orquestador', 'prospector', 'seguimiento', 'whatsapp'] } },
       zona_horaria: { type: 'string', maxLength: 64 },
+    } }),
+  despertador: validator({ type: 'object', additionalProperties: false,
+    properties: {
+      url: { type: 'string', maxLength: 1000, pattern: '^https://\\S+$' },
+      clave: { type: 'string', minLength: 8, maxLength: 1000 },
+      hora_desde: { type: 'integer', minimum: 0, maximum: 23 },
+      hora_hasta: { type: 'integer', minimum: 1, maximum: 24 },
+      dias: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: 7 } },
+      espera_min: { type: 'integer', minimum: 1, maximum: 240 },
+      apagar: { type: 'boolean' },
     } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
@@ -464,6 +475,7 @@ async function leerSdr(c, user, clientId) {
       bots_activos: cfg.bots_activos, zona_horaria: cfg.zona_horaria,
     } : null;
     out.bots = BOTS;
+    out.despertador = await verDespertador(c, clientId, 'seguimiento');
   }
   return out;
 }
@@ -533,6 +545,21 @@ route('PUT', '/clients/:client/sdr/config', async ({ user, params, body }) => {
   if (!exists.rowCount) throw notFound('No existe ese cliente.');
   await setConfig(params.client, b);
   await asOwner((c) => audit(c, user, params.client, 'admin.sdr.config', b));
+  return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
+});
+
+route('PUT', '/clients/:client/sdr/despertador', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.despertador(body);
+  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
+  if (!b.apagar && !b.url) throw errors.invalid('Falta la URL del webhook.');
+  if (b.hora_desde !== undefined && b.hora_hasta !== undefined && b.hora_desde >= b.hora_hasta) {
+    throw errors.invalid('La hora de inicio tiene que ser anterior a la de fin.');
+  }
+  await configurarDespertador(params.client, 'seguimiento', b);
+  await asOwner((c) => audit(c, user, params.client, b.apagar ? 'admin.sdr.despertador.apagar' : 'admin.sdr.despertador',
+    b.apagar ? {} : { url_host: new URL(b.url).host, clave_nueva: Boolean(b.clave) }));
   return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
 });
 

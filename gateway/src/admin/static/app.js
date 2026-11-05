@@ -315,6 +315,50 @@ function sdrTecnico(clientId, sdr, reload) {
   return form;
 }
 
+const DIAS = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
+
+function despertadorCard(clientId, sdr, reload) {
+  const d = sdr.despertador;
+  const estado = !d ? h('span', { class: 'badge b-mute' }, 'sin cargar')
+    : !d.activo ? h('span', { class: 'badge b-mute' }, 'apagado')
+      : d.fallas ? h('span', { class: 'badge b-err' }, `falla (${d.fallas})`) : h('span', { class: 'badge b-ok' }, 'activo');
+  const form = h('form', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Despertador de seguimiento'), estado),
+    h('p', { class: 'muted small' }, 'Cuando llega correo, el gateway despierta la routine «SDR · respuestas» del bot seguimiento por su webhook. Copiá la URL y la clave desde esa routine en la app de Grok.'),
+    d?.ultimo_aviso_at ? h('p', { class: 'small' }, `Último aviso: ${fmtDate(d.ultimo_aviso_at)} · respuesta ${d.ultimo_estado ?? '—'}`,
+      d.ultimo_error ? h('span', { class: 'err' }, ` · ${d.ultimo_error}`) : null) : null,
+    field('URL del webhook', h('input', { name: 'url', type: 'url', required: true, value: d?.url ?? '', placeholder: 'https://…' })),
+    field('Clave del webhook', h('input', { name: 'clave', type: 'password', autocomplete: 'off', required: !d, minlength: 8 }),
+      d ? 'Dejala vacía para conservar la guardada. Se guarda cifrada y no se vuelve a mostrar.' : 'Se guarda cifrada y no se vuelve a mostrar.'),
+    h('div', { class: 'cols2' },
+      field('Desde (hora del cliente)', h('input', { name: 'hora_desde', type: 'number', min: 0, max: 23, value: d?.hora_desde ?? 8 })),
+      field('Hasta', h('input', { name: 'hora_hasta', type: 'number', min: 1, max: 24, value: d?.hora_hasta ?? 20 }))),
+    h('label', {}, 'Días'),
+    h('div', { class: 'row' }, DIAS.map((x, i) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', name: 'dia', value: i + 1, checked: (d?.dias ?? [1, 2, 3, 4, 5]).includes(i + 1) }), x))),
+    field('Minutos mínimos entre dos avisos', h('input', { name: 'espera_min', type: 'number', min: 1, max: 240, value: d?.espera_min ?? 10 }),
+      'Los mails que llegan en ese lapso van juntos en un solo aviso.'));
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, d ? 'Guardar' : 'Cargar despertador');
+  const off = d?.activo ? h('button', { type: 'button', class: 'danger', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/sdr/despertador`, { apagar: true }), err);
+    if (r) { toast('Despertador apagado: seguimiento corre sólo en su horario.'); reload(); }
+  } }, 'Apagar') : null;
+  form.append(err, h('div', { class: 'row' }, btn, off));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      url: String(fd.get('url')).trim(), hora_desde: Number(fd.get('hora_desde')), hora_hasta: Number(fd.get('hora_hasta')),
+      dias: fd.getAll('dia').map(Number), espera_min: Number(fd.get('espera_min')),
+      ...(fd.get('clave') ? { clave: String(fd.get('clave')).trim() } : {}),
+    };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/despertador`, body), err);
+    if (r) { toast('Despertador guardado.'); reload(); }
+  });
+  return form;
+}
+
 async function sdrView(clientId, bigua) {
   const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
   const reload = () => renderClient(clientId, 'sdr');
@@ -372,7 +416,8 @@ async function sdrView(clientId, bigua) {
           h('h2', { class: 'first' }, 'Así lo leen los bots'),
           h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
           otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null),
-        bigua ? sdrTecnico(clientId, sdr, reload) : null)),
+        bigua ? sdrTecnico(clientId, sdr, reload) : null,
+        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload) : null)),
     h('h2', {}, 'Historial de cambios'),
     historial);
 }
@@ -721,7 +766,8 @@ const OPS = {
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.domain.check': 'verificación de dominio', 'admin.domain.selectors': 'selectores DKIM',
   'admin.sdr.ajustes': 'cambio de ajustes del SDR', 'admin.sdr.restaurar': 'ajustes vueltos a una versión anterior',
-  'admin.sdr.config': 'configuración técnica del SDR',
+  'admin.sdr.config': 'configuración técnica del SDR', 'admin.sdr.despertador': 'despertador de seguimiento',
+  'admin.sdr.despertador.apagar': 'despertador apagado',
 };
 
 async function activityView(clientId) {

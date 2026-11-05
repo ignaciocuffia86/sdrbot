@@ -361,8 +361,15 @@ export async function configurarDespertador(clientId, bot, d) {
       return { apagado: rowCount > 0 };
     }
     if (!/^https:\/\/[^\s]+$/.test(d.url ?? '')) throw new GatewayError('invalid_request', 'La URL del webhook tiene que empezar con https://.', 400);
-    if (!d.clave) throw new GatewayError('invalid_request', 'Falta la clave del webhook (por la entrada estándar).', 400);
-    const enc = encryptSecret(d.clave, aadDespertador(clientId, bot));
+    let enc = null;
+    if (d.clave) {
+      enc = encryptSecret(d.clave, aadDespertador(clientId, bot));
+    } else {
+      // Sin clave nueva se conserva la guardada (por ejemplo, para cambiar sólo el horario).
+      const { rows } = await c.query(`select clave_enc from sdr.despertador where client_id = $1 and bot = $2`, [clientId, bot]);
+      if (!rows.length) throw new GatewayError('invalid_request', 'Falta la clave del webhook.', 400);
+      enc = rows[0].clave_enc;
+    }
     await c.query(
       `insert into sdr.despertador (client_id, bot, url, clave_enc, hora_desde, hora_hasta, dias, espera_min)
        values ($1, $2, $3, $4, coalesce($5, 8), coalesce($6, 20), coalesce($7::int[], '{1,2,3,4,5}'), coalesce($8, 10))
@@ -376,6 +383,14 @@ export async function configurarDespertador(clientId, bot, d) {
 }
 
 export const aadDespertador = (clientId, bot) => `despertador:${clientId}:${bot}`;
+
+// Lo que el panel muestra de un despertador: nunca la clave.
+export async function verDespertador(c, clientId, bot = 'seguimiento') {
+  const { rows } = await c.query(
+    `select bot, url, activo, hora_desde, hora_hasta, dias, espera_min, ultimo_aviso_at, ultimo_estado, ultimo_error, fallas, actualizado_at
+       from sdr.despertador where client_id = $1 and bot = $2`, [clientId, bot]);
+  return rows[0] ?? null;
+}
 
 export async function clavesDespertador() {
   return (await asOwner((c) => c.query(`select client_id, bot, clave_enc from sdr.despertador`))).rows;
