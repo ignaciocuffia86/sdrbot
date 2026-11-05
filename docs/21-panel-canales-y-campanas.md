@@ -119,7 +119,7 @@ ve todo lo de su negocio (incluido lo que no puede cambiar, en sólo lectura) y 
 | Sección | Cliente | Biguá |
 |---|---|---|
 | Resumen | Ve | Ve |
-| Campañas | Crea borradores y edita mensaje y audiencia; ve volumen y canales | Todo; activa, pausa y termina |
+| Campañas | Crea y edita; en modo autogestionado también activa, pausa y fija el volumen (decisión 1) | Todo |
 | Empresa | Edita | Edita |
 | Canales → Correo | Carga y prueba sus buzones y dominios | Todo |
 | Canales → LinkedIn / WhatsApp / CRM | Ve el estado; puede pegar la API key | Todo |
@@ -268,9 +268,8 @@ Más adelante: **Cuentas objetivo** (una lista de empresas cargada por CSV, sin 
 - **Una persona, una campaña activa.** Si ya está en contacto por otra, no se la toma; se ve en la
   campaña como «ya en contacto por X».
 - **Una cuenta en contacto por una campaña de prospección no entra en otra de prospección** hasta
-  que esa termine con ella (respuesta, `sin_respuesta` o pausa). Una de **evento** sí puede escribir
-  a otra persona de esa cuenta, o a la misma si su campaña terminó sin respuesta (configurable en
-  la campaña de evento: «incluir cuentas en contacto»).
+  que esa termine con ella (respuesta, `sin_respuesta` o pausa). Una de **evento** puede escribirle
+  a otra persona de esa cuenta, nunca a una que esté activa en otra campaña (decisión 3).
 - **La supresión es del cliente, no de la campaña.** Una baja o un rebote vale para todas.
 - **El cupo de los buzones es compartido.** El orquestador reparte las cuentas del día por el
   **peso** de cada campaña activa y nunca pasa el tope total del cliente.
@@ -348,18 +347,39 @@ Propuesta: canal WhatsApp con un número por cliente, usado sólo cuando la pers
 pidió seguir por ahí, y por la API de Business cuando haya un cliente que lo necesite. En la
 campaña aparece como un paso opcional de **Respuestas** («si pide WhatsApp»), no de la secuencia.
 
-## 6. Decisiones que necesito
+## 6. Decisiones
 
-| # | Pregunta | Propuesta |
+Tomadas el 05/11/2026. Maqueta navegable con todas aplicadas: https://claude.ai/artifact/9qrd8bD42oAhNfMnJ7eEpL
+
+| # | Pregunta | Decisión |
 |---|---|---|
-| 1 | ¿El cliente puede crear campañas? | Sí, como borrador; las activa Biguá (revisión y calibración) |
-| 2 | ¿Una campaña de Dripify por campaña del SDR? | Sí: el cliente duplica la esqueleto en Dripify por cada campaña con LinkedIn. Alternativa: una sola campaña de Dripify y que la campaña del SDR sólo cambie los textos (más simple, pero los números de Dripify no se separan) |
-| 3 | ¿Una persona puede estar en dos campañas a la vez? | No (§4.3), con la excepción configurable de la de evento |
-| 4 | ¿Calibración por campaña? | Sí: 20 la primera, 5 las siguientes (§4.4) |
-| 5 | ¿La firma pasa al buzón? | Sí, con la de Empresa como default |
-| 6 | ¿Lista de no contactar que el gateway haga cumplir? | Sí, por dominio y por mail, en Empresa, con carga por CSV |
-| 7 | ¿Cadencia configurable? | Sí, pero acotada: de 1 a 4 mails, esperas de 2 a 10 días hábiles; LinkedIn sigue con la secuencia de Dripify (nota + 2) |
-| 8 | ¿Cuántos perfiles de LinkedIn por cliente? | Uno al principio; el modelo admite varios (cuenta de Dripify por perfil) |
+| 1 | ¿El cliente puede crear campañas? | **Sí.** El servicio hoy lo opera Biguá, pero puede pasar a ser autogestionado: cada cliente tiene un **modo de operación** (Administración → Operación). *Operado por Biguá:* el cliente arma borradores y Biguá los activa. *Autogestionado:* el cliente crea, activa y pausa sus campañas y elige cuántas cuentas por día, dentro del tope que fija Biguá |
+| 2 | ¿Una campaña de Dripify por campaña del SDR? | **Sí**, una por cada perfil de LinkedIn que use la campaña (ver 8) |
+| 3 | ¿Una persona puede estar en dos campañas a la vez? | **No**, sin excepciones (tampoco en las de evento): se corrige §4.3 |
+| 4 | ¿Calibración por campaña? | **Sí:** 20 la primera del cliente, 5 cada campaña nueva |
+| 5 | ¿La firma pasa al buzón? | **Sí**, con la de Empresa como default |
+| 6 | ¿Lista de no contactar que el gateway haga cumplir? | **Sí**, por dominio y por mail, en Empresa, con carga por CSV |
+| 7 | ¿Cadencia configurable? | **Sí:** de 1 a 4 mails, esperas de 2 a 10 días hábiles; LinkedIn sigue con la secuencia de Dripify |
+| 8 | ¿Cuántos perfiles de LinkedIn por cliente? | **Configurable:** varias cuentas de Dripify (cada una con su API key) para sumar volumen. Ver §6.1 |
+
+### 6.1 Lo que suma tener varios perfiles de LinkedIn
+
+Una cuenta de Dripify es un perfil de LinkedIn, y LinkedIn limita invitaciones por perfil: dos
+perfiles duplican el techo. No cambia el modelo, pero toca más piezas que una sola cuenta:
+
+| Qué | Cambio |
+|---|---|
+| Datos | `sdr.dripify_cuenta` deja de tener una fila por cliente: gana `id` y el perfil (nombre, URL). `dripify_carga`, `dripify_envio`, `dripify_evento`, `linkedin_respuesta` y `dripify_uso` llevan la cuenta |
+| Campaña | Elige qué perfiles usa y, para cada uno, su campaña de Dripify (con la decisión 2: una campaña del SDR con dos perfiles son dos campañas de Dripify) |
+| Reparto | El prospector reparte a las personas del día entre los perfiles de la campaña |
+| Persona atada a su perfil | La persona queda con el perfil que la invitó: respuestas, `dripify_responder` y los frenos (`dripify_frenar`, freno cruzado) van por esa cuenta. Nunca se invita a la misma persona desde dos perfiles (el gateway lo rechaza) |
+| Webhook | Una URL por cuenta (cada una con su secreto), para saber de qué perfil viene el evento |
+| Cupo de la API | Por cuenta (50 por minuto y 4500 por día cada una) |
+| Lectura de conversaciones | El reloj recorre cada cuenta |
+| Textos | La nota y los mensajes hablan en nombre de la persona del perfil: el bot recibe el nombre del perfil con cada persona |
+| Riesgo | Cada perfil tiene que ser de una persona real del cliente que acepte que se use; un perfil restringido por LinkedIn no frena a los demás |
+
+Es trabajo de la etapa C (campañas), no un proyecto aparte.
 
 ## 7. Por etapas
 
