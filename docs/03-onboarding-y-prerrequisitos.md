@@ -1,5 +1,7 @@
 # Onboarding, prerrequisitos y plan de construcción
 
+> Para el SDR v2 (Grok Bot como orquestador), el alta vigente está en `15-alta-de-un-cliente.md`, `16-guia-del-cliente.md` y `17-puesta-en-marcha-operacion-y-baja.md`. Este documento queda como diseño de la v1.
+
 Qué necesita el cliente para arrancar, qué necesita Biguá para operar, cómo es el alta paso a paso y en qué orden se construye. Complementa `02-arquitectura.md`.
 
 ## 1. Lo que entrega el cliente (kit de alta)

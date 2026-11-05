@@ -20,8 +20,13 @@ BairesQA aparece como cliente modelo. Es un placeholder: el objetivo es que cual
 | [12-respuestas-grokbot-v2.md](12-respuestas-grokbot-v2.md) | Respuestas de Grok Bot a la consulta v2 (04/11) y repaso de Dripify, con su impacto: la revisión automática frena MCP también desatendido (aprobaciones como datos y reglas Allow), no hay perfil y las memorias no se apagan, el modelo cambia por pedido, Dripify por API sin navegador, webhook de respuesta sólo en la primera; dónde no seguimos la recomendación y qué falta probar |
 | [13-etapa-1-y-pruebas.md](13-etapa-1-y-pruebas.md) | Etapa 1 en producción (reglas, registro, pedidos, aprobaciones, calibración): cómo se da de alta un cliente en el gateway y en Grok, y las pruebas de la etapa 0 en la cuenta de Grok de Biguá, con los prompts para pegar |
 | [14-etapa-2-memoria-del-correo.md](14-etapa-2-memoria-del-correo.md) | Etapa 2 en producción: el gateway lee los buzones, ata respuestas, rebotes, fuera de oficina y bajas a su envío y prospecto, lleva la supresión y despierta al bot `seguimiento`; cómo sumar `seguimiento` a un cliente y las pruebas en la cuenta de Grok de Biguá |
+| [15-alta-de-un-cliente.md](15-alta-de-un-cliente.md) | **Alta de un cliente, procedimiento de Biguá:** panel (cliente, usuario, buzones, dominio, activar el SDR), usuario de ASCI, token del gateway, cuenta de Grok Bot (bots, conectores, revisión automática), routines y despertador, con la lista para tildar |
+| [16-guia-del-cliente.md](16-guia-del-cliente.md) | **Guía para el cliente:** activar su usuario, cargar sus buzones, verificar su dominio y configurar los ajustes de su SDR (oferta, ICP, cargos, tono, firma, objeciones, positivos) |
+| [17-puesta-en-marcha-operacion-y-baja.md](17-puesta-en-marcha-operacion-y-baja.md) | Lo que queda fuera del alta: pruebas de arranque, calibración, lanzamiento, el día a día del operador, cambios, renovaciones, pausa y baja, tareas del equipo técnico y pendientes |
 | [tenant-manifest.example.yaml](tenant-manifest.example.yaml) | Manifiesto estándar de tenant: la única entrada del proceso de alta, con BairesQA como ejemplo |
 
-Orden de lectura sugerido: revisión → arquitectura → onboarding → rol en ASCI → preguntas y respuestas de Grok Bot → gateway → roadmap de proveedores → arquitectura v2 → datos y CRM → consulta y respuestas de Grok Bot v2 → manifiesto.
+**Para dar de alta un cliente, empezar por `15`, `16` y `17`.**
+
+Orden de lectura sugerido para el diseño: revisión → arquitectura → onboarding → rol en ASCI → preguntas y respuestas de Grok Bot → gateway → roadmap de proveedores → arquitectura v2 → datos y CRM → consulta y respuestas de Grok Bot v2 → manifiesto.
 
 Estado: diseño, más el gateway de correo (IMAP/SMTP, panel `/admin` y chequeo de dominios) desplegado en `https://sdrbot.bigua.lat` y en uso en el piloto de BairesQA. Microsoft 365 y Google Workspace están planificados en `08-roadmap-proveedores.md`.

@@ -19,6 +19,10 @@ SDR». Las reglas en sí: carpeta `playbooks/`.
 
 ## 2. Alta de un cliente
 
+> Reemplazado por [`15-alta-de-un-cliente.md`](15-alta-de-un-cliente.md) (Biguá),
+> [`16-guia-del-cliente.md`](16-guia-del-cliente.md) (cliente) y
+> [`17-puesta-en-marcha-operacion-y-baja.md`](17-puesta-en-marcha-operacion-y-baja.md). Lo de abajo queda como historia de la etapa 1.
+
 ### 2.1 En el gateway
 
 1. Panel `/admin`: cliente, buzones (y «Verificar» el dominio).
