@@ -61,8 +61,16 @@ encuentra en la próxima corrida.
 
 ## 3. Pruebas en la cuenta de Grok de Biguá
 
-Con el cliente de prueba de `13` §3 (por ejemplo `prueba-grok`), un buzón propio y `seguimiento`
-activo:
+Cliente de prueba armado el 05/11: **`prueba-grok`** («Prueba Grok (ensayo de BairesQA)»), en el
+canal `canario`, con los tres bots activos, **calibración en 500** (ningún mail nuevo sale sin
+aprobación en el chat), los ajustes del piloto de BairesQA (ICP, oferta sin promesas, firma de
+Augusto Gonzalez) y `cuentas_por_dia: 2`. Usa el mismo buzón que BairesQA,
+`augonzalez@bairesqa.net`, cargado aparte en este cliente: los cupos de los dos clientes se suman
+en la casilla real, por eso éste va con cupo bajo. El gateway sólo guarda lo que se ata al registro
+de `prueba-grok`; el resto del correo de la casilla no se toca.
+
+Para las pruebas de respuesta hay una cuenta «Empower IT (prueba)» (`empower-it.net`) con el
+prospecto `ignacio@empower-it.net`: desde ahí se contesta.
 
 | # | Prueba | Cómo | Qué anotar |
 |---|---|---|---|
