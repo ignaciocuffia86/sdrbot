@@ -490,3 +490,36 @@ test('SDR: el despertador se carga desde el panel; la clave no vuelve y el clien
   const apagado = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/despertador', { apagar: true });
   assert.equal(apagado.body.data.sdr.despertador.activo, false);
 });
+
+test('SDR: Dripify se carga desde el panel; la API key no vuelve, el webhook se muestra una vez y el cliente no lo toca', async () => {
+  const mala = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/dripify', { api_key: 'con espacios adentro', campana_id: 5 });
+  assert.equal(mala.status, 400);
+  const ok = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/dripify', { api_key: 'key-dripify-panel-123', campana_id: 5, nota_max: 200 });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const d = ok.body.data.sdr.dripify;
+  assert.equal(d.api_key, true);
+  assert.equal(d.campana_id, 5);
+  assert.equal(d.nota_max, 200);
+  assert.ok(!JSON.stringify(ok.body).includes('key-dripify-panel-123'), 'la key no vuelve');
+
+  // Sin Dripify alcanzable, «Probar» lo cuenta como problema en vez de fallar.
+  const prev = process.env.MAILGW_DRIPIFY_URL;
+  process.env.MAILGW_DRIPIFY_URL = 'http://127.0.0.1:9';
+  const probar = await ctx.bigua.call('POST', '/clients/adm-b/sdr/dripify/probar');
+  if (prev === undefined) delete process.env.MAILGW_DRIPIFY_URL; else process.env.MAILGW_DRIPIFY_URL = prev;
+  assert.equal(probar.status, 200);
+  assert.equal(probar.body.data.estado.listo, false);
+  assert.match(probar.body.data.estado.problemas[0], /Dripify no respondió/);
+
+  const hook = await ctx.bigua.call('POST', '/clients/adm-b/sdr/dripify/webhook');
+  assert.match(hook.body.data.ruta, /^\/hook\/dripify\/adm-b\/[A-Za-z0-9_-]{30,}$/);
+  const { rows } = await store.asOwner((c) => c.query(`select webhook_hash from sdr.dripify_cuenta where client_id = 'adm-b'`));
+  assert.ok(!rows[0].webhook_hash.includes(hook.body.data.ruta.split('/').at(-1)), 'en la base va el hash');
+  assert.equal((await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data.dripify.webhook, true);
+
+  const b = browser();
+  await b.call('POST', '/login', { email: 'ajustes@cliente-b.test', password: PW.cliente });
+  assert.equal((await b.call('PUT', '/clients/adm-b/sdr/dripify', { campana_id: 6 })).status, 403);
+  assert.equal((await b.call('POST', '/clients/adm-b/sdr/dripify/webhook')).status, 403);
+  assert.equal((await b.call('GET', '/clients/adm-b/sdr')).body.data.dripify, undefined);
+});

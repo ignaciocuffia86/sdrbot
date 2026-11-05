@@ -17,6 +17,7 @@ import { aadFor, decryptSecret, encryptSecret } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
 import { insertarEvento, aplicarEvento, versionActual } from './store.mjs';
+import * as dripify from './dripify.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -409,33 +410,51 @@ function enHorario(d, tz, ahora = new Date()) {
   return d.dias.includes(dia) && hora >= d.hora_desde && hora < d.hora_hasta;
 }
 
-// Qué despierta a cada bot: correo nuevo a seguimiento, aprobaciones pendientes al orquestador.
+// Qué despierta a cada bot: correo y respuestas de LinkedIn a seguimiento, aprobaciones
+// pendientes al orquestador. Cada parte es una tabla con su marca de aviso.
 // $1 cliente, $2 tope de avisos por ítem, $3 minutos antes de volver a avisar lo mismo.
 const FUENTES = {
   seguimiento: {
-    tabla: 'correo', columna: 'avisado_at',
-    sql: `select id, tipo, de, asunto from sdr.correo
-           where client_id = $1 and estado = 'nuevo' and avisos < $2
-             and (avisado_at is null or avisado_at < now() - make_interval(mins => $3))
-           order by id limit 50`,
-    cuerpo: (r) => ({
-      motivo: 'correo',
-      correos_nuevos: r.length,
-      correos: r.slice(0, 20).map((x) => ({ id: Number(x.id), tipo: x.tipo, de: x.de, asunto: x.asunto })),
-      instruccion: 'Llegó correo para atender. Seguí tus reglas de la tarea respuestas: correo_revisar te da el detalle.',
+    partes: [
+      {
+        nombre: 'correos', tabla: 'correo', columna: 'avisado_at',
+        sql: `select id, tipo, de, asunto from sdr.correo
+               where client_id = $1 and estado = 'nuevo' and avisos < $2
+                 and (avisado_at is null or avisado_at < now() - make_interval(mins => $3))
+               order by id limit 50`,
+        item: (x) => ({ id: Number(x.id), tipo: x.tipo, de: x.de, asunto: x.asunto }),
+      },
+      {
+        nombre: 'linkedin', tabla: 'linkedin_respuesta', columna: 'avisado_at',
+        sql: `select l.id, p.nombre from sdr.linkedin_respuesta l join sdr.prospecto p on p.id = l.prospecto_id
+               where l.client_id = $1 and l.estado = 'nuevo' and l.avisos < $2
+                 and (l.avisado_at is null or l.avisado_at < now() - make_interval(mins => $3))
+               order by l.id limit 50`,
+        item: (x) => ({ id: Number(x.id), de: x.nombre }),
+      },
+    ],
+    cuerpo: (p) => ({
+      motivo: p.linkedin.length && !p.correos.length ? 'linkedin' : p.linkedin.length ? 'correo y linkedin' : 'correo',
+      correos_nuevos: p.correos.length,
+      correos: p.correos.slice(0, 20),
+      ...(p.linkedin.length ? { linkedin_nuevos: p.linkedin.length, linkedin: p.linkedin.slice(0, 20) } : {}),
+      instruccion: 'Llegaron respuestas para atender. Seguí tus reglas de la tarea respuestas: correo_revisar y linkedin_revisar te dan el detalle.',
     }),
   },
   orquestador: {
-    tabla: 'aprobacion', columna: 'avisada_at',
-    sql: `select a.id, a.tipo, a.pedida_por, p.nombre as prospecto from sdr.aprobacion a
-            left join sdr.prospecto p on p.id = a.prospecto_id
-           where a.client_id = $1 and a.estado = 'pendiente' and a.avisos < $2
-             and (a.avisada_at is null or a.avisada_at < now() - make_interval(mins => $3))
-           order by (a.tipo = 'respuesta_positivo') desc, a.creado_at limit 50`,
-    cuerpo: (r) => ({
+    partes: [{
+      nombre: 'aprobaciones', tabla: 'aprobacion', columna: 'avisada_at',
+      sql: `select a.id, a.tipo, a.pedida_por, p.nombre as prospecto from sdr.aprobacion a
+              left join sdr.prospecto p on p.id = a.prospecto_id
+             where a.client_id = $1 and a.estado = 'pendiente' and a.avisos < $2
+               and (a.avisada_at is null or a.avisada_at < now() - make_interval(mins => $3))
+             order by (a.tipo = 'respuesta_positivo') desc, a.creado_at limit 50`,
+      item: (x) => ({ id: x.id, tipo: x.tipo, pedida_por: x.pedida_por, prospecto: x.prospecto }),
+    }],
+    cuerpo: (p) => ({
       motivo: 'aprobaciones',
-      aprobaciones_nuevas: r.length,
-      aprobaciones: r.slice(0, 20).map((x) => ({ id: x.id, tipo: x.tipo, pedida_por: x.pedida_por, prospecto: x.prospecto })),
+      aprobaciones_nuevas: p.aprobaciones.length,
+      aprobaciones: p.aprobaciones.slice(0, 20),
       instruccion: 'Hay aprobaciones para presentarle al operador. Seguí tus reglas de la tarea aprobaciones: registro_aprobaciones te da el detalle.',
     }),
   },
@@ -458,9 +477,14 @@ export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fet
   if (desde < espera) return { despertado: false, motivo: 'esperando para agrupar' };
   const fuente = FUENTES[bot];
   if (!fuente) return { despertado: false, motivo: `el bot ${bot} no tiene aviso` };
-  const { rows: nuevos } = await asClient(clientId, (c) => c.query(fuente.sql, [clientId, AVISOS_MAX, REAVISO_MIN]));
-  if (!nuevos.length) return { despertado: false, motivo: 'nada nuevo' };
-  const cuerpo = { cliente: clientId, ...fuente.cuerpo(nuevos) };
+  const filas = await asClient(clientId, async (c) => {
+    const out = {};
+    for (const parte of fuente.partes) out[parte.nombre] = (await c.query(parte.sql, [clientId, AVISOS_MAX, REAVISO_MIN])).rows;
+    return out;
+  });
+  const items = fuente.partes.reduce((n, parte) => n + filas[parte.nombre].length, 0);
+  if (!items) return { despertado: false, motivo: 'nada nuevo' };
+  const cuerpo = { cliente: clientId, ...fuente.cuerpo(Object.fromEntries(fuente.partes.map((parte) => [parte.nombre, filas[parte.nombre].map(parte.item)]))) };
   let estado = null;
   let error = null;
   try {
@@ -482,11 +506,14 @@ export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fet
               fallas = case when $4::text is null then 0 else fallas + 1 end
         where client_id = $1 and bot = $2`, [clientId, bot, estado, error]);
     if (!error) {
-      await c.query(`update sdr.${fuente.tabla} set ${fuente.columna} = now(), avisos = avisos + 1 where client_id = $1 and id = any($2)`,
-        [clientId, nuevos.map((r) => r.id)]);
+      for (const parte of fuente.partes) {
+        if (!filas[parte.nombre].length) continue;
+        await c.query(`update sdr.${parte.tabla} set ${parte.columna} = now(), avisos = avisos + 1 where client_id = $1 and id = any($2)`,
+          [clientId, filas[parte.nombre].map((r) => r.id)]);
+      }
     }
   });
-  return { despertado: !error, items: nuevos.length, estado, ...(error ? { error } : {}) };
+  return { despertado: !error, items, estado, ...(error ? { error } : {}) };
 }
 
 // ---------------------------------------------------------------- reloj (dueño)
@@ -516,6 +543,18 @@ export async function tick({ hasta = Date.now() + 40_000, fetchImpl } = {}) {
     if (Date.now() > hasta) { buzones.push({ cliente: r.client_id, buzon: r.email, salteado: 'sin tiempo' }); continue; }
     buzones.push({ cliente: r.client_id, ...(await revisarBuzon(r.client_id, r.email, { hasta })) });
   }
+  // LinkedIn: los frenos que dejó el correo y las conversaciones abiertas, antes de despertar.
+  const linkedin = [];
+  for (const clientId of await dripify.clientesConDripify()) {
+    if (Date.now() > hasta) { linkedin.push({ cliente: clientId, salteado: 'sin tiempo' }); continue; }
+    try {
+      const frenos = await dripify.frenarPendientes(clientId, { hasta });
+      const conversaciones = await dripify.revisarConversaciones(clientId, { hasta });
+      if (frenos.length || conversaciones.length) linkedin.push({ cliente: clientId, frenos, conversaciones });
+    } catch (e) {
+      linkedin.push({ cliente: clientId, error: e.message });
+    }
+  }
   const despertados = [];
   const { rows: conAviso } = await asOwner((c) => c.query(
     `select d.client_id, d.bot from sdr.despertador d join sdr.cliente_config k on k.client_id = d.client_id
@@ -527,7 +566,7 @@ export async function tick({ hasta = Date.now() + 40_000, fetchImpl } = {}) {
       despertados.push({ cliente: clientId, bot, despertado: false, error: e.message });
     }
   }
-  const resultado = { ms: Date.now() - inicio, buzones, despertados };
+  const resultado = { ms: Date.now() - inicio, buzones, linkedin, despertados };
   await asOwner((c) => c.query(`update sdr.reloj set ultimo_tick_at = now(), ultimo_resultado = $1 where id`, [JSON.stringify(resultado)]));
   return resultado;
 }

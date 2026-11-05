@@ -367,6 +367,66 @@ function despertadorCard(clientId, sdr, reload, bot = 'seguimiento') {
   return form;
 }
 
+// LinkedIn por Dripify: la API key (no se muestra), la campaña esqueleto, probar y el webhook.
+function dripifyCard(clientId, sdr, reload) {
+  const d = sdr.dripify;
+  const estado = !d?.api_key ? h('span', { class: 'badge b-mute' }, 'sin cargar')
+    : !d.activo ? h('span', { class: 'badge b-mute' }, 'apagado')
+      : d.ultimo_error ? h('span', { class: 'badge b-err' }, 'con error') : h('span', { class: 'badge b-ok' }, 'cargado');
+  const form = h('form', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'LinkedIn · Dripify'), estado),
+    h('p', { class: 'muted small' }, 'La cuenta de Dripify del cliente y su campaña esqueleto (nota de invitación, mensaje 1 al aceptar y ' +
+      'mensaje 2 después) con los campos sdr_nota, sdr_mensaje1 y sdr_mensaje2. Los textos los escribe el bot para cada persona.'),
+    d?.ultimo_error ? h('p', { class: 'small err' }, d.ultimo_error) : null,
+    d?.ultimo_ok_at ? h('p', { class: 'small' }, `Última respuesta buena de Dripify: ${fmtDate(d.ultimo_ok_at)}`) : null,
+    field('API key de Dripify', h('input', { name: 'api_key', type: 'password', autocomplete: 'off', required: !d?.api_key, minlength: 10 }),
+      d?.api_key ? 'Dejala vacía para conservar la guardada. Se guarda cifrada y no se vuelve a mostrar.'
+        : 'En Dripify: Settings → Integrations → Open API. Se guarda cifrada y no se vuelve a mostrar.'),
+    h('div', { class: 'cols2' },
+      field('Id de la campaña', h('input', { name: 'campana_id', type: 'number', min: 1, required: true, value: d?.campana_id ?? '' }),
+        'El número de la URL de la campaña en Dripify.'),
+      field('Largo máximo de la nota', h('input', { name: 'nota_max', type: 'number', min: 100, max: 300, value: d?.nota_max ?? 300 }),
+        '300 con LinkedIn Premium, 200 sin.')));
+  const err = h('p', { class: 'err', role: 'alert' });
+  const salida = h('div', {});
+  const btn = h('button', { type: 'submit', class: 'primary' }, d?.api_key ? 'Guardar' : 'Cargar Dripify');
+  const probar = d?.api_key ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/sdr/dripify/probar`), err);
+    if (!r) return;
+    const e = r.estado;
+    salida.replaceChildren(h('div', { class: 'small' },
+      h('p', {}, e.listo ? h('span', { class: 'badge b-ok' }, 'listo') : h('span', { class: 'badge b-err' }, 'falta algo'),
+        e.campana ? ` Campaña «${e.campana.nombre}» (${e.campana.estado}).` : ''),
+      e.problemas?.length ? h('ul', {}, e.problemas.map((x) => h('li', { class: 'err' }, x))) : null,
+      e.estadisticas ? h('p', { class: 'muted' }, `Prospectos: ${e.estadisticas.prospectos ?? '—'} · contactados: ${e.estadisticas.contactados ?? '—'}` +
+        ` · aceptación: ${e.estadisticas.aceptacion ?? '—'} · respuesta: ${e.estadisticas.respuesta ?? '—'}`) : null,
+      e.cupo ? h('p', { class: 'muted' }, `Pedidos a la API hoy: ${e.cupo.dia} de ${e.cupo.tope_dia}.`) : null));
+  } }, 'Probar') : null;
+  const hook = h('button', { type: 'button', onclick: async (ev) => {
+    if (d?.webhook && !window.confirm('Ya hay una URL de webhook. Si generás otra, la anterior deja de andar y hay que cambiarla en Dripify. ¿Seguir?')) return;
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/sdr/dripify/webhook`), err);
+    if (!r) return;
+    const url = `${window.location.origin}${r.ruta}`;
+    const campo = h('input', { readonly: true, value: url, class: 'mono', onfocus: (e) => e.currentTarget.select() });
+    salida.replaceChildren(h('div', { class: 'small' },
+      h('p', {}, 'URL del webhook (se muestra una sola vez). En la campaña de Dripify: Webhooks, una por disparador, ' +
+        'agregando al final ?e=invitacion, ?e=conexion, ?e=mensaje o ?e=respuesta según el disparador:'), campo));
+    campo.focus();
+  } }, d?.webhook ? 'Generar otra URL del webhook' : 'Generar URL del webhook');
+  form.append(err, h('div', { class: 'row' }, btn, probar, d?.api_key ? hook : null), salida);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      campana_id: Number(fd.get('campana_id')), nota_max: Number(fd.get('nota_max')),
+      ...(fd.get('api_key') ? { api_key: String(fd.get('api_key')).trim() } : {}),
+    };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/dripify`, body), err);
+    if (r) { toast('Dripify guardado. Probalo para ver si la campaña y los campos están.'); reload(); }
+  });
+  return form;
+}
+
 async function sdrView(clientId, bigua) {
   const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
   const reload = () => renderClient(clientId, 'sdr');
@@ -426,7 +486,8 @@ async function sdrView(clientId, bigua) {
           otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null),
         bigua ? sdrTecnico(clientId, sdr, reload) : null,
         bigua && sdr.tecnico?.bots_activos.includes('orquestador') ? despertadorCard(clientId, sdr, reload, 'orquestador') : null,
-        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null)),
+        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null,
+        bigua ? dripifyCard(clientId, sdr, reload) : null)),
     h('h2', {}, 'Historial de cambios'),
     historial);
 }

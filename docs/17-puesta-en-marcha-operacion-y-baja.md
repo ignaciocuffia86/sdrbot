@@ -150,5 +150,5 @@ Cosas que hoy hacen falta y que conviene llevar al panel o resolver:
   usa `operador` y la revisión automática de Grok lo acota (paso 8 de `15`).
 - **Borrar los datos de prueba desde el panel**, sin el equipo técnico.
 - **Un tablero para el cliente** con sus números (`11` §8).
-- **LinkedIn (Dripify), CRM y WhatsApp** son las etapas 3 a 5 de `09` §9: cuando lleguen, suman pasos al
-  alta (`15`) y a la guía (`16`).
+- **LinkedIn (Dripify)** está en producción (etapa 3, `20`): suma el paso 11 del alta (`15`). **CRM y
+  WhatsApp** son las etapas 4 y 5 de `09` §9: cuando lleguen, suman pasos al alta y a la guía (`16`).

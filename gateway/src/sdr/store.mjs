@@ -169,6 +169,16 @@ export async function aplicarEvento(c, clientId, e) {
        on conflict (client_id, email) do nothing`,
       [clientId, e.prospecto_id, e.tipo === 'baja' ? 'baja' : 'rebote', `evento ${e.tipo}`]);
   }
+  // Freno cruzado: si responde por mail o pide la baja, LinkedIn no le sigue escribiendo. El
+  // pedido a Dripify sale después de la transacción (dripify.frenarPendientes): acá sólo se marca.
+  // Una respuesta por LinkedIn no hace falta: Dripify corta la secuencia solo.
+  if ((e.tipo === 'respuesta' && e.canal !== 'linkedin') || e.tipo === 'baja') {
+    await c.query(
+      `update sdr.prospecto
+          set dripify = dripify || jsonb_build_object('freno', jsonb_build_object('pendiente', true, 'motivo', $3::text, 'desde', now()))
+        where client_id = $1 and id = $2 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')`,
+      [clientId, e.prospecto_id, e.tipo === 'baja' ? 'pidió la baja' : `respondió por ${e.canal ?? 'otro canal'}`]);
+  }
   if (e.tipo === 'crm.cargado' && e.ref) {
     await c.query(`update sdr.prospecto set crm_id = $3 where client_id = $1 and id = $2`, [clientId, e.prospecto_id, e.ref]);
   }
@@ -345,9 +355,10 @@ export async function agenda(clientId, { fecha, canal, limite }) {
       `select estado, count(*)::int as n from sdr.aprobacion where client_id = $1 and estado in ('pendiente', 'aprobada') group by estado`,
       [clientId]);
     const { rows: correo } = await c.query(
-      `select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`, [clientId]);
+      `select (select count(*)::int from sdr.correo where client_id = $1 and estado = 'nuevo') as n,
+              (select count(*)::int from sdr.linkedin_respuesta where client_id = $1 and estado = 'nuevo') as li`, [clientId]);
     return {
-      fecha: dia, prospectos, correo_sin_atender: correo[0].n,
+      fecha: dia, prospectos, correo_sin_atender: correo[0].n, linkedin_sin_atender: correo[0].li,
       pedidos_pendientes: Object.fromEntries(pedidos.map((r) => [r.para_bot, r.n])),
       aprobaciones: { pendientes: aprob.find((r) => r.estado === 'pendiente')?.n ?? 0, aprobadas_sin_usar: aprob.find((r) => r.estado === 'aprobada')?.n ?? 0 },
     };
@@ -511,7 +522,7 @@ export async function aprobar(clientId, a, meta) {
       throw new GatewayError('ya_decidida', `La aprobación ya está ${prev[0].estado}.`, 409);
     }
     const cambios = {};
-    for (const k of ['asunto', 'texto', 'destinatario']) if (a[k] !== undefined) cambios[k] = a[k];
+    for (const k of ['asunto', 'texto', 'destinatario', 'linkedin']) if (a[k] !== undefined) cambios[k] = a[k];
     const final = a.decision === 'aprobada' ? { ...prev[0].contenido, ...cambios } : null;
     const { rows } = await c.query(
       `update sdr.aprobacion set estado = $3, decision_contenido = $4, decision_nota = $5, decidida_por = $6, decidida_at = now()
@@ -574,7 +585,10 @@ export async function controlarEnvio(clientId, args, kind) {
       if (final.destinatario && normMail(final.destinatario) !== primerDestinatario(args.to)) diferencias.push('el destinatario');
       if (final.asunto !== undefined && normTexto(final.asunto) !== normTexto(args.subject)) diferencias.push('el asunto');
     }
-    if (final.texto !== undefined && normTexto(final.texto) !== normTexto(args.text)) diferencias.push('el texto');
+    // Una aprobación sólo de LinkedIn (sin texto de mail) no habilita ningún mail.
+    if (final.texto === undefined) diferencias.push('el texto (la aprobación no trae un mail)');
+    else if (normTexto(final.texto) !== normTexto(args.text)) diferencias.push('el texto');
+    if (final.canal && final.canal !== 'mail') diferencias.push(`el canal (la aprobación es para ${final.canal})`);
     if (ap.prospecto_id && args.prospecto_id && ap.prospecto_id !== args.prospecto_id) diferencias.push('el prospecto');
     if (diferencias.length) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +

@@ -19,7 +19,7 @@ Este documento reemplaza a `13` §2 y, para el SDR v2, al runbook de `03` §3.
 ```
 Reunión de inicio  →  1. Cliente en el panel  →  2. Usuario del cliente  →  3. Buzones (el cliente)
 →  4. Dominio  →  5. Activar el SDR  →  6. Usuario de ASCI  →  7. Token del gateway
-→  8. Cuenta de Grok Bot  →  9. Routines  →  10. Despertador  →  11. Comprobar  →  doc 17
+→  8. Cuenta de Grok Bot  →  9. Routines  →  10. Despertador  →  11. LinkedIn (Dripify)  →  12. Comprobar  →  doc 17
 ```
 
 Los pasos 3 y 4 y los ajustes del SDR los hace el cliente con la guía `16`, en paralelo con los
@@ -216,12 +216,27 @@ La clave se guarda cifrada y no se vuelve a mostrar. Si sólo cambiás el horari
 despertador el bot corre igual, pero sólo en su horario: una respuesta a un positivo puede esperar
 hasta la routine de las 12 o de las 16.
 
-## 11. Comprobar
+## 11. LinkedIn por Dripify
+
+Si el cliente va también por LinkedIn. Lo que se arma en Dripify (plan con Open API, los campos
+`sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`, la campaña esqueleto activa) y el detalle están en
+[`20`](20-etapa-3-linkedin-dripify.md) §2 y §3. En el panel:
+
+1. Pestaña **SDR** → **LinkedIn · Dripify**: la API key (la pega el cliente o Biguá ahí, nunca por
+   chat), el id de la campaña y el largo máximo de la nota (300 con LinkedIn Premium, 200 sin).
+2. **Probar:** tiene que decir «listo».
+3. **Generar URL del webhook** y cargarla en la campaña de Dripify, una por disparador, con
+   `?e=invitacion`, `?e=conexion`, `?e=mensaje` y `?e=respuesta` al final.
+
+Sin Dripify, el SDR va sólo por mail: los bots lo ven en `dripify_estado` y no cargan nada.
+
+## 12. Comprobar
 
 - En el chat del `orquestador`: «Llamá registro_agenda y decime qué ves». Tiene que contestar con
   la agenda (vacía) sin errores.
 - Panel → pestaña **Actividad**: aparecen las llamadas de los bots.
 - Pestaña **SDR**: la vista previa «Así lo leen los bots» muestra los ajustes del cliente.
+- Con LinkedIn: «Llamá dripify_estado y decime qué ves» tiene que decir `listo`.
 
 Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, lanzamiento) está en
 [`17`](17-puesta-en-marcha-operacion-y-baja.md).
@@ -241,4 +256,5 @@ Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, la
 | 8 | Cuenta de Grok: tres bots, conectores, Allow y Ask first, Privacy Mode, notificaciones | Biguá | ☐ |
 | 9 | Siete routines creadas y habilitadas | Biguá (con los bots) | ☐ |
 | 10 | Despertadores de seguimiento y del orquestador cargados | Biguá | ☐ |
-| 11 | Comprobado: agenda sin errores y llamadas en Actividad | Biguá | ☐ |
+| 11 | Con LinkedIn: Dripify cargado, «Probar» listo y webhooks en la campaña | Biguá (con el cliente) | ☐ |
+| 12 | Comprobado: agenda sin errores y llamadas en Actividad | Biguá | ☐ |

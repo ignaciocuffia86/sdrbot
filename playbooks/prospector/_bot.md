@@ -7,6 +7,11 @@ quién escribirle, revelás su contacto, escribís el mail y lo mandás por el g
 aprobar durante la calibración). Después hacés los seguimientos por mail mientras la persona no
 responda.
 
+**Mail y LinkedIn van juntos.** A cada persona con LinkedIn le escribís también los tres textos de
+la campaña de LinkedIn del cliente (la nota de la invitación y dos mensajes) y la cargás en Dripify
+el mismo día que sale su mail 1, con `dripify_cargar`. La secuencia de LinkedIn la corre Dripify:
+vos no mandás mensajes de LinkedIn uno por uno.
+
 **La señal es un aviso concreto y reciente.** Sin un aviso publicado dentro de la «Antigüedad
 máxima del aviso» de los ajustes del cliente (si no dice, 14 días), la cuenta no entra en la tanda
 de hoy, aunque tenga muchos avisos viejos.

@@ -19,6 +19,7 @@ import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { CAMPOS, aplicarCambios, diferencias, tituloDe } from '../sdr/ajustes.mjs';
 import { renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
+import * as dripify from '../sdr/dripify.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -107,6 +108,13 @@ const V = {
       espera_min: { type: 'integer', minimum: 1, maximum: 240 },
       apagar: { type: 'boolean' },
       bot: { enum: ['seguimiento', 'orquestador'], default: 'seguimiento' },
+    } }),
+  dripify: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: {
+      api_key: { type: 'string', minLength: 10, maxLength: 500, pattern: '^\\S+$' },
+      campana_id: { type: 'integer', minimum: 1 },
+      nota_max: { type: 'integer', minimum: 100, maximum: 300 },
+      activo: { type: 'boolean' },
     } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
@@ -479,6 +487,7 @@ async function leerSdr(c, user, clientId) {
     out.despertador = await verDespertador(c, clientId, 'seguimiento');
     out.despertadores = {};
     for (const b of BOTS_CON_AVISO) out.despertadores[b] = await verDespertador(c, clientId, b);
+    out.dripify = await dripify.ver(c, clientId);
   }
   return out;
 }
@@ -565,6 +574,37 @@ route('PUT', '/clients/:client/sdr/despertador', async ({ user, params, body }) 
   await asOwner((c) => audit(c, user, params.client, b.apagar ? 'admin.sdr.despertador.apagar' : 'admin.sdr.despertador',
     b.apagar ? { bot } : { bot, url_host: new URL(b.url).host, clave_nueva: Boolean(b.clave) }));
   return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
+});
+
+// LinkedIn por Dripify: la API key (no se muestra nunca), la campaña esqueleto y el webhook.
+route('PUT', '/clients/:client/sdr/dripify', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.dripify(body);
+  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
+  await dripify.configurar(params.client, b);
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.dripify',
+    { api_key_nueva: Boolean(b.api_key), campana_id: b.campana_id, nota_max: b.nota_max, activo: b.activo }));
+  return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
+});
+
+route('POST', '/clients/:client/sdr/dripify/probar', async ({ user, params }) => {
+  requireBigua(user);
+  try {
+    return { estado: await dripify.estado(params.client) };
+  } catch (e) {
+    if (e instanceof GatewayError) return { estado: { listo: false, problemas: [e.message] } };
+    throw e;
+  }
+});
+
+route('POST', '/clients/:client/sdr/dripify/webhook', async ({ user, params }) => {
+  requireBigua(user);
+  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
+  const r = await dripify.generarWebhook(params.client);
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.dripify.webhook', {}));
+  return r;
 });
 
 // ----- dominios: SPF, DKIM, DMARC y MX

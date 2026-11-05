@@ -103,6 +103,7 @@ La pestaña **SDR** de cada cliente edita lo que los bots leen como «Ajustes de
 - Se valida al guardar (largo, renglones, campos que existen) y se ve cómo lo van a leer los bots.
 - Cada cambio queda en el historial con quién y cuándo, y se puede volver a una versión anterior.
 - En la base, el rol del portal sólo puede actualizar los ajustes de su cliente: ni la calibración ni nada del registro.
+- **LinkedIn · Dripify** (sólo Biguá): API key (cifrada, no vuelve), id de la campaña esqueleto, largo máximo de la nota, **Probar** (campaña activa, campos, números, cupo) y **Generar URL del webhook** (se muestra una vez).
 - **Despertadores** (sólo Biguá): el de `seguimiento` (webhook de «SDR · respuestas», avisa el correo nuevo) y el del `orquestador` (webhook de «SDR · aprobaciones», avisa las aprobaciones pendientes, primero las de un positivo; migración `008`). Con URL, clave, horario, días y minutos entre avisos. La clave se guarda cifrada y no se vuelve a mostrar; vacía, se conserva la guardada. Es lo mismo que `sdr-despertador` de la CLI.
 
 ### Dominios: SPF, DKIM, DMARC y MX
@@ -163,9 +164,9 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
-## Núcleo SDR (etapas 1 y 2 de `docs/09`)
+## Núcleo SDR (etapas 1 a 3 de `docs/09`)
 
-Con el permiso `sdr`, el mismo token y el mismo MCP suman 21 herramientas para los bots de Grok (`src/sdr/`, migraciones `005_sdr_nucleo` y `006_memoria_del_correo`):
+Con el permiso `sdr`, el mismo token y el mismo MCP suman 29 herramientas para los bots de Grok (`src/sdr/`, migraciones `005_sdr_nucleo`, `006_memoria_del_correo` y `009_dripify`):
 
 | Grupo | Herramientas | Qué hacen |
 |---|---|---|
@@ -174,6 +175,7 @@ Con el permiso `sdr`, el mismo token y el mismo MCP suman 21 herramientas para l
 | Pedidos | `registro_pedir`, `registro_pendientes`, `registro_resolver_pedido` | Pedidos entre bots; el mensaje de Grok sólo despierta. Tope de tres idas y vueltas, después al orquestador |
 | Aprobaciones | `registro_pedir_aprobacion`, `registro_aprobaciones`, `registro_aprobar` | Aprobaciones como datos. El gateway las exige |
 | Correo | `correo_revisar`, `correo_atendido`, `correo_sin_respuesta` | Lo que llegó, ya atado a su envío y a su prospecto; marcarlo atendido; quién no respondió hace N días |
+| LinkedIn | `dripify_estado`, `dripify_cargar`, `dripify_conversacion`, `dripify_responder`, `dripify_frenar`, `dripify_reanudar`, `linkedin_revisar`, `linkedin_atendido` | La campaña esqueleto de Dripify del cliente: cargar personas con sus tres textos, leer y contestar la conversación, frenar o reanudar la secuencia, y las respuestas que esperan (`docs/20`) |
 | Bitácora | `bitacora_inicio`, `bitacora_fin` | Cada corrida anota inicio y fin |
 | Pruebas | `prueba_carga` | Devuelve N KB después de N segundos, para medir el MCP en Grok |
 
@@ -184,6 +186,8 @@ Lo que el gateway hace cumplir:
 - **Registro automático:** `enviar` y `responder` con `prospecto_id` dejan el evento `mail.enviado` y actualizan al prospecto.
 - **URLs de LinkedIn** normalizadas a `https://www.linkedin.com/in/<slug>`; las cortadas se rechazan.
 - **Supresión:** nada sale a una dirección que rebotó o pidió la baja (`destinatario_suprimido`), desde ningún buzón del cliente.
+- **LinkedIn:** `dripify_cargar` rechaza la tanda entera si alguien no tiene LinkedIn, ya respondió, está cerrado o suprimido, ya estaba cargado, tiene una respuesta sin atender o textos con marcadores o demasiado largos; en calibración exige la aprobación del primer contacto con esos mismos textos (`contenido.linkedin`). `dripify_responder` a un positivo exige `respuesta_positivo` con `canal: "linkedin"`. Cupo propio de 50 pedidos por minuto y 4500 por día a Dripify por cliente.
+- **Freno cruzado:** una respuesta por mail o una baja saca a la persona de la campaña de LinkedIn (lista negra de Dripify, desde el reloj); una respuesta por LinkedIn la deja en `respondio` y ya no salen mails de la secuencia.
 - **Quien respondió es de `seguimiento`:** `enviar` (un mail nuevo de la secuencia) se rechaza si la persona tiene una respuesta sin atender (`respuesta_sin_atender`) o ya respondió, es positivo, dijo que no, derivó o está en el CRM (`prospecto_respondio`). Se la encuentra por `prospecto_id` o por el destinatario. `responder` en el hilo sí se puede.
 
 ### Memoria del correo (etapa 2)
@@ -204,6 +208,10 @@ node bin/admin.mjs sdr-despertador bairesqa seguimiento --apagar
 node bin/admin.mjs reloj-tick                                              # una vuelta a mano
 ```
 
+### LinkedIn por Dripify (etapa 3)
+
+Una campaña esqueleto por cliente (invitación con nota, mensaje 1, mensaje 2) cuyo texto son los campos personalizados `sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`; el bot los escribe por persona y `dripify_cargar` los sube con la Open API de Dripify (`https://api.dripify.com`, `X-Api-Key`; `MAILGW_DRIPIFY_URL` la reemplaza en las pruebas). Lo que pasa vuelve por el webhook de la campaña, `POST /hook/dripify/<cliente>/<secreto>?e=invitacion|conexion|mensaje|respuesta` (el secreto va en la URL porque Dripify no deja poner cabeceras; en la base, su hash; el cuerpo se guarda crudo en `sdr.dripify_evento`), y por la lectura de las conversaciones abiertas que hace el reloj, porque el webhook de respuesta sólo llega con la primera. La API key, la campaña y el webhook se cargan en el panel (pestaña SDR, sólo Biguá). Detalle y alta: `docs/20-etapa-3-linkedin-dripify.md`.
+
 Un cliente sin configuración del SDR (`sdr.cliente_config`) usa el gateway como antes, sin calibración.
 
 **Reglas (playbooks).** Viven en `playbooks/` (raíz del repo): `comun.md`, `rutina.md` (prompt de las routines), `rutinas.json` y una carpeta por bot (`_bot.md` y una por tarea). Cada `## Título` es una sección; la línea `> …` que la sigue es su resumen. Se publican como versiones inmutables y cada cliente sigue el canal `estable` o `canario`, o una versión fija:
@@ -223,7 +231,7 @@ Un envío reserva su clave antes de hablar con el SMTP. Si la función se corta 
 
 ## Rotar la llave de cifrado
 
-Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Vercel y en la máquina del operador, correr `node bin/admin.mjs rekey` (recifra las contraseñas de los buzones y las claves de los webhooks del despertador), y después sacar `k1`.
+Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Vercel y en la máquina del operador, correr `node bin/admin.mjs rekey` (recifra las contraseñas de los buzones, las claves de los webhooks del despertador y las API keys de Dripify), y después sacar `k1`.
 
 ## Pruebas
 
@@ -231,7 +239,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 103 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (ajustes del SDR por cliente con historial, activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real) y la memoria del correo (respuestas, rebotes, fuera de oficina y bajas sembrados en el Dovecot, supresión al enviar, despertador y reloj). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 112 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (ajustes del SDR por cliente con historial, activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real) la memoria del correo (respuestas, rebotes, fuera de oficina y bajas sembrados en el Dovecot, supresión al enviar, despertador y reloj) y LinkedIn contra un Dripify simulado según su Open API (carga con calibración, webhook, conversación, respuesta con aprobación, freno cruzado, cupo y errores). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 

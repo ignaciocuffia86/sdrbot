@@ -6,6 +6,7 @@
 //   POST /v1/<op>           una operación (ver src/ops.mjs), cuerpo JSON
 //   POST /mcp               MCP (streamable HTTP, sin sesión)
 //   POST /cron/correo       el reloj (pg_cron en Supabase): lee los buzones y despierta a seguimiento
+//   POST /hook/dripify/<cliente>/<secreto>[?e=tipo]  webhook de la campaña de LinkedIn del cliente
 //   GET  /admin             panel web (src/admin/static) · /admin/api/* su API (src/admin/api.mjs)
 //
 // Toda respuesta REST es { ok: true, data } o { ok: false, error: { code, message } }.
@@ -20,6 +21,7 @@ import { readFile } from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { hashToken } from './crypto.mjs';
 import { tick, hashReloj } from './sdr/correo.mjs';
+import { webhook as webhookDripify } from './sdr/dripify.mjs';
 
 // Cabeceras del panel: sin scripts ni estilos de terceros ni en línea, sin marcos.
 const ADMIN_HEADERS = {
@@ -100,6 +102,15 @@ export async function handle(req, res) {
         throw new GatewayError('unauthorized', 'Secreto del reloj inválido.', 401);
       }
       return send(res, 200, { ok: true, data: await tick({ hasta: Date.now() + 40_000 }) });
+    }
+
+    // Dripify no deja poner cabeceras en el webhook: el secreto va en la URL (se guarda su hash).
+    const hook = /^\/hook\/dripify\/([a-z0-9][a-z0-9-]{1,62})\/([A-Za-z0-9_-]{20,100})$/.exec(path);
+    if (hook) {
+      if (req.method !== 'POST') throw new GatewayError('method_not_allowed', 'Usar POST.', 405);
+      const e = new URL(req.url ?? '/', 'http://local').searchParams.get('e') ?? null;
+      const body = await readBody(req);
+      return send(res, 200, { ok: true, data: await webhookDripify(hook[1], hook[2], e, body) });
     }
 
     if (path === '/admin' || path.startsWith('/admin/')) {

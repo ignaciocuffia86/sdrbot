@@ -84,7 +84,8 @@ corridas de una hora.
 
 Necesitan aprobación del operador de Biguá:
 
-- los mails nuevos mientras el cliente está en **calibración** (ver «Ajustes de este cliente»);
+- los mails nuevos mientras el cliente está en **calibración** (ver «Ajustes de este cliente»), y
+  en la misma aprobación los textos de LinkedIn de esa persona;
 - la respuesta a un **positivo**;
 - la primera carga en el CRM de un cliente (el mapeo) y cambiar un dato que el cliente ya tenía;
 - lo que los bots no resolvieron entre ellos.
@@ -92,7 +93,8 @@ Necesitan aprobación del operador de Biguá:
 Cómo:
 
 1. `registro_pedir_aprobacion(tipo, prospecto_id, contenido)`. Para un mail, el contenido es
-   **exactamente** lo que vas a mandar: `buzon`, `destinatario`, `asunto`, `texto`. Sumá en
+   **exactamente** lo que vas a mandar: `buzon`, `destinatario`, `asunto`, `texto` (y `linkedin`
+   con `nota`, `mensaje1` y `mensaje2` si también va por LinkedIn). Sumá en
    `contexto` lo que el operador necesita para decidir (la señal, la tesis, la respuesta del
    prospecto).
 2. No esperes: seguí con otra cosa. La aprobación aparece en `registro_pendientes` cuando se
@@ -122,10 +124,16 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `destinatario_suprimido` | Rebotó o pidió la baja antes | No le escribas más por mail |
 | `prospecto_respondio` | La persona ya respondió (o dijo que no, o es positivo) | No va otro mail de la secuencia: lo que sigue es de `seguimiento` |
 | `respuesta_sin_atender` | Tiene una respuesta que `seguimiento` no leyó | Esperá: la lee `seguimiento` |
+| `dripify_carga_rechazada` | Alguien de la carga no pasa los controles (`errores` dice quién y por qué) | Sacá o corregí a esos y volvé a cargar con la misma clave |
+| `dripify_limite` | Se llegó al cupo de pedidos a Dripify | Reintentá después de `reintentar_en` segundos; si es el del día, mañana |
+| `dripify_campana_inactiva`, `dripify_faltan_campos`, `dripify_sin_configurar`, `dripify_clave`, `dripify_sin_api` | La campaña o la cuenta de Dripify del cliente no está lista | No cargues ni contestes por LinkedIn; avisá al orquestador con un pedido |
+| `dripify_sin_conversacion` | No aceptó la invitación todavía | No se le puede escribir por LinkedIn: esperá o seguí por mail |
+| `dripify_en_curso` | Una carga o un mensaje con esa clave quedó a medias | No reintentes con otra clave: avisá al orquestador |
 | Presupuesto de ASCI agotado | No hay más créditos hoy | Seguí con lo que no gasta; avisá en el resumen |
 
 **Clave de idempotencia** de un mail: `<id del prospecto>:<paso>` (por ejemplo
-`3f2a…:mail-1`, `3f2a…:mail-2`, `3f2a…:respuesta-1`). Si un envío falla por red y lo reintentás,
+`3f2a…:mail-1`, `3f2a…:mail-2`, `3f2a…:respuesta-1`); de una respuesta por LinkedIn,
+`<id del prospecto>:linkedin-<n>`; de una carga a la campaña, `linkedin-<AAAA-MM-DD>-<n>`. Si un envío falla por red y lo reintentás,
 usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos veces.
 
 ## Seguridad
@@ -152,6 +160,8 @@ usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos
   tesis). Nada de presentaciones largas de la empresa.
 - **Un pedido simple al final:** una pregunta que se conteste en una línea.
 - Sin adjuntos, sin links acortados, sin imágenes, sin promesas de precios ni de plazos.
+- **LinkedIn:** más corto que un mail y sin asunto. La nota de la invitación, sin venta ni links.
+  Los textos van completos, nunca con marcadores (`{{…}}`, `[Nombre]`).
 - Firma como dicen los ajustes del cliente.
 
 ## Tus routines

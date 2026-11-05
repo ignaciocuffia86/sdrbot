@@ -12,8 +12,11 @@
      devuelve `correo_sin_respuesta` y no tienen próximo paso;
    - si la calibración no terminó: que deje cada mail como aprobación, no que lo envíe.
 4. Si hay pedidos escalados para vos, resolvelos o preguntáselos al operador.
-5. Si `registro_agenda` muestra `correo_sin_atender` y `seguimiento` está activo, mandale un
-   mensaje corto: «Tenés correo para atender».
+5. Si `registro_agenda` muestra `correo_sin_atender` o `linkedin_sin_atender` y `seguimiento` está
+   activo, mandale un mensaje corto: «Tenés respuestas para atender».
+6. **LinkedIn:** `dripify_estado()`. Si no está listo (`problemas`), decíselo al operador en el chat
+   con los problemas, una vez por día, y pedile al `prospector` que hoy no cargue a LinkedIn. Si
+   el cliente no tiene Dripify (`dripify_sin_configurar`), no digas nada.
 
 ## Aprobaciones pendientes
 

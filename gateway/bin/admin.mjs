@@ -220,6 +220,13 @@ async function main() {
         await correo.setClaveDespertador(d.client_id, d.bot, encryptSecret(decryptSecret(d.clave_enc, aad), aad));
         n += 1;
       }
+      const dripify = await import('../src/sdr/dripify.mjs');
+      for (const d of await dripify.claves()) {
+        if (keyIdOf(d.api_key_enc) === current) continue;
+        const aad = dripify.aadDripify(d.client_id);
+        await dripify.setClave(d.client_id, encryptSecret(decryptSecret(d.api_key_enc, aad), aad));
+        n += 1;
+      }
       console.log(`Recifrados: ${n}. Ya se puede sacar la clave vieja de MAILGW_ENC_KEYS.`);
       break;
     }

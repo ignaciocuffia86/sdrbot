@@ -45,7 +45,8 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
 3. Guardalas y revelalas como dice «A quién escribirle»: email y su calidad (`verificado` o
    `extrapolado`), URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen los
    ajustes), no le escribas a ese.
-4. Sin mail, no hay mail: guardalo igual y dejá `proximo_canal: "linkedin"` si tiene LinkedIn.
+4. Sin mail, no hay mail: guardalo igual. Si tiene LinkedIn, va sólo por LinkedIn (sección
+   «Escribir los textos de LinkedIn»).
 
 ## Escribir el primer mail
 
@@ -63,6 +64,27 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
    quien publicó (`proximo_fecha`), para no llegar los dos el mismo día.
 5. Elegí el buzón del cliente que corresponda (lo dicen los ajustes; si hay varios, repartí).
 
+## Escribir los textos de LinkedIn
+
+> La nota de la invitación, el mensaje 1 y el mensaje 2 de cada persona con LinkedIn.
+
+La campaña de LinkedIn del cliente es un esqueleto fijo: invitación con nota, **mensaje 1** cuando
+acepta y **mensaje 2** unos días después si no contestó. Todo el texto lo escribís vos, por
+persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
+
+1. **Nota de la invitación** (`nota`): una o dos líneas, con el aviso como motivo («Vi la búsqueda
+   de QA Automation que publicaron el 3/11»). Sin venta, sin links. Tope: el «largo máximo de la
+   nota» que da `dripify_estado` (300 caracteres con LinkedIn Premium, 200 sin).
+2. **Mensaje 1** (`mensaje1`, al aceptar): gracias por aceptar, la tesis en dos o tres líneas y una
+   pregunta simple. Hasta 1000 caracteres; mejor menos de 500. Si también le escribiste por mail,
+   no copies el mail: el de LinkedIn es más corto y conversacional.
+3. **Mensaje 2** (`mensaje2`, unos días después, si no contestó): un ángulo nuevo en dos o tres
+   líneas, no un «¿viste mi mensaje?».
+4. **Textos completos:** con el nombre y la empresa escritos. Nada de `{{…}}` ni `[Nombre]`: el
+   gateway rechaza la carga.
+5. Mismo ángulo que su mail (publicante o decisor), las reglas de «Cómo escribimos» y el idioma del
+   cliente.
+
 ## Enviar o pedir aprobación
 
 > Durante la calibración se aprueba antes; después sale directo.
@@ -70,9 +92,11 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
 **Si el cliente está en calibración** (lo dice «Ajustes de este cliente»):
 
 1. `registro_pedir_aprobacion` tipo `calibracion_mail`, con `prospecto_id` y en `contenido`
-   exactamente `buzon`, `destinatario`, `asunto` y `texto`, más el `contexto` (señal y tesis).
+   exactamente `buzon`, `destinatario`, `asunto` y `texto`, más el `contexto` (señal y tesis). Si
+   tiene LinkedIn, en la **misma** aprobación sumá `linkedin` con `nota`, `mensaje1` y `mensaje2`.
+   Sin mail, la aprobación lleva sólo `linkedin` (y el `contexto`).
 2. Dejá el prospecto con `proximo_paso: "enviar mail 1 cuando se apruebe"`.
-3. No lo mandes: se manda en `ejecutar_aprobados`.
+3. No lo mandes ni lo cargues: se hace en `ejecutar_aprobados`.
 
 **Si la calibración terminó:**
 
@@ -80,6 +104,13 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
    `idempotency_key` = `<id del prospecto>:mail-1`.
 2. Dejá el próximo paso: `proximo_paso: "seguimiento mail 2"`, `proximo_canal: "mail"`,
    `proximo_fecha` a 4 días hábiles.
+3. **LinkedIn, una carga por tanda:** al final, todas las personas del día con LinkedIn en un solo
+   `dripify_cargar` (hasta 100), cada una con `prospecto_id`, `nota`, `mensaje1` y `mensaje2`, e
+   `idempotency_key` = `linkedin-<AAAA-MM-DD>-<n>` (n: la tanda del día, desde 1). Si el gateway
+   rechaza la carga (`dripify_carga_rechazada`), trae en `errores` quién y por qué: sacá o corregí
+   a esos y volvé a cargar con la **misma** clave (la carga rechazada no llegó a Dripify).
+4. Los decisores que van un día hábil después que el publicante, se cargan ese día, en la tanda de
+   ese día.
 
 ## Seguimientos por mail
 
@@ -98,11 +129,13 @@ Para cada prospecto que el orquestador te pidió seguir:
    nuevo, no un «¿viste mi mail?». Misma regla de calibración que el primero. Clave
    `<id>:mail-2` o `<id>:mail-3`.
 4. Después del mail 3 sin respuesta: estado `sin_respuesta`, `proximo_fecha` a 90 días.
+5. LinkedIn no tiene seguimientos tuyos: los dos mensajes los manda Dripify. Si la persona responde
+   por cualquier canal, el gateway frena el otro solo.
 
 ## Cerrar
 
 > El pedido, la bitácora y lo que quedó.
 
-1. `registro_resolver_pedido` del pedido del día: `hecho` con cuántas cuentas, personas y mails
-   (o `en_curso` si quedó parte para la próxima corrida, con qué falta).
+1. `registro_resolver_pedido` del pedido del día: `hecho` con cuántas cuentas, personas, mails y
+   cargas a LinkedIn (o `en_curso` si quedó parte para la próxima corrida, con qué falta).
 2. Lo que no entró por cupo o por presupuesto queda con `proximo_fecha` de mañana.
