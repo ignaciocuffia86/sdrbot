@@ -14,6 +14,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 var(--font); }
 a { color: var(--accent); }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
@@ -39,9 +40,9 @@ main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
 .small { font-size: .85rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
 label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
-input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--text); font: inherit; }
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 input[type=checkbox] { width: auto; }
 .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: .95rem; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 14px 14px; margin: 14px 0 0; }
@@ -114,3 +115,10 @@ dialog h2 { margin-top: 0; }
 .hint-record .secret { margin: 6px 0 0; align-items: flex-start; }
 .hint-record .record { flex: 1; margin: 0; }
 .hint a { margin-right: 12px; }
+textarea { resize: vertical; line-height: 1.4; }
+input:disabled, textarea:disabled, select:disabled { opacity: .7; }
+h2.first { margin-top: 0; }
+.sdr-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.sdr-grid > div { display: grid; gap: 16px; }
+.preview { max-height: 520px; overflow: auto; }
+@media (max-width: 900px) { .sdr-grid { grid-template-columns: 1fr; } }

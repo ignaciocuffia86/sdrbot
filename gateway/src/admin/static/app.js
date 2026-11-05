@@ -235,22 +235,146 @@ function newClientDialog() {
 async function renderClient(clientId, tab) {
   const data = await api('GET', `/clients/${enc(clientId)}`);
   const bigua = data.can_manage_access;
-  const tabs = [['buzones', 'Buzones'], ['dominios', 'Dominios'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
-  if (!tabs.some(([k]) => k === tab)) tab = 'buzones';
+  const tabs = [['sdr', 'SDR'], ['buzones', 'Buzones'], ['dominios', 'Dominios'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
+  if (!tabs.some(([k]) => k === tab)) tab = 'sdr';
   const base = `#/c/${enc(clientId)}`;
   const body = h('div');
   main.replaceChildren(
-    bigua ? h('a', { href: '#/', class: 'small' }, '← Clientes') : null,
+    ...(bigua ? [h('a', { href: '#/', class: 'small' }, '← Clientes')] : []),
     h('h1', {}, data.client.name),
     h('p', { class: 'sub mono' }, data.client.id),
     h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label))),
     body);
   const reload = () => renderClient(clientId, tab);
+  if (tab === 'sdr') body.append(await sdrView(clientId, bigua));
   if (tab === 'buzones') body.append(mailboxesView(data, reload));
   if (tab === 'usuarios') body.append(usersView(data, reload));
   if (tab === 'tokens') body.append(tokensView(data, reload));
   if (tab === 'dominios') body.append(await domainsView(clientId, reload));
   if (tab === 'actividad') body.append(await activityView(clientId));
+}
+
+// ----- SDR: ajustes del cliente
+
+function campoInput(c, valor) {
+  const dis = !c.editable;
+  if (c.tipo === 'parrafo') return h('textarea', { name: c.clave, rows: 4, maxlength: c.max, disabled: dis }, valor ?? '');
+  if (c.tipo === 'lista') {
+    return h('textarea', { name: c.clave, rows: Math.min(8, Math.max(3, (valor?.length ?? 0) + 1)), disabled: dis },
+      Array.isArray(valor) ? valor.join('\n') : (valor ?? ''));
+  }
+  if (c.tipo === 'numero') return h('input', { name: c.clave, type: 'number', min: c.min, max: c.max, value: valor ?? '', disabled: dis });
+  if (c.tipo === 'si_no') {
+    return h('label', { class: 'check' }, h('input', { name: c.clave, type: 'checkbox', checked: valor === true, disabled: dis }), 'Sí');
+  }
+  return h('input', { name: c.clave, maxlength: c.max, value: valor ?? '', disabled: dis });
+}
+
+function leerCampos(form, campos) {
+  const out = {};
+  for (const c of campos) {
+    if (!c.editable) continue;
+    const el = form.elements[c.clave];
+    if (!el) continue;
+    if (c.tipo === 'si_no') out[c.clave] = el.checked;
+    else if (c.tipo === 'lista') out[c.clave] = el.value.split('\n').map((x) => x.trim()).filter(Boolean);
+    else if (c.tipo === 'numero') out[c.clave] = el.value === '' ? null : Number(el.value);
+    else out[c.clave] = el.value;
+  }
+  return out;
+}
+
+function sdrTecnico(clientId, sdr, reload) {
+  const t = sdr.tecnico;
+  const form = h('form', { class: 'card' },
+    h('h2', { class: 'first' }, 'Configuración técnica'),
+    h('p', { class: 'muted small' }, 'Sólo la ven los operadores de Biguá.'),
+    h('div', { class: 'cols2' },
+      field('Canal de reglas', h('select', { name: 'canal' },
+        ['estable', 'canario'].map((x) => h('option', { value: x, selected: t?.canal === x }, x)))),
+      field('Zona horaria', h('input', { name: 'zona_horaria', value: t?.zona_horaria ?? 'America/Argentina/Buenos_Aires' }))),
+    field('Calibración: mails nuevos que se aprueban en el chat', h('input', { name: 'calibracion_mails', type: 'number', min: 0, max: 500, value: t?.calibracion_mails ?? 20 }),
+      t ? `Van ${t.calibracion_usadas} aprobados y enviados. En 0, los mails salen sin aprobación previa.` : 'Por defecto, 20.'),
+    h('label', {}, 'Bots activos'),
+    h('div', { class: 'row' }, sdr.bots.map((b) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', name: 'bot', value: b, checked: t ? t.bots_activos.includes(b) : ['orquestador', 'prospector'].includes(b) }), b))),
+    t?.version_fija ? h('p', { class: 'note' }, `Este cliente está fijado a la versión ${t.version_fija} de las reglas (se cambia por la CLI).`) : null);
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, t ? 'Guardar configuración' : 'Activar el SDR');
+  form.append(err, h('div', { class: 'row' }, btn));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      canal: fd.get('canal'), zona_horaria: String(fd.get('zona_horaria')).trim(),
+      calibracion_mails: Number(fd.get('calibracion_mails')), bots_activos: fd.getAll('bot'),
+    };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/config`, body), err);
+    if (r) { toast(t ? 'Configuración guardada.' : 'SDR activado.'); reload(); }
+  });
+  return form;
+}
+
+async function sdrView(clientId, bigua) {
+  const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
+  const reload = () => renderClient(clientId, 'sdr');
+  if (!sdr.activo) {
+    if (!bigua) return h('div', { class: 'card empty' }, h('p', {}, 'El SDR todavía no está activado para esta cuenta. Lo activa Biguá.'));
+    return h('div', {}, h('p', { class: 'muted' }, 'Este cliente no tiene el SDR activado. Elegí la configuración y activalo; después cargá los ajustes.'),
+      sdrTecnico(clientId, sdr, reload));
+  }
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar ajustes');
+  const nota = h('input', { name: '_nota', maxlength: 300, placeholder: 'Opcional: por qué el cambio' });
+  const form = h('form', { class: 'card' },
+    h('h2', { class: 'first' }, 'Ajustes del SDR'),
+    h('p', { class: 'muted small' }, bigua
+      ? 'Lo que los bots leen como «Ajustes de este cliente». Los cambios valen desde la próxima corrida de cada bot.'
+      : 'Cómo los bots presentan su empresa y a quién le escriben. Los cambios valen desde la próxima corrida de cada bot, y le avisamos al operador de Biguá.'),
+    sdr.campos.map((c) => field(c.editable ? c.titulo : `${c.titulo} · lo cambia Biguá`, campoInput(c, sdr.ajustes[c.clave]), c.ayuda)),
+    field('Nota del cambio', nota),
+    err, h('div', { class: 'row' }, btn));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { ajustes: leerCampos(form, sdr.campos), ...(nota.value.trim() ? { nota: nota.value.trim() } : {}) };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/ajustes`, body), err);
+    if (r) { toast(r.cambios.length ? 'Ajustes guardados.' : 'No había cambios.'); reload(); }
+  });
+
+  const otros = Object.keys(sdr.ajustes).filter((k) => !sdr.campos.some((c) => c.clave === k));
+  const historial = sdr.historial.length
+    ? h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota', ''].map((x) => h('th', {}, x)))),
+      h('tbody', {}, sdr.historial.map((v, i) => h('tr', {},
+        h('td', { class: 'small' }, fmtDate(v.at)),
+        h('td', { class: 'small' }, v.por_email ?? (v.por_rol === 'cli' ? 'CLI de Biguá' : '—')),
+        h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
+        h('td', { class: 'small' }, v.nota ?? ''),
+        h('td', {}, i === 0 ? h('span', { class: 'badge b-ok' }, 'vigente') : h('button', { class: 'sm', onclick: (ev) => {
+          const b = ev.currentTarget;
+          openDialog('Volver a esta versión', h('p', {}, `Los ajustes vuelven a como estaban el ${fmtDate(v.at)}. Queda en el historial y se puede deshacer.`), {
+            submitLabel: 'Volver a esta versión',
+            submit: async () => {
+              const r = await api('POST', `/clients/${enc(clientId)}/sdr/historial/${v.id}/restaurar`);
+              toast(r.cambios.length ? 'Listo: ajustes restaurados.' : 'Ya estaban así.');
+              reload();
+              return true;
+            },
+          });
+          b.blur();
+        } }, 'Volver a esta'))))))
+    : h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
+
+  return h('div', { class: 'sdr' },
+    h('div', { class: 'sdr-grid' },
+      form,
+      h('div', {},
+        h('div', { class: 'card' },
+          h('h2', { class: 'first' }, 'Así lo leen los bots'),
+          h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
+          otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null),
+        bigua ? sdrTecnico(clientId, sdr, reload) : null)),
+    h('h2', {}, 'Historial de cambios'),
+    historial);
 }
 
 // ----- buzones
@@ -596,6 +720,8 @@ const OPS = {
   'admin.mailbox.delete': 'baja de buzón', 'admin.client.create': 'alta del cliente', 'admin.user.create': 'alta de usuario',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.domain.check': 'verificación de dominio', 'admin.domain.selectors': 'selectores DKIM',
+  'admin.sdr.ajustes': 'cambio de ajustes del SDR', 'admin.sdr.restaurar': 'ajustes vueltos a una versión anterior',
+  'admin.sdr.config': 'configuración técnica del SDR',
 };
 
 async function activityView(clientId) {

@@ -16,6 +16,8 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
+import { CAMPOS, aplicarCambios, diferencias, tituloDe } from '../sdr/ajustes.mjs';
+import { renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -85,6 +87,15 @@ const V = {
   selectors: validator({ type: 'object', required: ['selectors'], additionalProperties: false,
     properties: { selectors: { type: 'array', maxItems: 10, uniqueItems: true,
       items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$' } } } }),
+  sdrAjustes: validator({ type: 'object', required: ['ajustes'], additionalProperties: false,
+    properties: { ajustes: { type: 'object' }, nota: { type: 'string', maxLength: 300 } } }),
+  sdrConfig: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: {
+      canal: { enum: ['estable', 'canario'] },
+      calibracion_mails: { type: 'integer', minimum: 0, maximum: 500 },
+      bots_activos: { type: 'array', uniqueItems: true, minItems: 1, items: { enum: ['orquestador', 'prospector', 'seguimiento', 'whatsapp'] } },
+      zona_horaria: { type: 'string', maxLength: 64 },
+    } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
       scopes: { type: 'array', items: { enum: SCOPES }, minItems: 1, uniqueItems: true },
@@ -424,6 +435,105 @@ route('POST', '/clients/:client/tokens/:id/revoke', async ({ user, params }) => 
     await audit(c, user, params.client, 'admin.token.revoke', { token_id: params.id });
     return {};
   });
+});
+
+// ----- ajustes del SDR
+
+const BOTS = ['orquestador', 'prospector', 'seguimiento', 'whatsapp'];
+
+async function leerSdr(c, user, clientId) {
+  const client = (await c.query(`select id, name from mailgw.client where id = $1`, [clientId])).rows[0];
+  if (!client) throw notFound('No existe ese cliente.');
+  const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0] ?? null;
+  const historial = (await c.query(
+    `select id, at, por_email, por_rol, cambios, nota from sdr.ajustes_historial where client_id = $1 order by id desc limit 30`,
+    [clientId])).rows;
+  const out = {
+    activo: Boolean(cfg),
+    ajustes: cfg?.ajustes ?? {},
+    campos: CAMPOS.map((x) => ({ ...x, editable: isBigua(user) || x.cliente })),
+    vista_previa: cfg ? renderAjustes(clientId, client.name, cfg) : null,
+    historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloDe) })),
+    actualizado_at: cfg?.actualizado_at ?? null,
+  };
+  if (isBigua(user)) {
+    const usadas = (await c.query(
+      `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId])).rows[0].n;
+    out.tecnico = cfg ? {
+      canal: cfg.canal, version_fija: cfg.version_fija, calibracion_mails: cfg.calibracion_mails, calibracion_usadas: usadas,
+      bots_activos: cfg.bots_activos, zona_horaria: cfg.zona_horaria,
+    } : null;
+    out.bots = BOTS;
+  }
+  return out;
+}
+
+// Guarda los ajustes nuevos con su historial. Si los cambió el cliente, el orquestador recibe un
+// pedido para contárselo al operador de Biguá en su chat.
+async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false } = {}) {
+  const r = await scoped(user, clientId, async (c) => {
+    const cfg = (await c.query(`select ajustes from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
+    if (!cfg) throw notFound('El SDR no está activado para este cliente.');
+    const nuevo = restaurado ? cambios : aplicarCambios(cfg.ajustes, cambios, { esBigua: isBigua(user) });
+    if (restaurado && !isBigua(user)) {
+      // Volver atrás tampoco puede tocar lo que el cliente no edita.
+      for (const k of diferencias(cfg.ajustes, nuevo)) {
+        const campo = CAMPOS.find((x) => x.clave === k);
+        if (!campo?.cliente) nuevo[k] = cfg.ajustes[k];
+        if (nuevo[k] === undefined) delete nuevo[k];
+      }
+    }
+    const cambiados = diferencias(cfg.ajustes, nuevo);
+    if (!cambiados.length) return { cambios: [] };
+    await c.query(`update sdr.cliente_config set ajustes = $2, actualizado_at = now() where client_id = $1`,
+      [clientId, JSON.stringify(nuevo)]);
+    await c.query(
+      `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_email, por_rol, nota) values ($1, $2, $3, $4, $5, $6)`,
+      [clientId, JSON.stringify(nuevo), cambiados, user.email, user.role, nota ?? null]);
+    await audit(c, user, clientId, restaurado ? 'admin.sdr.restaurar' : 'admin.sdr.ajustes', { campos: cambiados });
+    return { cambios: cambiados };
+  });
+  if (r.cambios.length && !isBigua(user)) {
+    const lista = r.cambios.map(tituloDe).join(', ');
+    await pedirABot(clientId, {
+      para_bot: 'orquestador',
+      que: `El cliente cambió sus ajustes en el panel (${lista})${nota ? `, con esta nota: «${nota}»` : ''}. ` +
+        'Contáselo al operador de Biguá en el chat con un resumen de qué cambió (leé la sección ajustes-cliente). ' +
+        'Si algo choca con las reglas o con mails ya aprobados, decíselo.',
+      por_que: 'Cambio de ajustes hecho por el cliente desde el panel.',
+    }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de ajustes', e.message));
+  }
+  return r;
+}
+
+route('GET', '/clients/:client/sdr', async ({ user, params }) => scoped(user, params.client, (c) => leerSdr(c, user, params.client)));
+
+route('PUT', '/clients/:client/sdr/ajustes', async ({ user, params, body }) => {
+  const b = V.sdrAjustes(body);
+  const r = await guardarAjustes(user, params.client, b.ajustes, b.nota);
+  return { ...r, sdr: await scoped(user, params.client, (c) => leerSdr(c, user, params.client)) };
+});
+
+route('POST', '/clients/:client/sdr/historial/:id/restaurar', async ({ user, params }) => {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id < 1) throw notFound('No existe esa versión.');
+  const row = await scoped(user, params.client, async (c) => (await c.query(
+    `select ajustes, at from sdr.ajustes_historial where client_id = $1 and id = $2`, [params.client, id])).rows[0]);
+  if (!row) throw notFound('No existe esa versión.');
+  const r = await guardarAjustes(user, params.client, row.ajustes,
+    `Vuelta a la versión del ${new Date(row.at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`, { restaurado: true });
+  return { ...r, sdr: await scoped(user, params.client, (c) => leerSdr(c, user, params.client)) };
+});
+
+route('PUT', '/clients/:client/sdr/config', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.sdrConfig(body);
+  if (b.zona_horaria !== undefined) checkTimezone(b.zona_horaria);
+  const exists = await asOwner((c) => c.query(`select 1 from mailgw.client where id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('No existe ese cliente.');
+  await setConfig(params.client, b);
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.config', b));
+  return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
 });
 
 // ----- dominios: SPF, DKIM, DMARC y MX

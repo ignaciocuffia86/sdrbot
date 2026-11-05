@@ -6,6 +6,7 @@
 
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
+import { ordenar, tituloDe } from './ajustes.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -44,7 +45,7 @@ export async function config(clientId) {
 
 // ---------------------------------------------------------------- reglas
 
-function renderAjustes(clientId, nombreCliente, cfg) {
+export function renderAjustes(clientId, nombreCliente, cfg) {
   const lineas = [`Cliente: ${nombreCliente} (\`${clientId}\`).`];
   if (!cfg) {
     lineas.push('', 'Este cliente todavía no tiene ajustes cargados. No prospectes ni envíes: avisá al orquestador.');
@@ -54,9 +55,11 @@ function renderAjustes(clientId, nombreCliente, cfg) {
   lineas.push(cfg.calibracion_mails > 0
     ? `Calibración: los primeros ${cfg.calibracion_mails} mails nuevos necesitan aprobación registrada; el gateway los rechaza sin ella.`
     : 'Calibración: terminada. Los mails nuevos salen sin aprobación previa.');
-  for (const [k, v] of Object.entries(cfg.ajustes ?? {})) {
-    lineas.push('', `### ${k.replace(/_/g, ' ')}`, '');
+  for (const [k, v] of Object.entries(ordenar(cfg.ajustes ?? {}))) {
+    lineas.push('', `### ${tituloDe(k).replace(/_/g, ' ')}`, '');
     if (typeof v === 'string') lineas.push(v);
+    else if (typeof v === 'number') lineas.push(String(v));
+    else if (typeof v === 'boolean') lineas.push(v ? 'Sí' : 'No');
     else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) lineas.push(...v.map((x) => `- ${x}`));
     else lineas.push('```json', JSON.stringify(v, null, 2), '```');
   }
@@ -635,6 +638,11 @@ export async function setConfig(clientId, cfg) {
        returning *`,
       [clientId, cfg.canal ?? null, cfg.version_fija ?? null, cfg.ajustes ? JSON.stringify(cfg.ajustes) : null,
         cfg.bots_activos ?? null, cfg.zona_horaria ?? null, cfg.calibracion_mails ?? null, 'version_fija' in cfg]);
+    if (cfg.ajustes) {
+      await c.query(
+        `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_rol, nota) values ($1, $2, $3, 'cli', 'Cargado con la CLI')`,
+        [clientId, JSON.stringify(rows[0].ajustes), Object.keys(cfg.ajustes)]);
+    }
     return rows[0];
   });
 }

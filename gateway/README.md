@@ -94,6 +94,16 @@ Donde se cargan clientes, buzones (servidor y puerto IMAP y SMTP, seguridad, usu
 - **CSP estricta** (`default-src 'none'`, scripts y estilos sólo propios, sin marcos), sin dependencias de terceros. Todo lo que viene del servidor se inserta como texto.
 - **Auditoría:** cada acción del panel queda en `mailgw.audit_log` con `actor_user_id`.
 
+### SDR: ajustes del cliente
+
+La pestaña **SDR** de cada cliente edita lo que los bots leen como «Ajustes de este cliente» (migración `007_ajustes_en_el_panel`):
+
+- **El usuario del cliente** cambia oferta, ICP, cargos, exclusiones, tono, idioma, firma, objeciones y qué cuenta como positivo. Ve lo demás sin poder tocarlo. Al guardar, el orquestador recibe un pedido para contarle el cambio al operador en el chat.
+- **Un operador de Biguá** además cambia los buzones a usar, las cuentas por día, si se aceptan mails extrapolados, el canal de reglas, la calibración, los bots activos y la zona horaria, y activa el SDR de un cliente nuevo.
+- Se valida al guardar (largo, renglones, campos que existen) y se ve cómo lo van a leer los bots.
+- Cada cambio queda en el historial con quién y cuándo, y se puede volver a una versión anterior.
+- En la base, el rol del portal sólo puede actualizar los ajustes de su cliente: ni la calibración ni nada del registro.
+
 ### Dominios: SPF, DKIM, DMARC y MX
 
 Pestaña «Dominios» de cada cliente (la ven los dos roles). Los dominios salen de los buzones; «Verificar» consulta el DNS y guarda el resultado en `mailgw.domain_check` (migración `004_dominios`). No cambia nada en el DNS del cliente.
@@ -220,7 +230,7 @@ Anteponer una llave nueva en `MAILGW_ENC_KEYS` (`k2:<nueva>,k1:<vieja>`) en Verc
 npm test
 ```
 
-Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 99 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real) y la memoria del correo (respuestas, rebotes, fuera de oficina y bajas sembrados en el Dovecot, supresión al enviar, despertador y reloj). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
+Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de prueba con certificados de una CA propia, y corre 101 pruebas de punta a punta: lectura, cursores, búsqueda, envío, respuesta en hilo, borradores, marcas, carpetas, cupo, idempotencia con pedidos simultáneos, bloqueo por contraseña, aislamiento entre clientes (también directo contra la base, con el rol de la aplicación), permisos, MCP, CLI, cifrado y rotación de llave, el cliente Python, el panel `/admin` (ajustes del SDR por cliente con historial, activación, bloqueo, CSRF, roles y aislamiento entre clientes, buzones probados contra el Dovecot), la protección contra SSRF, el chequeo de dominios (contra un DNS armado, y el selector DKIM detectado en un buzón del Dovecot) y el núcleo SDR (reglas publicadas por la CLI, registro aislado por cliente también en la base, pedidos con escalado, calibración y respuesta a positivos exigidas en el envío real) y la memoria del correo (respuestas, rebotes, fuera de oficina y bajas sembrados en el Dovecot, supresión al enviar, despertador y reloj). Requiere `dovecot-imapd`, `openssl` y Postgres 16 local, y correr como root (ver `test/run.sh`). La base de prueba tiene un dueño sin superusuario, como `postgres` en Supabase, para que los permisos del rol de la aplicación se prueben de verdad.
 
 ## Límites de la versión 0.1
 
