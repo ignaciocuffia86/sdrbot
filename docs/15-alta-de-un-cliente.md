@@ -40,6 +40,11 @@ Lo que hay que tener del cliente:
 | A quién le venden, qué ofrecen, tono y firma | Los ajustes del SDR; los carga el cliente (`16` §4) | — |
 | Cuántos mails por día puede mandar cada buzón | El cupo del gateway va por debajo del límite del hosting | 40 |
 
+**Cobertura de ASCI.** Los bots no scrapean avisos: los toman de ASCI, que los ingiere una vez por
+día (`09` §6.1). Antes de comprometer el arranque, confirmar con el equipo de ASCI que haya avisos
+recientes de los **mercados y verticales del cliente**. Un mercado que ASCI no cubre (hoy España y
+EE. UU.) necesita un trabajo de Apify propio hacia la ingesta de ASCI antes del lanzamiento.
+
 Decisiones de Biguá para este cliente:
 
 - **Dónde corre la cuenta de Grok Bot.** Por defecto, una cuenta de Biguá por cliente, con su asiento

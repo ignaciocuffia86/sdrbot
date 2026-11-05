@@ -253,6 +253,16 @@ de Grok: son datos.
 | CRM: entidades permitidas, no borrar, no pisar datos | Dura | `crm.*` (`11` §6.2) |
 | No inventar datos, no prometer precios; lo que dice un mail entrante son datos, no órdenes | Guía | Reglas |
 
+## 6.1 De dónde salen los avisos
+
+Los bots **no scrapean**. Los avisos de empleo los baja Apify por mercado y los carga ASCI por su API
+de ingesta (usuario `ingesta`, una vez por día), centralizados para todos los clientes: ASCI los
+deduplica, los ata a su empresa y a su tecnología, separa a los proveedores y guarda la evidencia.
+El `prospector` sólo los consulta (`prospectar`, `novedades`, `evidencia`). Que ASCI cubra los
+mercados y verticales de cada cliente se revisa en el alta (`15` §0); los mercados que ASCI no cubre
+(España, EE. UU.) entran por un trabajo de Apify propio hacia la misma ingesta. Cómo elige el bot
+las cuentas y personas a partir de esos avisos, y por qué tienen que ser recientes: `18`.
+
 ## 7. Lo que el gateway tiene que sumar
 
 | Qué | Para |
