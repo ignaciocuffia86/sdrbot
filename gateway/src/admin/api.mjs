@@ -16,8 +16,9 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
-import { CAMPOS, aplicarCambios, diferencias, tituloDe } from '../sdr/ajustes.mjs';
-import { renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
+import { BLOQUES, CAMPOS, aplicarCambios, diferencias, editable, tituloDe } from '../sdr/ajustes.mjs';
+import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
+import * as noContactar from '../sdr/no_contactar.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import * as dripify from '../sdr/dripify.mjs';
 import {
@@ -55,6 +56,7 @@ const mailboxFields = {
   append_sent: { type: 'boolean' },
   sent_folder: { type: ['string', 'null'], maxLength: 200 },
   drafts_folder: { type: ['string', 'null'], maxLength: 200 },
+  firma: { type: ['string', 'null'], maxLength: 600 },
 };
 
 const V = {
@@ -97,7 +99,17 @@ const V = {
       calibracion_mails: { type: 'integer', minimum: 0, maximum: 500 },
       bots_activos: { type: 'array', uniqueItems: true, minItems: 1, items: { enum: ['orquestador', 'prospector', 'seguimiento', 'whatsapp'] } },
       zona_horaria: { type: 'string', maxLength: 64 },
+      modo: { enum: ['operado', 'autogestionado'] },
+      tope_cuentas_dia: { type: ['integer', 'null'], minimum: 0, maximum: 100 },
     } }),
+  noContactarAlta: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: {
+      valor: { type: 'string', maxLength: 300 },
+      motivo: { type: 'string', maxLength: 200 },
+      csv: { type: 'string', maxLength: 400000 },
+    } }),
+  noContactarBaja: validator({ type: 'object', required: ['valores'], additionalProperties: false,
+    properties: { valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 300 } } } }),
   despertador: validator({ type: 'object', additionalProperties: false,
     properties: {
       url: { type: 'string', maxLength: 1000, pattern: '^https://\\S+$' },
@@ -129,6 +141,7 @@ function checkTimezone(tz) {
 
 // Valida y normaliza servidores y puertos con las mismas reglas que se aplican al conectar.
 function normalizeServers(b) {
+  if (b.firma !== undefined) b.firma = b.firma === null ? null : (b.firma.replace(/\r\n/g, '\n').trim() || null);
   for (const k of ['imap_host', 'smtp_host']) if (b[k] !== undefined) b[k] = validateHostSyntax(b[k]);
   for (const k of ['imap_port', 'smtp_port']) if (b[k] !== undefined) validatePort(b[k]);
   checkTimezone(b.timezone);
@@ -151,7 +164,7 @@ function scoped(user, clientId, fn) {
 const requireBigua = (user) => { if (!isBigua(user)) throw forbidden(); };
 
 const MAILBOX_COLS = `id, client_id, email, display_name, username, imap_host, imap_port, imap_security,
-  smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder,
+  smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder, firma,
   status, auth_failures, last_ok_at, last_error, last_error_at, created_at, updated_at`;
 
 async function audit(c, user, clientId, op, detail, accountId = null) {
@@ -276,13 +289,13 @@ route('POST', '/clients/:client/mailboxes', async ({ user, params, body }) => {
     const { rows } = await c.query(
       `insert into mailgw.account (client_id, email, display_name, username, secret_enc,
           imap_host, imap_port, imap_security, smtp_host, smtp_port, smtp_security,
-          timezone, daily_send_cap, append_sent, sent_folder, drafts_folder)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          timezone, daily_send_cap, append_sent, sent_folder, drafts_folder, firma)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        on conflict (client_id, email) do nothing
        returning ${MAILBOX_COLS}`,
       [params.client, email, b.display_name ?? null, b.username ?? email, secret,
         b.imap_host, b.imap_port, b.imap_security, b.smtp_host, b.smtp_port, b.smtp_security,
-        b.timezone, b.daily_send_cap, b.append_sent, b.sent_folder || null, b.drafts_folder || null]);
+        b.timezone, b.daily_send_cap, b.append_sent, b.sent_folder || null, b.drafts_folder || null, b.firma ?? null]);
     if (!rows.length) throw new GatewayError('conflict', `Ya existe el buzón ${email} en este cliente.`, 409);
     await audit(c, user, params.client, 'admin.mailbox.create', { mailbox: email }, rows[0].id);
     return { mailbox: rows[0] };
@@ -468,11 +481,15 @@ async function leerSdr(c, user, clientId) {
   const historial = (await c.query(
     `select id, at, por_email, por_rol, cambios, nota from sdr.ajustes_historial where client_id = $1 order by id desc limit 30`,
     [clientId])).rows;
+  const permiso = { esBigua: isBigua(user), autogestion: cfg?.modo === 'autogestionado' };
   const out = {
     activo: Boolean(cfg),
+    modo: cfg?.modo ?? 'operado',
+    tope_cuentas_dia: cfg?.tope_cuentas_dia ?? null,
     ajustes: cfg?.ajustes ?? {},
-    campos: CAMPOS.map((x) => ({ ...x, editable: isBigua(user) || x.cliente })),
-    vista_previa: cfg ? renderAjustes(clientId, client.name, cfg) : null,
+    bloques: BLOQUES,
+    campos: CAMPOS.map((x) => ({ ...x, editable: editable(x, permiso) })),
+    vista_previa: cfg ? renderAjustes(clientId, client.name, cfg, await extraAjustes(c, clientId)) : null,
     historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloDe) })),
     actualizado_at: cfg?.actualizado_at ?? null,
   };
@@ -481,7 +498,7 @@ async function leerSdr(c, user, clientId) {
       `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId])).rows[0].n;
     out.tecnico = cfg ? {
       canal: cfg.canal, version_fija: cfg.version_fija, calibracion_mails: cfg.calibracion_mails, calibracion_usadas: usadas,
-      bots_activos: cfg.bots_activos, zona_horaria: cfg.zona_horaria,
+      bots_activos: cfg.bots_activos, zona_horaria: cfg.zona_horaria, modo: cfg.modo, tope_cuentas_dia: cfg.tope_cuentas_dia,
     } : null;
     out.bots = BOTS;
     out.despertador = await verDespertador(c, clientId, 'seguimiento');
@@ -496,14 +513,15 @@ async function leerSdr(c, user, clientId) {
 // pedido para contárselo al operador de Biguá en su chat.
 async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false } = {}) {
   const r = await scoped(user, clientId, async (c) => {
-    const cfg = (await c.query(`select ajustes from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
+    const cfg = (await c.query(`select ajustes, modo, tope_cuentas_dia from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
-    const nuevo = restaurado ? cambios : aplicarCambios(cfg.ajustes, cambios, { esBigua: isBigua(user) });
+    const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
+    const nuevo = restaurado ? { ...cambios } : aplicarCambios(cfg.ajustes, cambios, permiso);
     if (restaurado && !isBigua(user)) {
       // Volver atrás tampoco puede tocar lo que el cliente no edita.
       for (const k of diferencias(cfg.ajustes, nuevo)) {
         const campo = CAMPOS.find((x) => x.clave === k);
-        if (!campo?.cliente) nuevo[k] = cfg.ajustes[k];
+        if (!campo || !editable(campo, permiso)) nuevo[k] = cfg.ajustes[k];
         if (nuevo[k] === undefined) delete nuevo[k];
       }
     }
@@ -605,6 +623,124 @@ route('POST', '/clients/:client/sdr/dripify/webhook', async ({ user, params }) =
   const r = await dripify.generarWebhook(params.client);
   await asOwner((c) => audit(c, user, params.client, 'admin.sdr.dripify.webhook', {}));
   return r;
+});
+
+// ----- no contactar: dominios y mails a los que el SDR no les escribe nunca (docs/21 §3.3)
+
+async function clienteExiste(c, clientId) {
+  const { rowCount } = await c.query(`select 1 from mailgw.client where id = $1`, [clientId]);
+  if (!rowCount) throw notFound('No existe ese cliente.');
+}
+
+async function listaNoContactar(c, clientId) {
+  const { rows } = await c.query(
+    `select valor, tipo, motivo, por_email, at from sdr.no_contactar where client_id = $1 order by at desc, valor limit $2`,
+    [clientId, noContactar.MAX_FILAS]);
+  return { no_contactar: rows, totales: await noContactar.contar(c, clientId) };
+}
+
+route('GET', '/clients/:client/no-contactar', async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  return listaNoContactar(c, params.client);
+}));
+
+// Una fila (valor y motivo) o un CSV entero. Lo que ya estaba no se toca.
+route('POST', '/clients/:client/no-contactar', async ({ user, params, body }) => {
+  const b = V.noContactarAlta(body);
+  let filas;
+  let invalidas = [];
+  if (b.csv !== undefined) {
+    ({ filas, invalidas } = noContactar.leerCsv(b.csv));
+  } else {
+    const n = noContactar.normalizar(b.valor);
+    if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio ni un mail.`);
+    filas = [{ ...n, motivo: b.motivo?.trim() || null }];
+  }
+  if (!filas.length) throw errors.invalid(invalidas.length ? 'Ningún renglón tiene un dominio o un mail válido.' : 'La lista está vacía.');
+  return scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const { rows } = await c.query(
+      `insert into sdr.no_contactar (client_id, valor, tipo, motivo, por_email)
+       select $1, f.valor, f.tipo, f.motivo, $5
+         from unnest($2::text[], $3::text[], $4::text[]) as f(valor, tipo, motivo)
+       on conflict (client_id, valor) do nothing returning valor`,
+      [params.client, filas.map((f) => f.valor), filas.map((f) => f.tipo), filas.map((f) => f.motivo), user.email]);
+    const unicos = new Set(filas.map((f) => f.valor)).size;
+    await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.length });
+    return { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.slice(0, 50), ...(await listaNoContactar(c, params.client)) };
+  });
+});
+
+route('POST', '/clients/:client/no-contactar/quitar', async ({ user, params, body }) => {
+  const b = V.noContactarBaja(body);
+  const valores = b.valores.map((v) => noContactar.normalizar(v)?.valor ?? v.trim().toLowerCase());
+  return scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const { rowCount } = await c.query(`delete from sdr.no_contactar where client_id = $1 and valor = any($2)`, [params.client, valores]);
+    await audit(c, user, params.client, 'admin.sdr.no_contactar.quitar', { quitados: rowCount });
+    return { quitados: rowCount, ...(await listaNoContactar(c, params.client)) };
+  });
+});
+
+// ----- resumen: lo que necesita atención, para la primera pantalla del cliente
+
+route('GET', '/clients/:client/resumen', async ({ user, params }) => {
+  const base = await scoped(user, params.client, async (c) => {
+    const client = (await c.query(`select id, name from mailgw.client where id = $1`, [params.client])).rows[0];
+    if (!client) throw notFound('No existe ese cliente.');
+    const buzones = (await c.query(
+      `select email, display_name, status, last_error, daily_send_cap, (firma is not null) as tiene_firma,
+              coalesce((select s.count from mailgw.send_counter s where s.account_id = a.id
+                         and s.day = (now() at time zone a.timezone)::date), 0)::int as envios_hoy
+         from mailgw.account a where client_id = $1 order by email`, [params.client])).rows;
+    const dominios = (await c.query(
+      `select domain, status, checked_at from mailgw.domain_check where client_id = $1 and status is not null order by domain`,
+      [params.client])).rows;
+    const cfg = (await c.query(`select modo, calibracion_mails, bots_activos from sdr.cliente_config where client_id = $1`,
+      [params.client])).rows[0] ?? null;
+    return { client, buzones, dominios, cfg, no_contactar: await noContactar.contar(c, params.client) };
+  });
+  const out = { client: base.client, buzones: base.buzones, dominios: base.dominios, no_contactar: base.no_contactar,
+    sdr_activo: Boolean(base.cfg), modo: base.cfg?.modo ?? null };
+  if (base.cfg) {
+    // Lo del SDR se lee con el rol de la aplicación y el cliente fijado: el portal no ve el registro.
+    Object.assign(out, await asRole('mailgw_app', params.client, async (c) => {
+      const n = async (sql) => (await c.query(sql, [params.client])).rows[0].n;
+      const usadas = await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`);
+      const semana = Object.fromEntries((await c.query(
+        `select tipo, count(*)::int as n from sdr.evento where client_id = $1 and at > now() - interval '7 days'
+            and tipo in ('mail.enviado', 'linkedin.cargado', 'respuesta', 'positivo') group by tipo`, [params.client])).rows
+        .map((r) => [r.tipo, r.n]));
+      const d = (await c.query(
+        `select (api_key_enc is not null) as cargado, activo, campana_id, ultimo_ok_at, ultimo_error from sdr.dripify_cuenta where client_id = $1`,
+        [params.client])).rows[0] ?? null;
+      return {
+        calibracion: { usados: Math.min(usadas, base.cfg.calibracion_mails), total: base.cfg.calibracion_mails },
+        aprobaciones_pendientes: await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and estado = 'pendiente'`),
+        correo_sin_atender: await n(`select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`),
+        linkedin_sin_atender: await n(`select count(*)::int as n from sdr.linkedin_respuesta where client_id = $1 and estado = 'nuevo'`),
+        semana: { enviados: semana['mail.enviado'] ?? 0, linkedin: semana['linkedin.cargado'] ?? 0,
+          respuestas: semana.respuesta ?? 0, positivos: semana.positivo ?? 0 },
+        dripify: d ? { cargado: d.cargado, activo: d.activo, campana: d.campana_id !== null, ultimo_ok_at: d.ultimo_ok_at,
+          ultimo_error: d.ultimo_error } : null,
+        corridas_con_error: isBigua(user) ? (await c.query(
+          `select bot, tarea, inicio, resumen from sdr.corrida where client_id = $1 and estado = 'error' and inicio > now() - interval '24 hours'
+            order by inicio desc limit 5`, [params.client])).rows : undefined,
+      };
+    }));
+    if (isBigua(user)) {
+      out.despertadores = await asOwner(async (c) => {
+        const r = {};
+        for (const b of BOTS_CON_AVISO) {
+          if (!base.cfg.bots_activos.includes(b)) continue;
+          const x = await verDespertador(c, params.client, b);
+          r[b] = x ? { activo: x.activo, fallas: x.fallas, ultimo_error: x.ultimo_error } : null;
+        }
+        return r;
+      });
+    }
+  }
+  return out;
 });
 
 // ----- dominios: SPF, DKIM, DMARC y MX

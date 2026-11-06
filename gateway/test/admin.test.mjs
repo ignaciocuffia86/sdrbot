@@ -523,3 +523,175 @@ test('SDR: Dripify se carga desde el panel; la API key no vuelve, el webhook se 
   assert.equal((await b.call('POST', '/clients/adm-b/sdr/dripify/webhook')).status, 403);
   assert.equal((await b.call('GET', '/clients/adm-b/sdr')).body.data.dripify, undefined);
 });
+
+// ---------------------------------------------------------------- etapas A y B del panel (docs/21)
+
+// Un usuario nuevo de otro cliente, para probar que no ve nada de este.
+let otroUsuario = null;
+async function usuarioDeOtroCliente() {
+  if (!otroUsuario) {
+    const c = await ctx.bigua.call('POST', '/clients/adm-a/users', { email: 'otro@cliente-a.test', name: 'Otro A' });
+    assert.equal(c.status, 200, JSON.stringify(c.body));
+    await activateAndLogin(c.body.data.setup_token, 'otro@cliente-a.test', PW.cliente);
+    otroUsuario = 'otro@cliente-a.test';
+  }
+  return loginCliente(otroUsuario);
+}
+
+async function loginCliente(email) {
+  const b = browser();
+  const r = await b.call('POST', '/login', { email, password: PW.cliente });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return b;
+}
+
+test('SDR: en modo autogestionado el cliente decide el volumen hasta el tope que fija Biguá', async () => {
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/config', { modo: 'autogestionado' })).status, 403, 'el modo lo fija Biguá');
+
+  const modo = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/config', { modo: 'autogestionado', tope_cuentas_dia: 10 });
+  assert.equal(modo.status, 200, JSON.stringify(modo.body));
+  assert.equal(modo.body.data.sdr.tecnico.modo, 'autogestionado');
+  assert.equal(modo.body.data.sdr.tecnico.tope_cuentas_dia, 10);
+
+  const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data;
+  assert.equal(vista.modo, 'autogestionado');
+  assert.equal(vista.tope_cuentas_dia, 10);
+  assert.equal(vista.campos.find((c) => c.clave === 'cuentas_por_dia').editable, true);
+  assert.equal(vista.campos.find((c) => c.clave === 'senal_avisos').editable, false, 'la señal de ASCI sigue siendo de Biguá');
+  assert.deepEqual(vista.bloques.map((b) => b.clave), ['identidad', 'audiencia', 'conversacion', 'operacion']);
+
+  const ok = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 8, acepta_mails_extrapolados: false } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.data.sdr.ajustes.cuentas_por_dia, 8);
+  const pasado = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 11 } });
+  assert.equal(pasado.status, 400);
+  assert.match(pasado.body.error.message, /hasta 10/);
+  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { senal_avisos: 'texto: qa' } })).status, 403);
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 30 } })).status, 200,
+    'Biguá no tiene tope');
+
+  // Los campos nuevos de la conversación.
+  const mal = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { link_agenda: 'http://agenda.test/ana' } });
+  assert.equal(mal.status, 400);
+  const nuevos = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: {
+    link_agenda: 'https://agenda.test/ana', llamado_accion: 'Una charla de 20 minutos esta semana',
+    responsable_positivos: 'Ana Pérez, ana@cliente.test', prueba_social: ['Banca: regresión de 5 días a 6 horas (caso publicado)'],
+  } });
+  assert.equal(nuevos.status, 200, JSON.stringify(nuevos.body));
+  assert.match(nuevos.body.data.sdr.vista_previa, /### Link de agenda\n\nhttps:\/\/agenda\.test\/ana/);
+  assert.match(nuevos.body.data.sdr.vista_previa, /- Banca: regresión/);
+
+  // Vuelto a operado, el volumen es otra vez de Biguá.
+  await ctx.bigua.call('PUT', '/clients/adm-b/sdr/config', { modo: 'operado', tope_cuentas_dia: null });
+  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 6 } })).status, 403);
+  const cfg = (await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data.tecnico;
+  assert.equal(cfg.tope_cuentas_dia, null);
+});
+
+test('firma por buzón: el cliente la carga, los bots la ven en buzones y en sus ajustes', async () => {
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  const alta = await ctx.bigua.call('POST', '/clients/adm-b/mailboxes', mailboxBody('dario@cliente.test', USERS['dario@cliente.test']));
+  assert.equal(alta.status, 200, JSON.stringify(alta.body));
+  const m = alta.body.data.mailbox;
+  assert.equal(m.status, 'active');
+  const largo = await cli.call('PATCH', `/clients/adm-b/mailboxes/${encodeURIComponent(m.email)}`, { firma: 'x'.repeat(601) });
+  assert.equal(largo.status, 400);
+  const r = await cli.call('PATCH', `/clients/adm-b/mailboxes/${encodeURIComponent(m.email)}`, { firma: '  Beto Gómez\r\nVentas · Cliente B  ' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.mailbox.firma, 'Beto Gómez\nVentas · Cliente B');
+
+  const list = await store.listAccounts('adm-b');
+  assert.equal(list.find((a) => a.email === m.email).firma, 'Beto Gómez\nVentas · Cliente B');
+  const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.vista_previa;
+  assert.match(vista, /### Buzones y firmas/);
+  assert.match(vista, /- dario@cliente\.test \(Prueba\): firma propia:\n {2}> Beto Gómez\n {2}> Ventas · Cliente B/);
+  // Lo mismo que arma reglas_manual para los bots, con el rol de la aplicación.
+  const sdr = await import('../src/sdr/store.mjs');
+  const extra = await store.asRole('mailgw_app', 'adm-b', (c) => sdr.extraAjustes(c, 'adm-b'));
+  assert.equal(extra.buzones.find((b) => b.email === m.email).firma, 'Beto Gómez\nVentas · Cliente B');
+  assert.equal(typeof extra.noContactar.dominios, 'number');
+  const sinFirma = await cli.call('PATCH', `/clients/adm-b/mailboxes/${encodeURIComponent(m.email)}`, { firma: '' });
+  assert.equal(sinFirma.body.data.mailbox.firma, null, 'vacía vuelve a la firma por defecto');
+});
+
+test('no contactar: el cliente carga dominios y mails, el gateway la hace cumplir y no se cruza entre clientes', async () => {
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  const uno = await cli.call('POST', '/clients/adm-b/no-contactar', { valor: 'https://www.Competidor.test/contacto', motivo: 'Competidor' });
+  assert.equal(uno.status, 200, JSON.stringify(uno.body));
+  assert.equal(uno.body.data.agregados, 1);
+  assert.equal(uno.body.data.no_contactar[0].valor, 'competidor.test');
+  assert.equal(uno.body.data.no_contactar[0].por_email, 'ajustes@cliente-b.test');
+  assert.equal((await cli.call('POST', '/clients/adm-b/no-contactar', { valor: 'no es nada' })).status, 400);
+
+  const csv = 'dominio,motivo\nactual.test,Cliente actual\n"juan@otra.test";Pidió que no\nbasura sin forma\n\nCOMPETIDOR.test,repetido\n';
+  const carga = await cli.call('POST', '/clients/adm-b/no-contactar', { csv });
+  assert.equal(carga.status, 200, JSON.stringify(carga.body));
+  assert.equal(carga.body.data.agregados, 2);
+  assert.equal(carga.body.data.ya_estaban, 1);
+  assert.equal(carga.body.data.invalidas.length, 1);
+  assert.equal(carga.body.data.invalidas[0].renglon, 4);
+  assert.deepEqual(carga.body.data.totales, { dominios: 2, emails: 1 });
+
+  // Otro cliente no la ve, ni por el panel ni en la base.
+  const otroCli = await usuarioDeOtroCliente();
+  assert.equal((await otroCli.call('GET', '/clients/adm-b/no-contactar')).status, 404);
+  assert.equal((await otroCli.call('POST', '/clients/adm-b/no-contactar', { valor: 'x.test' })).status, 404);
+  const cruz = await store.asRole('mailgw_portal', 'adm-a', (c) => c.query(`select * from sdr.no_contactar`));
+  assert.equal(cruz.rows.length, 0);
+  await assert.rejects(store.asRole('mailgw_app', 'adm-b', (c) => c.query(
+    `insert into sdr.no_contactar (client_id, valor, tipo) values ('adm-b', 'bot.test', 'dominio')`)), /permission denied/,
+  'los bots no la pueden cambiar');
+
+  // El gateway la hace cumplir.
+  const sdr = await import('../src/sdr/store.mjs');
+  const correo = await import('../src/sdr/correo.mjs');
+  const meta = { bot: 'prospector', tarea: 'diaria' };
+  const cuenta = await sdr.guardarCuenta('adm-b', { nombre: 'Ventas del competidor', dominio: 'ventas.competidor.test' }, meta);
+  assert.equal(cuenta.no_contactar, true);
+  assert.equal(cuenta.cuenta.estado, 'excluida');
+  assert.match(cuenta.cuenta.estado_motivo, /No contactar: ventas\.competidor\.test \(dominio competidor\.test: Competidor\)/);
+  await assert.rejects(sdr.guardarProspecto('adm-b', { nombre: 'Alguien', cuenta_id: cuenta.cuenta.id }, meta), /no contactar/);
+  await assert.rejects(sdr.guardarProspecto('adm-b', { nombre: 'Juan', email: 'juan@otra.test' }, meta), /no contactar/);
+  const libre = await sdr.guardarProspecto('adm-b', { nombre: 'Pedro', email: 'pedro@otra.test' }, meta);
+  assert.ok(libre.prospecto.id, 'un dominio que no está en la lista pasa');
+  await assert.rejects(correo.controlarDestinatarios('adm-b', ['Juan@Otra.test'], 'send'),
+    (e) => e.code === 'no_contactar' && /Pidió que no/.test(e.message));
+  await assert.rejects(correo.controlarDestinatarios('adm-b', ['jefa@sede.actual.test'], 'reply'), (e) => e.code === 'no_contactar');
+  await correo.controlarDestinatarios('adm-b', ['pedro@otra.test'], 'send');
+
+  const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.vista_previa;
+  assert.match(vista, /### No contactar\n\nEl cliente tiene 2 dominio\(s\) y 1 mail\(s\)/);
+
+  const quitar = await cli.call('POST', '/clients/adm-b/no-contactar/quitar', { valores: ['juan@otra.test'] });
+  assert.equal(quitar.body.data.quitados, 1);
+  await correo.controlarDestinatarios('adm-b', ['juan@otra.test'], 'send');
+  const act = (await ctx.bigua.call('GET', '/clients/adm-b/activity')).body.data.activity;
+  assert.ok(act.some((a) => a.op === 'admin.sdr.no_contactar'));
+});
+
+test('resumen: lo que necesita atención, para Biguá y para el cliente, sin cruzar clientes', async () => {
+  const r = await ctx.bigua.call('GET', '/clients/adm-b/resumen');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const d = r.body.data;
+  assert.equal(d.sdr_activo, true);
+  assert.equal(d.calibracion.total, 20);
+  assert.equal(typeof d.aprobaciones_pendientes, 'number');
+  assert.deepEqual(Object.keys(d.semana).sort(), ['enviados', 'linkedin', 'positivos', 'respuestas']);
+  assert.ok(Array.isArray(d.buzones));
+  assert.equal(d.no_contactar.dominios, 2);
+  assert.equal(d.dripify.cargado, true);
+  assert.ok(d.despertadores, 'Biguá ve los despertadores');
+  assert.ok(Array.isArray(d.corridas_con_error));
+
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  const c = (await cli.call('GET', '/clients/adm-b/resumen')).body.data;
+  assert.equal(c.calibracion.total, 20);
+  assert.equal(c.despertadores, undefined);
+  assert.equal(c.corridas_con_error, undefined);
+  const otroCli = await usuarioDeOtroCliente();
+  assert.equal((await otroCli.call('GET', '/clients/adm-b/resumen')).status, 404);
+
+  const sin = (await otroCli.call('GET', '/clients/adm-a/resumen')).body.data;
+  assert.equal(typeof sin.sdr_activo, 'boolean');
+});

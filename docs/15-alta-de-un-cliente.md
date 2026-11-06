@@ -38,6 +38,8 @@ Lo que hay que tener del cliente:
 | Quién tiene la contraseña de cada buzón | La carga esa persona en el panel; no viaja por mail ni por chat | El cliente |
 | Quién administra el DNS del dominio | Para SPF, DKIM y DMARC (paso 4) | TI del cliente o el proveedor |
 | A quién le venden, qué ofrecen, tono y firma | Los ajustes del SDR; los carga el cliente (`16` §4) | — |
+| A quién no escribirle nunca: clientes actuales, partners, competidores | La lista de no contactar; la carga el cliente, también por CSV (`16` §5) | Exportación de clientes del CRM |
+| Si se autogestiona o lo opera Biguá | El modo de operación (paso 5) | Operado por Biguá |
 | Cuántos mails por día puede mandar cada buzón | El cupo del gateway va por debajo del límite del hosting | 40 |
 
 **Cobertura de ASCI.** Los bots no scrapean avisos: los toman de ASCI, que los ingiere una vez por
@@ -60,11 +62,11 @@ Decisiones de Biguá para este cliente:
 
 ## 2. Crear el usuario del cliente
 
-Cliente → pestaña **Usuarios** → **Agregar usuario**, con nombre y email de la persona.
+Cliente → **⚙ Administración** → **Usuarios** → **Agregar usuario**, con nombre y email de la persona.
 
 El panel muestra un **enlace de activación** que sirve una sola vez y por 24 horas. Mandáselo por
 un canal seguro (no en un grupo). Con ese enlace elige su contraseña (mínimo 12 caracteres). Si
-vence, «Nuevo enlace» en la misma pestaña.
+vence, «Nuevo enlace» en el mismo lugar.
 
 Ese usuario ve y administra **sólo su cliente**: sus buzones, su dominio, los ajustes de su SDR y la
 actividad. No ve tokens, ni usuarios, ni lo técnico del SDR.
@@ -74,7 +76,7 @@ actividad. No ve tokens, ni usuarios, ni lo técnico del SDR.
 Lo ideal es que el cliente cargue sus buzones con la guía `16` §2: así la contraseña no pasa por
 nadie de Biguá. Si lo hace Biguá en una llamada, que sea el cliente quien escriba la contraseña.
 
-Lo que revisa Biguá en la pestaña **Buzones**:
+Lo que revisa Biguá en la pestaña **Canales** → **Correo**:
 
 - **«Probar»** da IMAP y SMTP «conecta».
 - **Tope de envíos por día** por debajo del límite del hosting. Para empezar, entre 20 y 40.
@@ -84,14 +86,14 @@ Un buzón **bloqueado por contraseña** (tres fallas seguidas) se reactiva carga
 
 ## 4. Dominio: SPF, DKIM y DMARC
 
-Pestaña **Dominios** → **Verificar**. Cada aviso trae «Cómo arreglarlo» con el registro listo para
+Pestaña **Canales**, debajo de los buzones → **Verificar**. Cada aviso trae «Cómo arreglarlo» con el registro listo para
 copiar. Lo publica quien administra el DNS del cliente (`16` §3) y se vuelve a verificar.
 
 No arrancar los envíos con SPF o DKIM en rojo: los mails van a spam.
 
 ## 5. Activar el SDR
 
-Pestaña **SDR**. Si el cliente no lo tiene activado, aparece la **Configuración técnica**:
+**⚙ Administración** → **Operación**. Si el cliente no lo tiene activado, aparece **Activar el SDR**:
 
 | Campo | Valor para arrancar |
 |---|---|
@@ -99,16 +101,20 @@ Pestaña **SDR**. Si el cliente no lo tiene activado, aparece la **Configuració
 | Zona horaria | La del cliente (`America/Argentina/Buenos_Aires`) |
 | Calibración | **20**: los primeros 20 mails nuevos se aprueban uno por uno en el chat |
 | Bots activos | `orquestador`, `prospector` y `seguimiento` (`whatsapp` todavía no) |
+| Modo de operación | **Operado por Biguá**, salvo que el cliente se autogestione: entonces el volumen, los buzones y los mails extrapolados los decide el cliente, con un tope de cuentas por día |
 
-**Activar el SDR.** Después, en el formulario de **Ajustes**, los campos que son de Biguá:
+**Activar el SDR.** Después, en la pestaña **Empresa**, bloque **Operación**, los campos que son de
+Biguá (en un cliente autogestionado, los carga el cliente):
 
 - **Qué buzón usar para qué**, si hay más de uno (por ejemplo «ventas@ para Argentina, info@ para
   Chile»).
 - **Cuentas nuevas por día:** 5 durante la calibración; después, según el cupo de los buzones.
 - **Acepta mails extrapolados:** «no» salvo que el cliente lo pida.
 
-El resto de los ajustes (oferta, ICP, cargos, tono, firma, objeciones, positivos) los carga el
-cliente (`16` §4). Biguá los revisa antes del primer envío.
+El resto de los ajustes (oferta, ICP, cargos, tono, firma, casos citables, qué le pedimos al
+prospecto, objeciones, positivos, quién toma a los interesados, link de agenda) y la lista de **no
+contactar** los carga el cliente (`16` §4 y §5). Biguá los revisa antes del primer envío. La
+**señal en los avisos** (cómo se le piden los avisos a ASCI) la carga siempre Biguá.
 
 ## 6. Usuario de ASCI para el bot
 
@@ -132,7 +138,7 @@ cuentas y cargar archivos. Por eso en el paso 8 esas herramientas no van en «Al
 
 ## 7. Token del gateway para Grok
 
-Cliente → pestaña **Tokens de Grok Bot** → **Generar token**:
+Cliente → **⚙ Administración** → **Tokens de Grok Bot** → **Generar token**:
 
 - **Nombre:** `GrokBot <Cliente>`.
 - **Permisos:** `read`, `draft`, `send` y **`sdr`**. Sin `manage`.
@@ -208,7 +214,7 @@ El gateway despierta a dos bots por el webhook de su routine, sin esperar a su h
 Para cada uno:
 
 1. En la app de Grok, abrí esa routine y copiá la **URL** y la **clave** del webhook.
-2. Panel → cliente → pestaña **SDR** → el despertador de ese bot: pegá las dos. El horario por
+2. Panel → cliente → **⚙ Administración** → **Bots y despertadores** → el de ese bot: pegá las dos. El horario por
    defecto (8 a 20 h, lunes a viernes, 10 minutos entre avisos) sirve para arrancar.
 3. **Cargar despertador.**
 
@@ -222,7 +228,7 @@ Si el cliente va también por LinkedIn. Lo que se arma en Dripify (plan con Open
 `sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`, la campaña esqueleto activa) y el detalle están en
 [`20`](20-etapa-3-linkedin-dripify.md) §2 y §3. En el panel:
 
-1. Pestaña **SDR** → **LinkedIn · Dripify**: la API key (la pega el cliente o Biguá ahí, nunca por
+1. Pestaña **Canales** → **LinkedIn · Dripify**: la API key (la pega el cliente o Biguá ahí, nunca por
    chat), el id de la campaña y el largo máximo de la nota (300 con LinkedIn Premium, 200 sin).
 2. **Probar:** tiene que decir «listo».
 3. **Generar URL del webhook** y cargarla en la campaña de Dripify, una por disparador, con
@@ -235,7 +241,8 @@ Sin Dripify, el SDR va sólo por mail: los bots lo ven en `dripify_estado` y no 
 - En el chat del `orquestador`: «Llamá registro_agenda y decime qué ves». Tiene que contestar con
   la agenda (vacía) sin errores.
 - Panel → pestaña **Actividad**: aparecen las llamadas de los bots.
-- Pestaña **SDR**: la vista previa «Así lo leen los bots» muestra los ajustes del cliente.
+- Pestaña **Empresa**: la vista previa «Así lo leen los bots» muestra los ajustes del cliente.
+- Pestaña **Resumen**: «Necesita atención» no muestra nada en rojo.
 - Con LinkedIn: «Llamá dripify_estado y decime qué ves» tiene que decir `listo`.
 
 Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, lanzamiento) está en

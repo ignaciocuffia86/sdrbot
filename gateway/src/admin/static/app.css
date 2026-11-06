@@ -43,7 +43,7 @@ label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4
 input, select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--text); font: inherit; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-input[type=checkbox] { width: auto; }
+input[type=checkbox], input[type=radio] { width: auto; }
 .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: .95rem; }
 fieldset { border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 14px 14px; margin: 14px 0 0; }
 legend { font-weight: 600; padding: 0 6px; }
@@ -122,3 +122,40 @@ h2.first { margin-top: 0; }
 .sdr-grid > div { display: grid; gap: 16px; }
 .preview { max-height: 520px; overflow: auto; }
 @media (max-width: 900px) { .sdr-grid { grid-template-columns: 1fr; } }
+
+/* Ficha del cliente (docs/21): Resumen, Empresa, Canales y Administración. */
+.stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+h3 { font-size: 1rem; margin: 8px 0 0; }
+.tabs .gear { margin-left: auto; }
+.lock { font-size: .78rem; color: var(--muted); font-weight: 400; white-space: nowrap; }
+.avisos { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.avisos li { display: flex; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.avisos li:last-child { border-bottom: 0; }
+.aviso-texto { flex: 1; min-width: 0; }
+.avisos a { white-space: nowrap; font-size: .9rem; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; transform: translateY(-1px); }
+.d-err { background: var(--danger); } .d-warn { background: var(--warn); } .d-mute { background: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 4px 0 10px; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: .85rem; }
+.canal-card { text-decoration: none; color: inherit; display: flex; flex-direction: column; gap: 6px; }
+.canal-card:hover { border-color: var(--accent); }
+.bloque > div + div { margin-top: 2px; }
+.guardar { position: sticky; bottom: 12px; box-shadow: 0 4px 18px rgb(0 0 0 / .08); }
+.sticky { position: sticky; top: 12px; }
+.nc-alta { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) auto; gap: 10px; align-items: end; }
+.nc-alta button { margin-bottom: 1px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.side { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }
+.sidenav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 12px; }
+.sidenav a { padding: 8px 10px; border-radius: 6px; text-decoration: none; color: var(--muted); }
+.sidenav a.on { background: var(--muted-bg); color: var(--text); font-weight: 600; }
+@media (max-width: 900px) { .sticky, .sidenav { position: static; } }
+@media (max-width: 720px) {
+  .side { grid-template-columns: 1fr; }
+  .sidenav { flex-direction: row; flex-wrap: wrap; }
+  .nc-alta { grid-template-columns: 1fr; }
+  .guardar { position: static; }
+}
+label.btn { margin: 0; color: var(--text); font-size: inherit; }

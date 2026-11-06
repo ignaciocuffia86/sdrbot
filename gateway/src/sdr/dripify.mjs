@@ -21,6 +21,7 @@ import { asRole, asOwner } from '../store.mjs';
 import { decryptSecret, encryptSecret, hashToken } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { normalizeLinkedin } from './linkedin.mjs';
+import * as noContactar from './no_contactar.mjs';
 import { insertarEvento, aplicarEvento, versionActual, errorsSdr } from './store.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
@@ -312,6 +313,11 @@ async function controlarCarga(c, clientId, items, notaMax) {
       const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);
       if (rowCount) { e('está en la supresión del cliente (baja o rebote)'); continue; }
     }
+    const dominio = p.cuenta_id
+      ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
+      : null;
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    if (nc.length) { e(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}`); continue; }
     const textos = { nota: it.nota, mensaje1: it.mensaje1, mensaje2: it.mensaje2 };
     if (norm(it.nota).length > notaMax) { e(`la nota tiene ${norm(it.nota).length} caracteres y el tope es ${notaMax}`); continue; }
     const largo = ['mensaje1', 'mensaje2'].find((k) => norm(textos[k]).length > MENSAJE_MAX);

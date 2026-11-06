@@ -94,21 +94,37 @@ Donde se cargan clientes, buzones (servidor y puerto IMAP y SMTP, seguridad, usu
 - **CSP estricta** (`default-src 'none'`, scripts y estilos sólo propios, sin marcos), sin dependencias de terceros. Todo lo que viene del servidor se inserta como texto.
 - **Auditoría:** cada acción del panel queda en `mailgw.audit_log` con `actor_user_id`.
 
+### La ficha de un cliente
+
+Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`):
+
+| Pestaña | Qué tiene | Quién |
+|---|---|---|
+| **Resumen** | Lo que necesita atención (buzones bloqueados, dominio mal, aprobaciones y respuestas que esperan, Dripify con error, despertadores y corridas con error), los números de los últimos 7 días, la calibración y el estado de cada canal (`GET /clients/:id/resumen`) | Los dos roles; despertadores y corridas, sólo Biguá |
+| **Empresa** | Los ajustes que leen los bots, en bloques (identidad y voz, a quién y con qué señal, conversación, operación), la vista previa, la lista de **no contactar** y el historial | Los dos roles |
+| **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, y WhatsApp y CRM como próximamente | Los dos roles; Dripify lo carga Biguá |
+| **Actividad** | La auditoría | Los dos roles |
+| **⚙ Administración** | Operación (activar el SDR, canal de reglas, zona horaria, calibración, bots activos, modo de operación y tope), bots y despertadores, usuarios y tokens | Sólo Biguá |
+
+Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/tokens`) llevan a su lugar nuevo.
+
 ### SDR: ajustes del cliente
 
-La pestaña **SDR** de cada cliente edita lo que los bots leen como «Ajustes de este cliente» (migración `007_ajustes_en_el_panel`):
+La pestaña **Empresa** edita lo que los bots leen como «Ajustes de este cliente» (migraciones `007_ajustes_en_el_panel` y `010`):
 
-- **El usuario del cliente** cambia oferta, ICP, cargos, exclusiones, tono, idioma, firma, objeciones y qué cuenta como positivo. Ve lo demás sin poder tocarlo. Al guardar, el orquestador recibe un pedido para contarle el cambio al operador en el chat.
-- **Un operador de Biguá** además cambia los buzones a usar, las cuentas por día, si se aceptan mails extrapolados, el canal de reglas, la calibración, los bots activos y la zona horaria, y activa el SDR de un cliente nuevo.
+- **El usuario del cliente** cambia oferta, tono, idioma, firma por defecto, casos que se pueden citar, ICP, cargos, exclusiones, qué le pedimos al prospecto, objeciones, qué cuenta como positivo, quién toma a los interesados y el link de agenda (sólo `https://`). Ve lo demás sin poder tocarlo (con un candado). Al guardar, el orquestador recibe un pedido para contarle el cambio al operador en el chat.
+- **Un operador de Biguá** además cambia la señal en los avisos y, si el cliente es **operado**, la antigüedad del aviso, las cuentas por día, los buzones a usar y si se aceptan mails extrapolados. Si el cliente es **autogestionado** (`sdr.cliente_config.modo`, en Administración), esos cuatro los cambia el cliente, con las cuentas por día hasta el tope que fija Biguá (`tope_cuentas_dia`).
+- **Firma por buzón** (`mailgw.account.firma`, Canales → Correo → Editar): los bots la ven en `buzones` y en la sección «Buzones y firmas» de sus ajustes; vacía, usan la firma por defecto.
+- **No contactar** (`sdr.no_contactar`): dominios (con sus subdominios) y mails, uno por uno, pegados o por CSV (primera columna el dominio o el mail, segunda el motivo; hasta 5000 filas por carga). La cargan el cliente o Biguá; los bots sólo la leen. El gateway la hace cumplir: una cuenta de la lista queda `excluida` al guardarla, y una persona nueva, un mail (`enviar` o `responder`) o una carga en Dripify se rechazan con `no_contactar`.
 - Se valida al guardar (largo, renglones, campos que existen) y se ve cómo lo van a leer los bots.
 - Cada cambio queda en el historial con quién y cuándo, y se puede volver a una versión anterior.
 - En la base, el rol del portal sólo puede actualizar los ajustes de su cliente: ni la calibración ni nada del registro.
-- **LinkedIn · Dripify** (sólo Biguá): API key (cifrada, no vuelve), id de la campaña esqueleto, largo máximo de la nota, **Probar** (campaña activa, campos, números, cupo) y **Generar URL del webhook** (se muestra una vez).
-- **Despertadores** (sólo Biguá): el de `seguimiento` (webhook de «SDR · respuestas», avisa el correo nuevo) y el del `orquestador` (webhook de «SDR · aprobaciones», avisa las aprobaciones pendientes, primero las de un positivo; migración `008`). Con URL, clave, horario, días y minutos entre avisos. La clave se guarda cifrada y no se vuelve a mostrar; vacía, se conserva la guardada. Es lo mismo que `sdr-despertador` de la CLI.
+- **LinkedIn · Dripify** (Canales, sólo Biguá): API key (cifrada, no vuelve), id de la campaña esqueleto, largo máximo de la nota, **Probar** (campaña activa, campos, números, cupo) y **Generar URL del webhook** (se muestra una vez).
+- **Despertadores** (Administración → Bots y despertadores, sólo Biguá): el de `seguimiento` (webhook de «SDR · respuestas», avisa el correo nuevo) y el del `orquestador` (webhook de «SDR · aprobaciones», avisa las aprobaciones pendientes, primero las de un positivo; migración `008`). Con URL, clave, horario, días y minutos entre avisos. La clave se guarda cifrada y no se vuelve a mostrar; vacía, se conserva la guardada. Es lo mismo que `sdr-despertador` de la CLI.
 
 ### Dominios: SPF, DKIM, DMARC y MX
 
-Pestaña «Dominios» de cada cliente (la ven los dos roles). Los dominios salen de los buzones; «Verificar» consulta el DNS y guarda el resultado en `mailgw.domain_check` (migración `004_dominios`). No cambia nada en el DNS del cliente.
+Pestaña «Canales», debajo de los buzones (la ven los dos roles). Los dominios salen de los buzones; «Verificar» consulta el DNS y guarda el resultado en `mailgw.domain_check` (migración `004_dominios`). No cambia nada en el DNS del cliente.
 
 | | Qué mira |
 |---|---|
@@ -210,7 +226,7 @@ node bin/admin.mjs reloj-tick                                              # una
 
 ### LinkedIn por Dripify (etapa 3)
 
-Una campaña esqueleto por cliente (invitación con nota, mensaje 1, mensaje 2) cuyo texto son los campos personalizados `sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`; el bot los escribe por persona y `dripify_cargar` los sube con la Open API de Dripify (`https://api.dripify.com`, `X-Api-Key`; `MAILGW_DRIPIFY_URL` la reemplaza en las pruebas). Lo que pasa vuelve por el webhook de la campaña, `POST /hook/dripify/<cliente>/<secreto>?e=invitacion|conexion|mensaje|respuesta` (el secreto va en la URL porque Dripify no deja poner cabeceras; en la base, su hash; el cuerpo se guarda crudo en `sdr.dripify_evento`), y por la lectura de las conversaciones abiertas que hace el reloj, porque el webhook de respuesta sólo llega con la primera. La API key, la campaña y el webhook se cargan en el panel (pestaña SDR, sólo Biguá). Detalle y alta: `docs/20-etapa-3-linkedin-dripify.md`.
+Una campaña esqueleto por cliente (invitación con nota, mensaje 1, mensaje 2) cuyo texto son los campos personalizados `sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`; el bot los escribe por persona y `dripify_cargar` los sube con la Open API de Dripify (`https://api.dripify.com`, `X-Api-Key`; `MAILGW_DRIPIFY_URL` la reemplaza en las pruebas). Lo que pasa vuelve por el webhook de la campaña, `POST /hook/dripify/<cliente>/<secreto>?e=invitacion|conexion|mensaje|respuesta` (el secreto va en la URL porque Dripify no deja poner cabeceras; en la base, su hash; el cuerpo se guarda crudo en `sdr.dripify_evento`), y por la lectura de las conversaciones abiertas que hace el reloj, porque el webhook de respuesta sólo llega con la primera. La API key, la campaña y el webhook se cargan en el panel (pestaña Canales, sólo Biguá). Detalle y alta: `docs/20-etapa-3-linkedin-dripify.md`.
 
 Un cliente sin configuración del SDR (`sdr.cliente_config`) usa el gateway como antes, sin calibración.
 

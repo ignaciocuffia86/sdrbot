@@ -138,7 +138,7 @@ function renderLogin(message) {
   const btn = h('button', { type: 'submit', class: 'primary' }, 'Ingresar');
   const form = h('form', { class: 'card narrow' },
     h('h1', {}, 'Ingresar'),
-    h('p', { class: 'sub' }, 'Panel de buzones del SDR Bot.'),
+    h('p', { class: 'sub' }, 'Panel del SDR Bot.'),
     field('Email', h('input', { name: 'email', type: 'email', autocomplete: 'username', required: true })),
     field('Contraseña', h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
     err,
@@ -232,29 +232,105 @@ function newClientDialog() {
 
 // ---------------------------------------------------------------- un cliente
 
-async function renderClient(clientId, tab) {
+// La ficha de un cliente (docs/21 §3): Resumen, Empresa, Canales y Actividad; Administración
+// aparte, sólo para Biguá. Las direcciones de las pestañas viejas llevan a su lugar nuevo.
+const VIEJAS = { sdr: ['empresa'], buzones: ['canales'], dominios: ['canales'], usuarios: ['admin', 'usuarios'], tokens: ['admin', 'tokens'] };
+const TABS = [['resumen', 'Resumen'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
+
+async function renderClient(clientId, tab, sub) {
+  if (VIEJAS[tab]) [tab, sub = sub] = VIEJAS[tab];
   const data = await api('GET', `/clients/${enc(clientId)}`);
   const bigua = data.can_manage_access;
-  const tabs = [['sdr', 'SDR'], ['buzones', 'Buzones'], ['dominios', 'Dominios'], ...(bigua ? [['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']] : []), ['actividad', 'Actividad']];
-  if (!tabs.some(([k]) => k === tab)) tab = 'sdr';
+  if (!TABS.some(([k]) => k === tab) && !(bigua && tab === 'admin')) tab = 'resumen';
   const base = `#/c/${enc(clientId)}`;
   const body = h('div');
   main.replaceChildren(
     ...(bigua ? [h('a', { href: '#/', class: 'small' }, '← Clientes')] : []),
     h('h1', {}, data.client.name),
     h('p', { class: 'sub mono' }, data.client.id),
-    h('div', { class: 'tabs' }, tabs.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label))),
+    h('nav', { class: 'tabs' },
+      TABS.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label)),
+      bigua ? h('a', { href: `${base}/admin`, class: `gear${tab === 'admin' ? ' on' : ''}` }, '⚙ Administración') : null),
     body);
-  const reload = () => renderClient(clientId, tab);
-  if (tab === 'sdr') body.append(await sdrView(clientId, bigua));
-  if (tab === 'buzones') body.append(mailboxesView(data, reload));
-  if (tab === 'usuarios') body.append(usersView(data, reload));
-  if (tab === 'tokens') body.append(tokensView(data, reload));
-  if (tab === 'dominios') body.append(await domainsView(clientId, reload));
+  const v = { clientId, data, bigua, base, reload: () => renderClient(clientId, tab, sub) };
+  if (tab === 'resumen') body.append(await resumenView(v));
+  if (tab === 'empresa') body.append(await empresaView(v));
+  if (tab === 'canales') body.append(await canalesView(v));
   if (tab === 'actividad') body.append(await activityView(clientId));
+  if (tab === 'admin') body.append(await adminView(v, sub));
 }
 
-// ----- SDR: ajustes del cliente
+// ----- resumen
+
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+
+async function resumenView({ clientId, bigua, base }) {
+  const r = await api('GET', `/clients/${enc(clientId)}/resumen`);
+  const avisos = [];
+  const aviso = (nivel, texto, href, accion) => avisos.push({ nivel, texto, href, accion });
+  if (!r.sdr_activo) {
+    aviso('mute', bigua ? 'El SDR no está activado para este cliente.' : 'El SDR todavía no está activado. Lo activa Biguá.',
+      bigua ? `${base}/admin` : null, 'Activar');
+  }
+  if (!r.buzones.length) aviso('warn', 'Todavía no hay buzones: el SDR no puede mandar mails.', `${base}/canales`, 'Cargar un buzón');
+  for (const b of r.buzones) {
+    if (b.status === 'auth_error') aviso('err', `${b.email} está bloqueado: el servidor rechazó la contraseña.`, `${base}/canales`, 'Cargar la contraseña');
+    else if (b.status === 'paused') aviso('mute', `${b.email} está pausado: el SDR no lo usa.`, `${base}/canales`, 'Ver');
+  }
+  for (const d of r.dominios) {
+    if (d.status === 'error') aviso('err', `${d.domain} tiene SPF, DKIM o DMARC mal: los mails pueden ir a spam.`, `${base}/canales`, 'Ver cómo arreglarlo');
+  }
+  if (r.sdr_activo) {
+    if (r.aprobaciones_pendientes) aviso('warn', `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')} en el chat del orquestador.`);
+    const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
+    if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
+    if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, `${base}/canales`, 'Ver');
+    for (const [bot, d] of Object.entries(r.despertadores ?? {})) {
+      if (!d) aviso('mute', `El despertador de ${bot} no está cargado: el bot corre sólo en su horario.`, `${base}/admin/bots`, 'Cargarlo');
+      else if (d.fallas) aviso('err', `El despertador de ${bot} falla (${d.fallas})${d.ultimo_error ? `: ${d.ultimo_error}` : ''}.`, `${base}/admin/bots`, 'Ver');
+    }
+    for (const c of r.corridas_con_error ?? []) {
+      aviso('err', `${c.bot} · ${c.tarea} terminó con error (${fmtDate(c.inicio)})${c.resumen ? `: ${c.resumen}` : ''}.`);
+    }
+  }
+  const atencion = h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Necesita atención'),
+    avisos.length
+      ? h('ul', { class: 'avisos' }, avisos.map((a) => h('li', {}, h('span', { class: `dot d-${a.nivel}`, 'aria-hidden': 'true' }),
+        h('span', { class: 'aviso-texto' }, a.texto), a.href ? h('a', { href: a.href }, a.accion) : null)))
+      : h('p', { class: 'muted' }, 'Nada pendiente.'));
+
+  const stat = (n, label) => h('div', { class: 'stat' }, h('strong', {}, String(n)), h('span', {}, label));
+  const semana = r.sdr_activo ? h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Últimos 7 días'),
+    h('div', { class: 'stats' }, stat(r.semana.enviados, 'mails enviados'), stat(r.semana.linkedin, 'cargados en LinkedIn'),
+      stat(r.semana.respuestas, 'respuestas'), stat(r.semana.positivos, 'positivos')),
+    r.calibracion.total > r.calibracion.usados
+      ? h('p', { class: 'small muted' }, `Calibración: ${r.calibracion.usados} de ${r.calibracion.total} mails aprobados y enviados. ` +
+        'Hasta terminarla, cada mail nuevo se aprueba en el chat del orquestador.')
+      : h('p', { class: 'small muted' }, 'Calibración terminada: los mails nuevos salen sin aprobación previa.')) : null;
+
+  const activos = r.buzones.filter((b) => b.status === 'active');
+  const envios = activos.reduce((n, b) => n + b.envios_hoy, 0);
+  const tope = activos.reduce((n, b) => n + b.daily_send_cap, 0);
+  const dom = r.dominios.length ? r.dominios.map((d) => `${d.domain} ${{ ok: 'bien', warn: 'revisar', error: 'mal' }[d.status] ?? 'sin verificar'}`).join(' · ')
+    : 'Dominio sin verificar';
+  const d = r.dripify;
+  const li = !d?.cargado ? ['b-mute', 'sin cargar'] : !d.activo ? ['b-mute', 'apagado'] : d.ultimo_error ? ['b-err', 'con error'] : ['b-ok', 'cargado'];
+  const canal = (titulo, [cls, estado], ...lineas) => h('a', { class: 'card canal-card', href: `${base}/canales` },
+    h('div', { class: 'row spread' }, h('strong', {}, titulo), h('span', { class: `badge ${cls}` }, estado)),
+    lineas.map((x) => h('div', { class: 'small muted' }, x)));
+  const canales = h('div', { class: 'grid' },
+    canal('Correo', activos.length ? (activos.length < r.buzones.length ? ['b-warn', 'revisar'] : ['b-ok', 'activo']) : ['b-err', 'sin buzones'],
+      `${plural(activos.length, 'buzón activo', 'buzones activos')} · ${envios} de ${tope} envíos hoy`, dom),
+    canal('LinkedIn · Dripify', li, d?.ultimo_ok_at ? `Última respuesta buena: ${fmtDate(d.ultimo_ok_at)}` : 'Va con la campaña de Dripify del cliente'),
+    h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
+      h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails))),
+      h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
+  return h('div', { class: 'stack' }, atencion, semana, h('h2', {}, 'Canales'), canales);
+}
+
+// ----- empresa: los ajustes que leen los bots
 
 function campoInput(c, valor) {
   const dis = !c.editable;
@@ -267,6 +343,7 @@ function campoInput(c, valor) {
   if (c.tipo === 'si_no') {
     return h('label', { class: 'check' }, h('input', { name: c.clave, type: 'checkbox', checked: valor === true, disabled: dis }), 'Sí');
   }
+  if (c.tipo === 'url') return h('input', { name: c.clave, type: 'url', maxlength: c.max, value: valor ?? '', disabled: dis, placeholder: 'https://…' });
   return h('input', { name: c.clave, maxlength: c.max, value: valor ?? '', disabled: dis });
 }
 
@@ -284,11 +361,191 @@ function leerCampos(form, campos) {
   return out;
 }
 
+const conCandado = (c) => (c.editable ? c.titulo : h('span', {}, c.titulo, ' ', h('span', { class: 'lock' }, '🔒 lo cambia Biguá')));
+
+function historialTabla(clientId, sdr, reload) {
+  if (!sdr.historial.length) return h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
+  return h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota', ''].map((x) => h('th', {}, x)))),
+    h('tbody', {}, sdr.historial.map((v, i) => h('tr', {},
+      h('td', { class: 'small' }, fmtDate(v.at)),
+      h('td', { class: 'small' }, v.por_email ?? (v.por_rol === 'cli' ? 'CLI de Biguá' : '—')),
+      h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
+      h('td', { class: 'small' }, v.nota ?? ''),
+      h('td', {}, i === 0 ? h('span', { class: 'badge b-ok' }, 'vigente') : h('button', { class: 'sm', onclick: (ev) => {
+        const b = ev.currentTarget;
+        openDialog('Volver a esta versión', h('p', {}, `Los ajustes vuelven a como estaban el ${fmtDate(v.at)}. Queda en el historial y se puede deshacer.`), {
+          submitLabel: 'Volver a esta versión',
+          submit: async () => {
+            const r = await api('POST', `/clients/${enc(clientId)}/sdr/historial/${v.id}/restaurar`);
+            toast(r.cambios.length ? 'Listo: ajustes restaurados.' : 'Ya estaban así.');
+            reload();
+            return true;
+          },
+        });
+        b.blur();
+      } }, 'Volver a esta'))))));
+}
+
+async function empresaView({ clientId, bigua, base, reload }) {
+  const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
+  if (!sdr.activo) {
+    return h('div', { class: 'card empty' },
+      h('p', {}, bigua ? 'El SDR no está activado para este cliente.' : 'El SDR todavía no está activado para esta cuenta. Lo activa Biguá.'),
+      bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
+  }
+  const auto = sdr.modo === 'autogestionado';
+  const notaModo = auto
+    ? `Este cliente es autogestionado: el volumen y los buzones los decide el cliente${sdr.tope_cuentas_dia !== null ? `, hasta ${sdr.tope_cuentas_dia} cuentas nuevas por día` : ''}.`
+    : 'Este cliente lo opera Biguá: el volumen y los buzones los decide Biguá.';
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar ajustes');
+  const nota = h('input', { name: '_nota', maxlength: 300, placeholder: 'Opcional: por qué el cambio' });
+  const form = h('form', { class: 'stack' },
+    sdr.bloques.map((b) => h('section', { class: 'card bloque' },
+      h('h2', { class: 'first' }, b.titulo),
+      h('p', { class: 'muted small' }, b.ayuda),
+      b.clave === 'operacion' ? h('p', { class: 'small' }, notaModo) : null,
+      sdr.campos.filter((c) => c.bloque === b.clave).map((c) => field(conCandado(c), campoInput(c, sdr.ajustes[c.clave]), c.ayuda)))),
+    h('div', { class: 'card guardar' },
+      field('Nota del cambio', nota),
+      err,
+      h('div', { class: 'row' }, btn, h('span', { class: 'small muted' }, bigua
+        ? 'Los cambios valen desde la próxima corrida de cada bot.'
+        : 'Los cambios valen desde la próxima corrida de cada bot, y le avisamos al operador de Biguá.'))));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { ajustes: leerCampos(form, sdr.campos), ...(nota.value.trim() ? { nota: nota.value.trim() } : {}) };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/ajustes`, body), err);
+    if (r) { toast(r.cambios.length ? 'Ajustes guardados.' : 'No había cambios.'); reload(); }
+  });
+  const otros = Object.keys(sdr.ajustes).filter((k) => !sdr.campos.some((c) => c.clave === k));
+  const vista = h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Así lo leen los bots'),
+    h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
+    otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null);
+  const nc = await noContactarCard(clientId);
+  const out = h('div', { class: 'stack' },
+    h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, vista)),
+    nc,
+    h('section', {}, h('h2', {}, 'Historial de cambios'), historialTabla(clientId, sdr, reload)));
+  if (location.hash.endsWith('#no-contactar')) setTimeout(() => nc.scrollIntoView(), 0);
+  return out;
+}
+
+// ----- no contactar
+
+async function noContactarCard(clientId) {
+  const card = h('section', { class: 'card', id: 'no-contactar' });
+  const path = `/clients/${enc(clientId)}/no-contactar`;
+  const salida = h('div', { class: 'small', role: 'status' });
+  let lista = [];
+  const filtro = h('input', { type: 'search', placeholder: 'Buscar en la lista', 'aria-label': 'Buscar en la lista' });
+  const cuerpo = h('div');
+  const pintarLista = () => {
+    const q = filtro.value.trim().toLowerCase();
+    const vistas = (q ? lista.filter((x) => x.valor.includes(q) || (x.motivo ?? '').toLowerCase().includes(q)) : lista);
+    const muestra = vistas.slice(0, 200);
+    cuerpo.replaceChildren(!lista.length ? h('p', { class: 'muted small' }, 'La lista está vacía.') : h('div', {},
+      h('table', {}, h('thead', {}, h('tr', {}, ['Dominio o mail', 'Motivo', 'Cargado', ''].map((x) => h('th', {}, x)))),
+        h('tbody', {}, muestra.map((x) => h('tr', {},
+          h('td', {}, h('span', { class: 'mono' }, x.valor), h('div', { class: 'small muted' }, x.tipo === 'dominio' ? 'dominio y sus subdominios' : 'mail')),
+          h('td', { class: 'small' }, x.motivo ?? '—'),
+          h('td', { class: 'small' }, fmtDate(x.at), x.por_email ? h('div', { class: 'muted' }, x.por_email) : null),
+          h('td', {}, h('button', { class: 'sm', type: 'button', onclick: async (ev) => {
+            const r = await busy(ev.currentTarget, () => api('POST', `${path}/quitar`, { valores: [x.valor] }));
+            if (r) { pintar(r); toast(`${x.valor} salió de la lista.`); }
+          } }, 'Quitar')))))),
+      vistas.length > muestra.length ? h('p', { class: 'small muted' }, `Se muestran ${muestra.length} de ${vistas.length}: buscá para encontrar el resto.`) : null));
+  };
+  filtro.addEventListener('input', pintarLista);
+  const totales = h('span', { class: 'badge b-mute' });
+  const pintar = (r) => {
+    lista = r.no_contactar;
+    totales.textContent = `${plural(r.totales.dominios, 'dominio', 'dominios')} · ${plural(r.totales.emails, 'mail', 'mails')}`;
+    filtro.hidden = lista.length < 15;
+    pintarLista();
+  };
+  const informar = (r) => {
+    const partes = [`${plural(r.agregados, 'agregado', 'agregados')}`];
+    if (r.ya_estaban) partes.push(`${r.ya_estaban} ya estaban`);
+    salida.replaceChildren(h('p', {}, `${partes.join(', ')}.`),
+      r.invalidas?.length ? h('div', { class: 'err' }, `${plural(r.invalidas.length, 'renglón no tiene', 'renglones no tienen')} un dominio o un mail válido: `,
+        r.invalidas.slice(0, 5).map((x) => `renglón ${x.renglon} («${x.texto}»)`).join(', '), r.invalidas.length > 5 ? '…' : '') : null);
+  };
+  const err = h('p', { class: 'err', role: 'alert' });
+  const valor = h('input', { id: 'nc-valor', required: true, maxlength: 300, placeholder: 'empresa.com o persona@empresa.com' });
+  const motivo = h('input', { id: 'nc-motivo', maxlength: 200, placeholder: 'Cliente actual, competidor, pidió que no…' });
+  const agregar = h('button', { type: 'submit', class: 'primary' }, 'Agregar');
+  const alta = h('form', { class: 'nc-alta' }, field('Dominio o mail', valor), field('Motivo', motivo), agregar);
+  alta.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const r = await busy(agregar, () => api('POST', path, { valor: valor.value, ...(motivo.value.trim() ? { motivo: motivo.value.trim() } : {}) }), err);
+    if (r) { pintar(r); informar(r); valor.value = ''; motivo.value = ''; valor.focus(); }
+  });
+  const archivo = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain', id: 'nc-csv', class: 'visually-hidden' });
+  archivo.addEventListener('change', async () => {
+    const f = archivo.files?.[0];
+    if (!f) return;
+    if (f.size > 400_000) { err.textContent = 'El archivo pasa los 400 KB: partilo en dos.'; return; }
+    err.textContent = '';
+    const texto = await f.text();
+    try { const r = await api('POST', path, { csv: texto }); pintar(r); informar(r); } catch (e) { err.textContent = e.message; }
+    archivo.value = '';
+  });
+  const pegar = h('button', { type: 'button', onclick: () => openDialog('Pegar una lista', h('div', {},
+    h('p', { class: 'small muted' }, 'Un dominio o un mail por renglón. Después de una coma, el motivo (opcional).'),
+    h('textarea', { name: 'csv', rows: 10, required: true, placeholder: 'empresa.com, Cliente actual\npersona@otra.com, Pidió que no' })), {
+    submitLabel: 'Agregar',
+    submit: async (fd) => { const r = await api('POST', path, { csv: fd.get('csv') }); pintar(r); informar(r); return true; },
+  }) }, 'Pegar una lista');
+  card.append(
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'No contactar'), totales),
+    h('p', { class: 'small muted' }, 'Empresas y personas a las que el SDR no les escribe nunca, de ninguna campaña ni canal: clientes actuales, ' +
+      'partners, competidores, quien pidió que no. El gateway la hace cumplir: una empresa de la lista queda excluida y nadie de ella ' +
+      'recibe mails ni invitaciones de LinkedIn. Un dominio cubre también sus subdominios.'),
+    alta, err,
+    h('div', { class: 'row' }, h('label', { for: 'nc-csv', class: 'btn' }, 'Cargar CSV'), archivo, pegar,
+      h('span', { class: 'small muted' }, 'CSV: primera columna el dominio o el mail, segunda el motivo.')),
+    salida, filtro, cuerpo);
+  pintar(await api('GET', path));
+  return card;
+}
+
+// ----- canales
+
+async function canalesView({ clientId, data, bigua, reload }) {
+  const [resumen, sdr] = await Promise.all([
+    api('GET', `/clients/${enc(clientId)}/resumen`),
+    bigua ? api('GET', `/clients/${enc(clientId)}/sdr`) : Promise.resolve(null),
+  ]);
+  const d = resumen.dripify;
+  const linkedin = bigua && sdr?.activo
+    ? dripifyCard(clientId, sdr, reload)
+    : h('section', { class: 'card' },
+      h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'LinkedIn · Dripify'),
+        !d?.cargado ? h('span', { class: 'badge b-mute' }, 'sin cargar') : d.ultimo_error ? h('span', { class: 'badge b-err' }, 'con error')
+          : h('span', { class: 'badge b-ok' }, 'cargado')),
+      h('p', { class: 'small muted' }, 'La cuenta de Dripify del cliente y su campaña. La conecta Biguá: si querés sumar LinkedIn, pedíselo.'),
+      d?.ultimo_error ? h('p', { class: 'small err' }, d.ultimo_error) : null);
+  const pronto = (titulo, texto) => h('div', { class: 'card' },
+    h('div', { class: 'row spread' }, h('strong', {}, titulo), h('span', { class: 'badge b-mute' }, 'próximamente')),
+    h('p', { class: 'small muted' }, texto));
+  return h('div', { class: 'stack' },
+    h('section', { class: 'stack' }, h('h2', { class: 'first' }, 'Correo'), mailboxesView(data, reload),
+      h('h3', {}, 'Dominios'), await domainsView(clientId, reload)),
+    h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
+    h('section', {}, h('h2', {}, 'Más canales'), h('div', { class: 'grid' },
+      pronto('WhatsApp', 'Para seguir una conversación cuando la persona lo pide o deja su número. No para el primer contacto.'),
+      pronto('CRM', 'HubSpot primero: los interesados se cargan solos, con el mapeo que apruebe el cliente.'))));
+}
+
+// ----- administración (sólo Biguá)
+
 function sdrTecnico(clientId, sdr, reload) {
   const t = sdr.tecnico;
+  const modo = t?.modo ?? 'operado';
   const form = h('form', { class: 'card' },
-    h('h2', { class: 'first' }, 'Configuración técnica'),
-    h('p', { class: 'muted small' }, 'Sólo la ven los operadores de Biguá.'),
+    h('h2', { class: 'first' }, t ? 'Configuración del SDR' : 'Activar el SDR'),
     h('div', { class: 'cols2' },
       field('Canal de reglas', h('select', { name: 'canal' },
         ['estable', 'canario'].map((x) => h('option', { value: x, selected: t?.canal === x }, x)))),
@@ -298,6 +555,13 @@ function sdrTecnico(clientId, sdr, reload) {
     h('label', {}, 'Bots activos'),
     h('div', { class: 'row' }, sdr.bots.map((b) => h('label', { class: 'check' },
       h('input', { type: 'checkbox', name: 'bot', value: b, checked: t ? t.bots_activos.includes(b) : ['orquestador', 'prospector'].includes(b) }), b))),
+    h('fieldset', {}, h('legend', {}, 'Modo de operación'),
+      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'modo', value: 'operado', checked: modo === 'operado' }),
+        'Operado por Biguá: el volumen, los buzones y los mails extrapolados los decide Biguá'),
+      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'modo', value: 'autogestionado', checked: modo === 'autogestionado' }),
+        'Autogestionado: los decide el cliente'),
+      field('Tope de cuentas nuevas por día para el cliente', h('input', { name: 'tope_cuentas_dia', type: 'number', min: 0, max: 100, value: t?.tope_cuentas_dia ?? '' }),
+        'Sólo cuenta en modo autogestionado. Vacío: sin tope (hasta 100).')),
     t?.version_fija ? h('p', { class: 'note' }, `Este cliente está fijado a la versión ${t.version_fija} de las reglas (se cambia por la CLI).`) : null);
   const err = h('p', { class: 'err', role: 'alert' });
   const btn = h('button', { type: 'submit', class: 'primary' }, t ? 'Guardar configuración' : 'Activar el SDR');
@@ -305,12 +569,14 @@ function sdrTecnico(clientId, sdr, reload) {
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = new FormData(form);
+    const tope = String(fd.get('tope_cuentas_dia') ?? '').trim();
     const body = {
       canal: fd.get('canal'), zona_horaria: String(fd.get('zona_horaria')).trim(),
       calibracion_mails: Number(fd.get('calibracion_mails')), bots_activos: fd.getAll('bot'),
+      modo: fd.get('modo') ?? 'operado', tope_cuentas_dia: tope === '' ? null : Number(tope),
     };
     const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/config`, body), err);
-    if (r) { toast(t ? 'Configuración guardada.' : 'SDR activado.'); reload(); }
+    if (r) { toast(t ? 'Configuración guardada.' : 'SDR activado. Ahora cargá los ajustes en Empresa.'); reload(); }
   });
   return form;
 }
@@ -427,69 +693,32 @@ function dripifyCard(clientId, sdr, reload) {
   return form;
 }
 
-async function sdrView(clientId, bigua) {
-  const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
-  const reload = () => renderClient(clientId, 'sdr');
-  if (!sdr.activo) {
-    if (!bigua) return h('div', { class: 'card empty' }, h('p', {}, 'El SDR todavía no está activado para esta cuenta. Lo activa Biguá.'));
-    return h('div', {}, h('p', { class: 'muted' }, 'Este cliente no tiene el SDR activado. Elegí la configuración y activalo; después cargá los ajustes.'),
-      sdrTecnico(clientId, sdr, reload));
+const ADMIN = [['operacion', 'Operación'], ['bots', 'Bots y despertadores'], ['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']];
+
+async function adminView({ clientId, data, base, reload }, sub) {
+  if (!ADMIN.some(([k]) => k === sub)) sub = 'operacion';
+  const nav = h('nav', { class: 'sidenav', 'aria-label': 'Administración' },
+    ADMIN.map(([k, label]) => h('a', { href: `${base}/admin/${k}`, class: k === sub ? 'on' : '' }, label)));
+  let contenido;
+  if (sub === 'usuarios') contenido = usersView(data, reload);
+  else if (sub === 'tokens') contenido = tokensView(data, reload);
+  else {
+    const sdr = await api('GET', `/clients/${enc(clientId)}/sdr`);
+    if (sub === 'operacion') {
+      contenido = h('div', { class: 'stack' },
+        sdr.activo ? null : h('p', { class: 'muted' }, 'Este cliente no tiene el SDR activado. Elegí la configuración y activalo; después cargá los ajustes en Empresa.'),
+        sdrTecnico(clientId, sdr, reload));
+    } else if (!sdr.activo) {
+      contenido = h('div', { class: 'card empty' }, 'Activá el SDR en Operación para configurar los bots.');
+    } else {
+      const activos = sdr.tecnico.bots_activos;
+      contenido = h('div', { class: 'stack' },
+        h('p', { class: 'small muted' }, `Bots activos: ${activos.join(', ')}. Se cambian en Operación. Sin despertador, un bot corre sólo en su horario.`),
+        activos.includes('orquestador') ? despertadorCard(clientId, sdr, reload, 'orquestador') : null,
+        activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null);
+    }
   }
-  const err = h('p', { class: 'err', role: 'alert' });
-  const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar ajustes');
-  const nota = h('input', { name: '_nota', maxlength: 300, placeholder: 'Opcional: por qué el cambio' });
-  const form = h('form', { class: 'card' },
-    h('h2', { class: 'first' }, 'Ajustes del SDR'),
-    h('p', { class: 'muted small' }, bigua
-      ? 'Lo que los bots leen como «Ajustes de este cliente». Los cambios valen desde la próxima corrida de cada bot.'
-      : 'Cómo los bots presentan su empresa y a quién le escriben. Los cambios valen desde la próxima corrida de cada bot, y le avisamos al operador de Biguá.'),
-    sdr.campos.map((c) => field(c.editable ? c.titulo : `${c.titulo} · lo cambia Biguá`, campoInput(c, sdr.ajustes[c.clave]), c.ayuda)),
-    field('Nota del cambio', nota),
-    err, h('div', { class: 'row' }, btn));
-  form.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const body = { ajustes: leerCampos(form, sdr.campos), ...(nota.value.trim() ? { nota: nota.value.trim() } : {}) };
-    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/ajustes`, body), err);
-    if (r) { toast(r.cambios.length ? 'Ajustes guardados.' : 'No había cambios.'); reload(); }
-  });
-
-  const otros = Object.keys(sdr.ajustes).filter((k) => !sdr.campos.some((c) => c.clave === k));
-  const historial = sdr.historial.length
-    ? h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota', ''].map((x) => h('th', {}, x)))),
-      h('tbody', {}, sdr.historial.map((v, i) => h('tr', {},
-        h('td', { class: 'small' }, fmtDate(v.at)),
-        h('td', { class: 'small' }, v.por_email ?? (v.por_rol === 'cli' ? 'CLI de Biguá' : '—')),
-        h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
-        h('td', { class: 'small' }, v.nota ?? ''),
-        h('td', {}, i === 0 ? h('span', { class: 'badge b-ok' }, 'vigente') : h('button', { class: 'sm', onclick: (ev) => {
-          const b = ev.currentTarget;
-          openDialog('Volver a esta versión', h('p', {}, `Los ajustes vuelven a como estaban el ${fmtDate(v.at)}. Queda en el historial y se puede deshacer.`), {
-            submitLabel: 'Volver a esta versión',
-            submit: async () => {
-              const r = await api('POST', `/clients/${enc(clientId)}/sdr/historial/${v.id}/restaurar`);
-              toast(r.cambios.length ? 'Listo: ajustes restaurados.' : 'Ya estaban así.');
-              reload();
-              return true;
-            },
-          });
-          b.blur();
-        } }, 'Volver a esta'))))))
-    : h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
-
-  return h('div', { class: 'sdr' },
-    h('div', { class: 'sdr-grid' },
-      form,
-      h('div', {},
-        h('div', { class: 'card' },
-          h('h2', { class: 'first' }, 'Así lo leen los bots'),
-          h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
-          otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null),
-        bigua ? sdrTecnico(clientId, sdr, reload) : null,
-        bigua && sdr.tecnico?.bots_activos.includes('orquestador') ? despertadorCard(clientId, sdr, reload, 'orquestador') : null,
-        bigua && sdr.tecnico?.bots_activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null,
-        bigua ? dripifyCard(clientId, sdr, reload) : null)),
-    h('h2', {}, 'Historial de cambios'),
-    historial);
+  return h('div', { class: 'side' }, nav, h('div', { class: 'stack' }, contenido));
 }
 
 // ----- buzones
@@ -501,7 +730,8 @@ function mailboxesView(data, reload) {
     return h('div', {}, h('div', { class: 'card empty' }, h('p', {}, 'Este cliente todavía no tiene buzones.'), add));
   }
   const rows = data.mailboxes.map((m) => h('tr', {},
-    h('td', {}, h('strong', {}, m.email), m.display_name ? h('div', { class: 'small muted' }, m.display_name) : null),
+    h('td', {}, h('strong', {}, m.email), m.display_name ? h('div', { class: 'small muted' }, m.display_name) : null,
+      h('div', { class: 'small muted' }, m.firma ? 'Firma propia' : 'Firma por defecto (Empresa)')),
     h('td', { class: 'small' },
       h('div', {}, `IMAP ${m.imap_host}:${m.imap_port} (${m.imap_security})`),
       h('div', {}, `SMTP ${m.smtp_host}:${m.smtp_port} (${m.smtp_security})`)),
@@ -549,6 +779,8 @@ function mailboxDialog(clientId, m, reload) {
       field('Usuario de login', username, 'Casi siempre es el email.'),
       isNew ? field('Contraseña del buzón', h('input', { name: 'password', type: 'password', required: true, autocomplete: 'new-password' }),
         'Se guarda cifrada; no se vuelve a mostrar.') : h('div')),
+    field('Firma', h('textarea', { name: 'firma', rows: 3, maxlength: 600, placeholder: 'Ana Pérez · Directora Comercial · Empresa' }, v.firma ?? ''),
+      'Va al pie de cada mail que sale de este buzón. Vacía: la firma por defecto de Empresa.'),
     h('fieldset', {}, h('legend', {}, 'Entrada (IMAP)'),
       h('div', { class: 'cols' }, field('Servidor', imapHost), field('Seguridad', imapSec), field('Puerto', imapPort))),
     h('fieldset', {}, h('legend', {}, 'Salida (SMTP)'),
@@ -574,6 +806,7 @@ function mailboxDialog(clientId, m, reload) {
         daily_send_cap: Number(fd.get('daily_send_cap')), timezone: fd.get('timezone').trim(),
         sent_folder: fd.get('sent_folder').trim() || null, drafts_folder: fd.get('drafts_folder').trim() || null,
         append_sent: fd.get('append_sent') === 'on',
+        firma: String(fd.get('firma') ?? '').trim() || null,
       };
       if (isNew) {
         payload.email = fd.get('email').trim();
@@ -838,6 +1071,8 @@ const OPS = {
   'admin.sdr.ajustes': 'cambio de ajustes del SDR', 'admin.sdr.restaurar': 'ajustes vueltos a una versión anterior',
   'admin.sdr.config': 'configuración técnica del SDR', 'admin.sdr.despertador': 'despertador de seguimiento',
   'admin.sdr.despertador.apagar': 'despertador apagado',
+  'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.dripify.webhook': 'URL del webhook de Dripify',
+  'admin.sdr.no_contactar': 'alta en no contactar', 'admin.sdr.no_contactar.quitar': 'baja de no contactar',
 };
 
 async function activityView(clientId) {
@@ -874,11 +1109,11 @@ async function route() {
     try { me = (await api('GET', '/me')).me; } catch { return; }
   }
   renderShell();
-  const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  const parts = hash.replace(/^#\/?/, '').split('#')[0].split('/').filter(Boolean).map(decodeURIComponent);
   for (const a of document.querySelectorAll('nav a')) a.classList.toggle('on', a.dataset.nav === (parts[0] === 'equipo' ? 'equipo' : 'clientes'));
   main.replaceChildren(h('p', { class: 'muted' }, 'Cargando…'));
   try {
-    if (parts[0] === 'c' && parts[1]) await renderClient(parts[1], parts[2]);
+    if (parts[0] === 'c' && parts[1]) await renderClient(parts[1], parts[2], parts[3]);
     else if (parts[0] === 'equipo' && me.role === 'bigua_admin') await renderTeam();
     else await renderClients();
   } catch (e) {

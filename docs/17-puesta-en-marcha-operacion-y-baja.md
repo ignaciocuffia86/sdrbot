@@ -43,9 +43,9 @@ buzón, destinatario, asunto y texto.
 - Lo rechazado vuelve al `prospector` con tu motivo: lo reescribe o descarta a la persona.
 - Con 5 cuentas por día (una o dos personas por cuenta), la calibración dura 2 a 4 días hábiles.
 - Terminada, los mails nuevos salen solos. **La respuesta a un positivo se sigue aprobando siempre.**
-- Si el tono o la oferta no convencen, se corrige en los ajustes (pestaña SDR) y no en cada mail.
+- Si el tono o la oferta no convencen, se corrige en los ajustes (pestaña Empresa) y no en cada mail.
 
-La pestaña SDR muestra cuántos van («Van N aprobados y enviados»).
+El Resumen muestra cuántos van («Calibración: N de 20»).
 
 ## 3. Lanzamiento
 
@@ -84,8 +84,8 @@ interesados. Preguntas útiles: «¿cómo vamos?», «¿qué pasó con <persona>
 
 - No llegó el resumen de las 18:30, o dice cero mails en un día hábil.
 - El resumen menciona corridas con error o rebotes.
-- Un buzón aparece **bloqueado** o con error en la pestaña Buzones.
-- La pestaña SDR muestra un despertador con fallas.
+- Un buzón aparece **bloqueado** o con error en el Resumen o en la pestaña Canales.
+- El Resumen muestra un despertador o una corrida con error.
 
 En cualquiera de esos casos, preguntale al `orquestador` qué pasó (lee la bitácora) y, si no se
 resuelve, al equipo técnico.
@@ -94,11 +94,13 @@ resuelve, al equipo técnico.
 
 | Qué cambia | Dónde | Quién |
 |---|---|---|
-| Oferta, ICP, cargos, tono, firma, objeciones, positivos | Pestaña SDR → Ajustes | Cliente u operador |
-| Cuentas por día, buzón a usar, mails extrapolados | Pestaña SDR → Ajustes | Operador |
-| Calibración, bots activos, canal, zona horaria | Pestaña SDR → Configuración técnica | Operador |
-| Horario de los despertadores | Pestaña SDR → Despertadores | Operador |
-| Buzones y cupo | Pestaña Buzones | Cliente u operador |
+| Oferta, ICP, cargos, tono, firma por defecto, casos, pedido, objeciones, positivos, interesados, agenda | Pestaña Empresa | Cliente u operador |
+| No contactar | Pestaña Empresa → No contactar | Cliente u operador |
+| Firma de cada buzón | Pestaña Canales → Correo → Editar | Cliente u operador |
+| Cuentas por día, buzón a usar, mails extrapolados, antigüedad del aviso | Pestaña Empresa → Operación | Operador (el cliente, si es autogestionado) |
+| Calibración, bots activos, canal, zona horaria, modo de operación | ⚙ Administración → Operación | Operador |
+| Horario de los despertadores | ⚙ Administración → Bots y despertadores | Operador |
+| Buzones y cupo | Pestaña Canales → Correo | Cliente u operador |
 | Reglas de trabajo de los bots (iguales para todos los clientes) | Repositorio y publicación (§8) | Equipo técnico |
 
 Si cambian las routines en una versión nueva de las reglas, se le pide al `orquestador` que rehaga el
@@ -116,14 +118,14 @@ alta («Hacé el alta»): actualiza las que existen y no las duplica.
 
 **Pausa** (frenar todo sin perder nada):
 
-1. Pestaña Buzones: **Pausar** cada buzón. No sale ningún mail.
-2. Pestaña SDR → Despertador: **Apagar**.
+1. Pestaña Canales: **Pausar** cada buzón. No sale ningún mail.
+2. ⚙ Administración → Bots y despertadores: **Apagar** cada despertador.
 3. En Grok: deshabilitar las routines.
 
 **Baja:**
 
 1. Lo de la pausa.
-2. Revocar el token del gateway (pestaña Tokens).
+2. Revocar el token del gateway (⚙ Administración → Tokens).
 3. Revocar la clave de ASCI del bot (`revocar_clave`) y desactivar el usuario (`actualizar_usuario`).
 4. Desactivar los usuarios del cliente en el panel.
 5. En Grok: borrar los bots o entregar la cuenta, según lo acordado.

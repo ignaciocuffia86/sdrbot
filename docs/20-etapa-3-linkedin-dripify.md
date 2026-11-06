@@ -35,7 +35,7 @@ y el gateway los carga con la persona por la Open API.
 | Despertador de `seguimiento` | También avisa las respuestas de LinkedIn |
 | Calibración | La aprobación del primer contacto (`calibracion_mail`) lleva `contenido.linkedin` con los tres textos, en la misma aprobación que el mail. El operador puede corregirlos en el chat del `orquestador` |
 | Cupo de la API | 50 pedidos por minuto y 4500 por día por cliente (Dripify permite 60 y 5000). Pasado eso, `dripify_limite` |
-| Panel | Pestaña SDR → «LinkedIn · Dripify»: API key (cifrada, no se vuelve a mostrar), id de la campaña, largo de la nota, **Probar** y **Generar URL del webhook** |
+| Panel | Pestaña Canales → «LinkedIn · Dripify»: API key (cifrada, no se vuelve a mostrar), id de la campaña, largo de la nota, **Probar** y **Generar URL del webhook** |
 
 ## 2. Lo que prepara el cliente (o Biguá) en Dripify
 
@@ -54,7 +54,7 @@ y el gateway los carga con la persona por la Open API.
 
 ## 3. El alta en el panel
 
-1. Pestaña **SDR** → **LinkedIn · Dripify**: API key, id de la campaña y largo máximo de la nota.
+1. Pestaña **Canales** → **LinkedIn · Dripify**: API key, id de la campaña y largo máximo de la nota.
    **Cargar Dripify.**
 2. **Probar:** tiene que decir «listo», con la campaña ACTIVE y los tres campos encontrados. Si
    falta algo, lo lista.

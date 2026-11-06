@@ -69,7 +69,8 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
 > Corto, con el aviso como señal y la tesis, como dice «Cómo escribimos».
 
 1. Leé de nuevo la sección «Cómo escribimos» de las reglas comunes y los ajustes del cliente
-   (tono, oferta, firma, objeciones).
+   (tono, oferta, objeciones, qué le pedimos al prospecto, casos que se pueden citar) y la firma del
+   buzón que vas a usar («Buzones y firmas»).
 2. **El aviso va nombrado** en la primera o segunda línea, con su fecha («vi que el 3/11 publicaron
    una búsqueda de QA Automation»). Nada de «vi que están creciendo».
 3. **Un ángulo por persona:**

@@ -51,6 +51,7 @@ const dayIn = (tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'nu
 const publicAccount = (a, sendsToday) => ({
   email: a.email,
   display_name: a.display_name,
+  firma: a.firma ?? null,
   status: a.status,
   imap: `${a.imap_host}:${a.imap_port} (${a.imap_security})`,
   smtp: `${a.smtp_host}:${a.smtp_port} (${a.smtp_security})`,
@@ -194,7 +195,8 @@ async function sendFlow(ctx, args, kind) {
 const MAIL_OPS = [
   {
     op: 'mailboxes', mcp: 'buzones', scope: 'read',
-    description: 'Lista los buzones IMAP de este cliente con su estado, su cupo diario de envíos y cuántos van hoy. ' +
+    description: 'Lista los buzones IMAP de este cliente con su estado, su firma (null: usar la firma por defecto de los ajustes), ' +
+      'su cupo diario de envíos y cuántos van hoy. ' +
       'Un buzón en auth_error quedó bloqueado por contraseña rechazada y lo reactiva un operador.',
     schema: obj({}),
     handler: async (ctx) => {

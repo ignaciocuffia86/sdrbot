@@ -18,6 +18,7 @@ import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
 import { insertarEvento, aplicarEvento, versionActual } from './store.mjs';
 import * as dripify from './dripify.mjs';
+import * as noContactar from './no_contactar.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -332,6 +333,11 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
     if (sup.length) {
       throw new GatewayError('destinatario_suprimido',
         `No se le escribe más a ${sup.map((s) => `${s.email} (${s.motivo})`).join(', ')}: está en la supresión del cliente.`, 409);
+    }
+    const nc = await noContactar.coincidencias(c, clientId, emails);
+    if (nc.length) {
+      throw new GatewayError('no_contactar',
+        `El cliente pidió no escribirle a ${noContactar.describir(nc)}: está en su lista de no contactar.`, 409);
     }
     if (kind !== 'send') return;
     const { rows } = await c.query(

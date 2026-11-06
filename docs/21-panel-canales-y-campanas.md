@@ -1,6 +1,7 @@
 # Panel por cliente: canales, campañas y ajustes del SDR
 
-Estado: **diseño para revisar, nada construido.** Escrito el 05/11/2026. Propone cómo reorganizar
+Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); C en adelante, diseño.
+Escrito el 05/11/2026. Propone cómo reorganizar
 la ficha de cada cliente en `https://sdrbot.bigua.lat/admin`: qué se configura, dónde, quién lo
 toca y en qué orden se construye. Complementa a `15` (alta), `16` (guía del cliente) y `20`
 (Dripify).
@@ -387,11 +388,28 @@ Cada etapa se puede usar sola; la A no toca la base ni las reglas.
 
 | Etapa | Qué | Toca |
 |---|---|---|
-| **A · Reordenar** | Barra nueva (Resumen, Empresa, Canales, Actividad, ⚙; Campañas aparece en C y, mientras tanto, «A quién y con qué» vive como un bloque de Empresa). Canales junta Buzones, Dominios y Dripify. Administración junta Usuarios, Tokens, lo técnico y los despertadores. El formulario de ajustes de hoy partido en bloques (Empresa / A quién y con qué / Operación) con candados en vez de sufijos. Resumen con lo que ya hay (aprobaciones, calibración, estado de buzones y Dripify) | Sólo `gateway/src/admin/static/` y un endpoint de resumen |
-| **B · Ajustes nuevos** | Lista de no contactar (con el gateway haciéndola cumplir), firma por buzón, link de agenda, a quién avisar un positivo, prueba social, llamado a la acción. Las reglas los leen | `ajustes.mjs`, una tabla de supresión del cliente, `playbooks/` |
+| **A · Reordenar** (hecha) | Barra nueva (Resumen, Empresa, Canales, Actividad, ⚙; Campañas aparece en C y, mientras tanto, «A quién y con qué» vive como un bloque de Empresa). Canales junta Buzones, Dominios y Dripify. Administración junta Usuarios, Tokens, lo técnico y los despertadores. El formulario de ajustes de hoy partido en bloques (Empresa / A quién y con qué / Operación) con candados en vez de sufijos. Resumen con lo que ya hay (aprobaciones, calibración, estado de buzones y Dripify) | Sólo `gateway/src/admin/static/` y un endpoint de resumen |
+| **B · Ajustes nuevos** (hecha) | Lista de no contactar (con el gateway haciéndola cumplir), firma por buzón, link de agenda, a quién avisar un positivo, prueba social, llamado a la acción. Las reglas los leen | `ajustes.mjs`, una tabla de supresión del cliente, `playbooks/` |
 | **C · Campañas** | Tabla `sdr.campana`, la «principal» migrada, tipo Prospección, buzones y Dripify por campaña, `campana` en las herramientas MCP, reparto en el orquestador, calibración por campaña, resumen por campaña | Base, gateway, MCP, `playbooks/`, panel |
 | **D · Más tipos** | Invitación a evento y Reactivación, cadencia configurable | `playbooks/` (tareas nuevas), panel |
 | **E · Canales nuevos** | CRM (HubSpot), WhatsApp de seguimiento | Según `11` y §5 |
 
 Sugerencia: A y B juntas en una entrega, C después de revisar con
 BairesQA cómo quieren usar la segunda campaña.
+
+### 7.1 Lo que quedó construido en A y B
+
+- **Panel:** Resumen, Empresa (ajustes en cuatro bloques, vista previa, no contactar e historial),
+  Canales (correo con firma por buzón y dominios, LinkedIn · Dripify, WhatsApp y CRM como
+  próximamente), Actividad y ⚙ Administración (operación, bots y despertadores, usuarios, tokens).
+  Las direcciones de las pestañas viejas llevan a su lugar nuevo.
+- **No contactar** (`sdr.no_contactar`): dominios con sus subdominios y mails, de a uno, pegados o
+  por CSV. El gateway la hace cumplir al guardar una cuenta (queda `excluida`) o una persona, al
+  enviar o responder un mail y al cargar en Dripify (error `no_contactar`).
+- **Firma por buzón** (`mailgw.account.firma`): los bots la ven en `buzones` y en «Buzones y firmas».
+- **Ajustes nuevos:** qué le pedimos al prospecto, casos y datos que se pueden citar, quién toma a
+  los interesados y link de agenda. Las reglas (`comun`, `prospector/diaria`,
+  `seguimiento/respuestas`) los usan.
+- **Modo de operación** (`sdr.cliente_config.modo` y `tope_cuentas_dia`): en autogestionado el
+  cliente cambia volumen, buzones, extrapolados y antigüedad del aviso, con las cuentas por día
+  hasta el tope. La activación de campañas por el cliente llega con la etapa C.

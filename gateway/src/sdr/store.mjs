@@ -7,6 +7,7 @@
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
 import { ordenar, tituloDe } from './ajustes.mjs';
+import * as noContactar from './no_contactar.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -45,7 +46,9 @@ export async function config(clientId) {
 
 // ---------------------------------------------------------------- reglas
 
-export function renderAjustes(clientId, nombreCliente, cfg) {
+// extra: { buzones: [{email, display_name, status, firma}], noContactar: {dominios, emails} }, lo que
+// el bot necesita saber de los canales y de la lista de no contactar.
+export function renderAjustes(clientId, nombreCliente, cfg, extra = {}) {
   const lineas = [`Cliente: ${nombreCliente} (\`${clientId}\`).`];
   if (!cfg) {
     lineas.push('', 'Este cliente todavía no tiene ajustes cargados. No prospectes ni envíes: avisá al orquestador.');
@@ -63,7 +66,30 @@ export function renderAjustes(clientId, nombreCliente, cfg) {
     else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) lineas.push(...v.map((x) => `- ${x}`));
     else lineas.push('```json', JSON.stringify(v, null, 2), '```');
   }
+  const activos = (extra.buzones ?? []).filter((b) => b.status === 'active');
+  if (activos.length) {
+    lineas.push('', '### Buzones y firmas', '',
+      'Cada mail va firmado con la firma del buzón que lo manda; si el buzón no tiene, con la «Firma por defecto».');
+    for (const b of activos) {
+      lineas.push('', `- ${b.email}${b.display_name ? ` (${b.display_name})` : ''}: ${b.firma ? 'firma propia:' : 'usa la firma por defecto.'}`);
+      if (b.firma) lineas.push(...b.firma.split('\n').map((x) => `  > ${x}`));
+    }
+  }
+  const nc = extra.noContactar;
+  if (nc && nc.dominios + nc.emails > 0) {
+    lineas.push('', '### No contactar', '',
+      `El cliente tiene ${nc.dominios} dominio(s) y ${nc.emails} mail(s) a los que no se les escribe nunca. El gateway los hace cumplir: ` +
+      'una cuenta de esa lista queda excluida al guardarla (registro_guardar_cuenta lo avisa con no_contactar), y una persona, ' +
+      'un mail o una carga en Dripify se rechazan con el error no_contactar. No reveles a nadie de una empresa excluida.');
+  }
   return lineas.join('\n');
+}
+
+// Lo que renderAjustes necesita además de la configuración, leído con el rol de la conexión.
+export async function extraAjustes(c, clientId) {
+  const { rows: buzones } = await c.query(
+    `select email, display_name, status, firma from mailgw.account where client_id = $1 order by email`, [clientId]);
+  return { buzones, noContactar: await noContactar.contar(c, clientId) };
 }
 
 export async function manual(clientId, bot, tarea, seccion) {
@@ -79,7 +105,7 @@ export async function manual(clientId, bot, tarea, seccion) {
     const ajustes = {
       bot: '-', tarea: '-', seccion: 'ajustes-cliente', titulo: 'Ajustes de este cliente',
       resumen: 'ICP, oferta, tono, firma, campañas, calibración: lo propio de este cliente.',
-      contenido: renderAjustes(clientId, cli[0]?.name ?? clientId, cfg),
+      contenido: renderAjustes(clientId, cli[0]?.name ?? clientId, cfg, await extraAjustes(c, clientId)),
     };
     const todas = [...rows, ajustes];
     if (seccion) {
@@ -262,6 +288,18 @@ export async function guardarCuenta(clientId, a, meta) {
       actual = rows[0] ?? null;
     }
     const version = await versionActual(c, clientId);
+    // Una empresa de la lista de no contactar queda en el registro como excluida, para que nadie
+    // la vuelva a investigar ni le revele contactos.
+    let aviso = null;
+    const dominio = a.dominio ?? actual?.dominio;
+    const estadoFinal = a.estado ?? actual?.estado ?? 'en_investigacion';
+    if (dominio && !['excluida', 'descartada'].includes(estadoFinal)) {
+      const nc = await noContactar.coincidencias(c, clientId, [dominio]);
+      if (nc.length) {
+        a = { ...a, estado: 'excluida', estado_motivo: `No contactar: ${noContactar.describir(nc)}` };
+        aviso = 'La empresa está en la lista de no contactar del cliente: quedó excluida. No busques ni reveles a nadie de ella.';
+      }
+    }
     const val = (k) => (k === 'senales' ? JSON.stringify(a[k]) : a[k]);
     if (!actual) {
       if (!a.nombre) throw new GatewayError('invalid_request', 'Para crear una cuenta hace falta el nombre.', 400);
@@ -273,7 +311,7 @@ export async function guardarCuenta(clientId, a, meta) {
       if (rows[0].estado === 'excluida') {
         await insertarEvento(c, clientId, { tipo: 'cuenta.excluida', cuenta_id: rows[0].id, datos: { motivo: rows[0].estado_motivo } }, { ...meta, version });
       }
-      return { creada: true, cuenta: rows[0] };
+      return { creada: true, cuenta: rows[0], ...(aviso ? { no_contactar: true, aviso } : {}) };
     }
     const cols = CAMPOS_CUENTA.filter((k) => a[k] !== undefined);
     if (!cols.length) return { creada: false, cuenta: actual };
@@ -283,7 +321,7 @@ export async function guardarCuenta(clientId, a, meta) {
     if (a.estado === 'excluida' && actual.estado !== 'excluida') {
       await insertarEvento(c, clientId, { tipo: 'cuenta.excluida', cuenta_id: actual.id, datos: { motivo: a.estado_motivo ?? null } }, { ...meta, version });
     }
-    return { creada: false, cuenta: rows[0] };
+    return { creada: false, cuenta: rows[0], ...(aviso ? { no_contactar: true, aviso } : {}) };
   });
 }
 
@@ -302,6 +340,17 @@ export async function guardarProspecto(clientId, a, meta) {
            and ((email = $2) or (linkedin_url = $3) or (asci_id = $4)) limit 1`,
         [clientId, a.email ?? null, a.linkedin_url ?? null, a.asci_id ?? null]);
       actual = rows[0] ?? null;
+    }
+    // Nadie de la lista de no contactar entra al registro: ni un mail nuevo que choque con ella, ni
+    // una persona nueva de una empresa de la lista.
+    const aControlar = [];
+    if (a.email && a.email !== actual?.email) aControlar.push(a.email);
+    const cuentaId = a.cuenta_id ?? actual?.cuenta_id;
+    if (!actual && cuentaId) aControlar.push((await cuentaDe(c, clientId, cuentaId)).dominio);
+    const nc = await noContactar.coincidencias(c, clientId, aControlar);
+    if (nc.length) {
+      throw new GatewayError('no_contactar',
+        `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);
     }
     const version = await versionActual(c, clientId);
     const val = (k) => (JSONB_PROSPECTO.has(k) ? JSON.stringify(a[k]) : a[k]);
@@ -637,10 +686,12 @@ export async function corridaFin(clientId, a) {
 export async function setConfig(clientId, cfg) {
   return asOwner(async (c) => {
     const { rows } = await c.query(
-      `insert into sdr.cliente_config (client_id, canal, version_fija, ajustes, bots_activos, zona_horaria, calibracion_mails)
+      `insert into sdr.cliente_config (client_id, canal, version_fija, ajustes, bots_activos, zona_horaria, calibracion_mails,
+                                       modo, tope_cuentas_dia)
        values ($1, coalesce($2::text, 'estable'), $3::text, coalesce($4::jsonb, '{}'::jsonb),
                coalesce($5::text[], '{orquestador,prospector}'::text[]),
-               coalesce($6::text, 'America/Argentina/Buenos_Aires'), coalesce($7::int, 20))
+               coalesce($6::text, 'America/Argentina/Buenos_Aires'), coalesce($7::int, 20),
+               coalesce($9::text, 'operado'), $10::int)
        on conflict (client_id) do update set
          canal = coalesce($2::text, sdr.cliente_config.canal),
          version_fija = case when $8::boolean then $3::text else sdr.cliente_config.version_fija end,
@@ -648,10 +699,13 @@ export async function setConfig(clientId, cfg) {
          bots_activos = coalesce($5::text[], sdr.cliente_config.bots_activos),
          zona_horaria = coalesce($6::text, sdr.cliente_config.zona_horaria),
          calibracion_mails = coalesce($7::int, sdr.cliente_config.calibracion_mails),
+         modo = coalesce($9::text, sdr.cliente_config.modo),
+         tope_cuentas_dia = case when $11::boolean then $10::int else sdr.cliente_config.tope_cuentas_dia end,
          actualizado_at = now()
        returning *`,
       [clientId, cfg.canal ?? null, cfg.version_fija ?? null, cfg.ajustes ? JSON.stringify(cfg.ajustes) : null,
-        cfg.bots_activos ?? null, cfg.zona_horaria ?? null, cfg.calibracion_mails ?? null, 'version_fija' in cfg]);
+        cfg.bots_activos ?? null, cfg.zona_horaria ?? null, cfg.calibracion_mails ?? null, 'version_fija' in cfg,
+        cfg.modo ?? null, cfg.tope_cuentas_dia ?? null, 'tope_cuentas_dia' in cfg]);
     if (cfg.ajustes) {
       await c.query(
         `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_rol, nota) values ($1, $2, $3, 'cli', 'Cargado con la CLI')`,

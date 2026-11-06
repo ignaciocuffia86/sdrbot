@@ -122,6 +122,7 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `send_in_progress` | Un envío con esa clave quedó a medias | No reintentes con otra clave: avisá al orquestador |
 | `recipients_rejected` | El servidor rechazó el destinatario | Registrá `mail.rebotado` y no insistas |
 | `destinatario_suprimido` | Rebotó o pidió la baja antes | No le escribas más por mail |
+| `no_contactar` | La persona o su empresa está en la lista de no contactar del cliente | No le escribas por ningún canal ni reveles a nadie de esa empresa; pasá a la siguiente. Una cuenta de la lista queda `excluida` sola al guardarla (`registro_guardar_cuenta` devuelve `no_contactar: true`) |
 | `prospecto_respondio` | La persona ya respondió (o dijo que no, o es positivo) | No va otro mail de la secuencia: lo que sigue es de `seguimiento` |
 | `respuesta_sin_atender` | Tiene una respuesta que `seguimiento` no leyó | Esperá: la lee `seguimiento` |
 | `dripify_carga_rechazada` | Alguien de la carga no pasa los controles (`errores` dice quién y por qué) | Sacá o corregí a esos y volvé a cargar con la misma clave |
@@ -158,11 +159,16 @@ usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos
   de más ni signos de exclamación.
 - **Una sola idea:** por qué le escribimos a esta persona hoy (la señal) y qué podría ganar (la
   tesis). Nada de presentaciones largas de la empresa.
-- **Un pedido simple al final:** una pregunta que se conteste en una línea.
+- **Un pedido simple al final:** lo que diga «Qué le pedimos al prospecto» en los ajustes; si no
+  dice, una pregunta que se conteste en una línea.
+- **Resultados, sólo los de «Casos y datos que se pueden citar»**, tal cual y con el que encaje con
+  la persona. Si no hay ninguno, no cites resultados.
 - Sin adjuntos, sin links acortados, sin imágenes, sin promesas de precios ni de plazos.
+- **Sin links**, salvo el «Link de agenda» en la respuesta a un positivo.
 - **LinkedIn:** más corto que un mail y sin asunto. La nota de la invitación, sin venta ni links.
   Los textos van completos, nunca con marcadores (`{{…}}`, `[Nombre]`).
-- Firma como dicen los ajustes del cliente.
+- **Firma:** la del buzón que manda el mail («Buzones y firmas» en los ajustes, o `firma` en
+  `buzones`); si el buzón no tiene, la «Firma por defecto».
 
 ## Tus routines
 

@@ -192,6 +192,12 @@ test('dripify_cargar: controles, calibración con el texto aprobado, carga con l
   });
   assert.match(marcas.error.errores[0].error, /marcadores/);
 
+  // Nadie de la lista de no contactar del cliente entra a la campaña.
+  await sql(`insert into sdr.no_contactar (client_id, valor, tipo, motivo) values ($1, 'caro@empresa.test', 'email', 'Cliente actual')`, [C]);
+  const nc = await call(tok.c, 'dripify_cargar', { prospectos: [{ prospecto_id: P.caro.id, ...textos('Caro') }], idempotency_key: 'carga-caro-nc', ...META });
+  assert.match(nc.error.errores[0].error, /no contactar.*Cliente actual/);
+  await sql(`delete from sdr.no_contactar where client_id = $1`, [C]);
+
   // Aprobación sólo de LinkedIn: no pide buzón ni asunto.
   const ap = (await ok(tok.c, 'registro_pedir_aprobacion', {
     tipo: 'calibracion_mail', prospecto_id: P.ana.id, contenido: { linkedin: textos('Ana') }, ...META,
