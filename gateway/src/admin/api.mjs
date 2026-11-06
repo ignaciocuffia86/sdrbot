@@ -19,6 +19,8 @@ import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { BLOQUES, CAMPOS, aplicarCambios, diferencias, editable, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
+import * as whatsapp from '../sdr/whatsapp.mjs';
+import * as monitor from '../sdr/monitor.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import * as dripify from '../sdr/dripify.mjs';
 import {
@@ -107,6 +109,20 @@ const V = {
       valor: { type: 'string', maxLength: 300 },
       motivo: { type: 'string', maxLength: 200 },
       csv: { type: 'string', maxLength: 400000 },
+    } }),
+  whatsapp: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: {
+      activo: { type: 'boolean' },
+      numero: { type: ['string', 'null'], pattern: '^\\+?[0-9 ]{6,20}$' },
+      hora_desde: { type: 'integer', minimum: 0, maximum: 23 },
+      hora_hasta: { type: 'integer', minimum: 1, maximum: 24 },
+      dias: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: 7 } },
+      pausa_min_seg: { type: 'integer', minimum: 5, maximum: 600 },
+      pausa_max_seg: { type: 'integer', minimum: 5, maximum: 1800 },
+      tope_contacto_dia: { type: 'integer', minimum: 1, maximum: 50 },
+      tope_dia: { type: 'integer', minimum: 1, maximum: 500 },
+      aprobar_primero: { type: 'boolean' },
+      reanudar: { type: 'boolean' },
     } }),
   noContactarBaja: validator({ type: 'object', required: ['valores'], additionalProperties: false,
     properties: { valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 300 } } } }),
@@ -505,6 +521,7 @@ async function leerSdr(c, user, clientId) {
     out.despertadores = {};
     for (const b of BOTS_CON_AVISO) out.despertadores[b] = await verDespertador(c, clientId, b);
     out.dripify = await dripify.ver(c, clientId);
+    out.whatsapp = await whatsapp.ver(c, clientId);
   }
   return out;
 }
@@ -625,6 +642,67 @@ route('POST', '/clients/:client/sdr/dripify/webhook', async ({ user, params }) =
   return r;
 });
 
+// ----- WhatsApp: las reglas del turno (docs/22). Las carga Biguá; el cliente ve el estado.
+
+route('PUT', '/clients/:client/sdr/whatsapp', async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = V.whatsapp(body);
+  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
+  const actual = await asOwner((c) => whatsapp.ver(c, params.client));
+  const desde = b.hora_desde ?? actual?.hora_desde ?? 8;
+  const hasta = b.hora_hasta ?? actual?.hora_hasta ?? 24;
+  if (desde >= hasta) throw errors.invalid('La hora de inicio tiene que ser anterior a la de fin.');
+  if ((b.pausa_min_seg ?? actual?.pausa_min_seg ?? 20) > (b.pausa_max_seg ?? actual?.pausa_max_seg ?? 60)) {
+    throw errors.invalid('La pausa mínima no puede ser mayor que la máxima.');
+  }
+  await whatsapp.configurar(params.client, b);
+  await asOwner((c) => audit(c, user, params.client, b.reanudar ? 'admin.sdr.whatsapp.reanudar' : 'admin.sdr.whatsapp',
+    Object.fromEntries(Object.entries(b).filter(([k]) => k !== 'numero'))));
+  return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
+});
+
+// ----- monitor: los canales con su modo y lo que pasó hoy (pestaña Actividad)
+
+const OPS_PANEL = {
+  'admin.mailbox.create': 'alta de buzón', 'admin.mailbox.update': 'buzón editado', 'admin.mailbox.password': 'contraseña de buzón cambiada',
+  'admin.mailbox.check': 'prueba de buzón', 'admin.mailbox.pause': 'buzón pausado', 'admin.mailbox.activate': 'buzón reactivado',
+  'admin.mailbox.delete': 'buzón eliminado', 'admin.sdr.ajustes': 'ajustes cambiados', 'admin.sdr.restaurar': 'ajustes vueltos atrás',
+  'admin.sdr.config': 'configuración del SDR', 'admin.sdr.no_contactar': 'alta en no contactar',
+  'admin.sdr.no_contactar.quitar': 'baja de no contactar', 'admin.sdr.whatsapp': 'reglas de WhatsApp',
+  'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado', 'admin.domain.check': 'dominio verificado',
+  'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
+  'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
+};
+
+route('GET', '/clients/:client/monitor', async ({ user, params }) => {
+  const base = await scoped(user, params.client, async (c) => {
+    const client = (await c.query(`select id, name from mailgw.client where id = $1`, [params.client])).rows[0];
+    if (!client) throw notFound('No existe ese cliente.');
+    const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1`, [params.client])).rows[0] ?? null;
+    const buzones = (await c.query(`select email, status from mailgw.account where client_id = $1`, [params.client])).rows;
+    const tz = cfg?.zona_horaria ?? 'America/Argentina/Buenos_Aires';
+    const panel = (await c.query(
+      `select l.at, l.op, l.ok from mailgw.audit_log l
+        where l.client_id = $1 and l.op like 'admin.%' and l.at >= (date_trunc('day', now() at time zone $2) at time zone $2)
+        order by l.id desc limit 100`, [params.client, tz])).rows;
+    return { client, cfg, buzones, panel };
+  });
+  const m = base.cfg ? await monitor.leer(params.client, { cfg: base.cfg, buzones: base.buzones }) : null;
+  const panel = base.panel.filter((x) => OPS_PANEL[x.op]).map((x) => ({
+    at: x.at, estado: x.ok ? 'ok' : 'error', canal: 'panel', texto: OPS_PANEL[x.op],
+  }));
+  const eventos = [...(m?.eventos ?? []), ...panel].sort((a, b) => new Date(a.at) - new Date(b.at));
+  return {
+    ahora: new Date().toISOString(),
+    zona_horaria: base.cfg?.zona_horaria ?? 'America/Argentina/Buenos_Aires',
+    sdr_activo: Boolean(base.cfg),
+    canales: m ? monitor.canales({ cfg: base.cfg, calibracion: m.calibracion, buzones: base.buzones, dripify: m.dripify, wa: m.wa }) : [],
+    esperando_ok: m?.esperando_ok ?? 0,
+    eventos,
+  };
+});
+
 // ----- no contactar: dominios y mails a los que el SDR no les escribe nunca (docs/21 §3.3)
 
 async function clienteExiste(c, clientId) {
@@ -728,6 +806,7 @@ route('GET', '/clients/:client/resumen', async ({ user, params }) => {
             order by inicio desc limit 5`, [params.client])).rows : undefined,
       };
     }));
+    out.whatsapp = await whatsapp.estado(params.client);
     if (isBigua(user)) {
       out.despertadores = await asOwner(async (c) => {
         const r = {};

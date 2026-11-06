@@ -260,15 +260,20 @@ export async function buscar(clientId, q) {
         [clientId, q.dominio ?? null, q.asci_id ?? null, q.nombre ?? null]);
       cuentas.push(...rows);
     }
-    if (q.email || q.linkedin_url || q.asci_id || q.nombre || q.dominio) {
+    // Un número de WhatsApp se compara por sus últimos 10 dígitos: «+54 9 11 …» y «11 …» son el mismo.
+    const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : null;
+    if (q.email || q.linkedin_url || q.asci_id || q.nombre || q.dominio || digitos) {
       const { rows } = await c.query(
         `select p.* from sdr.prospecto p left join sdr.cuenta k on k.id = p.cuenta_id
           where p.client_id = $1
             and (($2::text is not null and p.email = $2) or ($3::text is not null and p.linkedin_url = $3)
                  or ($4::text is not null and p.asci_id = $4) or ($5::text is not null and p.nombre ilike '%' || $5 || '%')
-                 or ($6::text is not null and (k.dominio = $6 or split_part(p.email, '@', 2) = $6)))
+                 or ($6::text is not null and (k.dominio = $6 or split_part(p.email, '@', 2) = $6))
+                 or ($7::text is not null and p.whatsapp is not null
+                     and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 10) = right($7, 10)))
           order by p.actualizado_at desc limit 20`,
-        [clientId, q.email ?? null, q.linkedin_url ?? null, q.asci_id ?? null, q.nombre ?? null, q.dominio ?? null]);
+        [clientId, q.email ?? null, q.linkedin_url ?? null, q.asci_id ?? null, q.nombre ?? null, q.dominio ?? null,
+          digitos && digitos.length >= 8 ? digitos : null]);
       prospectos.push(...rows);
     }
     return { cuentas, prospectos };

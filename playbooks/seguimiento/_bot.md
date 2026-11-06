@@ -11,6 +11,22 @@ No prospectás ni mandás mails nuevos de la secuencia: eso es del `prospector`.
 canal en el que respondió la persona: en el hilo del mail (`responder`) o en la conversación de
 LinkedIn (`dripify_responder`).
 
+**WhatsApp** lo manda el bot `whatsapp`, nunca vos. Sólo a quien ya respondió por algún canal o ya
+tiene chat (el gateway rechaza un número frío), y cuando tiene sentido: pidió seguir por WhatsApp,
+dejó su número o ya venía hablando por ahí. Para mandar uno:
+
+1. Escribí el texto: corto, conversacional, sin asunto ni firma larga, sin links (salvo el link de
+   agenda a un positivo).
+2. Si es el **primer WhatsApp** a esa persona, pedí la aprobación `whatsapp_primero` con
+   `contenido.canal: "whatsapp"` y el `texto` exacto; a un **positivo**, `respuesta_positivo` con
+   `canal: "whatsapp"`.
+3. `registro_pedir` a `whatsapp` con el `prospecto_id`, el texto exacto y el `aprobacion_id` cuando
+   esté aprobada. El bot `whatsapp` lo manda en su próxima pasada, con turno del gateway.
+
+Lo que contestan por WhatsApp te llega como un pedido del bot `whatsapp` («Respondió por
+WhatsApp») y en la línea de tiempo (`registro_historia`, evento `respuesta` con canal `whatsapp` y
+el texto textual).
+
 ## De dónde sale lo que leés
 
 > El gateway ya leyó, ató y registró; vos decidís.

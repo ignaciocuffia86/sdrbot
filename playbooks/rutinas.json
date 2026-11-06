@@ -5,5 +5,6 @@
   {"bot": "orquestador", "nombre": "SDR · memorias", "tarea": "memorias", "cron": "0 17 * * 5", "descripcion": "revisión semanal de lo que recuerda cada bot.", "etapa": 1},
   {"bot": "prospector", "nombre": "SDR · tanda", "tarea": "diaria", "cron": "15 9 * * 1-5", "descripcion": "la tanda del día: cuentas nuevas, decisores, contactos y mails, más los seguimientos que tocan.", "etapa": 1},
   {"bot": "prospector", "nombre": "SDR · aprobados", "tarea": "ejecutar_aprobados", "cron": "30 11,15 * * 1-5", "descripcion": "mandar los mails que el operador ya aprobó.", "etapa": 1},
+  {"bot": "whatsapp", "nombre": "SDR · whatsapp", "tarea": "pasada", "cron": "20 9,11,13,15,17,19 * * 1-5", "descripcion": "mandar por WhatsApp Web, de a uno y con turno del gateway, los seguimientos que pidió seguimiento, y registrar lo que contestaron por WhatsApp.", "etapa": 5},
   {"bot": "seguimiento", "nombre": "SDR · respuestas", "tarea": "respuestas", "cron": "0 10,13,16,19 * * 1-5", "disparo": "horario_y_webhook", "descripcion": "atender el correo que llegó (respuestas, fuera de oficina, rebotes y bajas) y mandar las respuestas ya aprobadas.", "etapa": 2}
 ]

@@ -103,7 +103,7 @@ Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`
 | **Resumen** | Lo que necesita atención (buzones bloqueados, dominio mal, aprobaciones y respuestas que esperan, Dripify con error, despertadores y corridas con error), los números de los últimos 7 días, la calibración y el estado de cada canal (`GET /clients/:id/resumen`) | Los dos roles; despertadores y corridas, sólo Biguá |
 | **Empresa** | Los ajustes que leen los bots, en bloques (identidad y voz, a quién y con qué señal, conversación, operación), la vista previa, la lista de **no contactar** y el historial | Los dos roles |
 | **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, y WhatsApp y CRM como próximamente | Los dos roles; Dripify lo carga Biguá |
-| **Actividad** | La auditoría | Los dos roles |
+| **Actividad** | El monitor: a la izquierda los canales con su modo (supervisado o autónomo); a la derecha lo que pasó hoy, en orden, con su estado (`GET /clients/:id/monitor`, se actualiza cada 30 s). Debajo, la auditoría completa (`docs/22`) | Los dos roles |
 | **⚙ Administración** | Operación (activar el SDR, canal de reglas, zona horaria, calibración, bots activos, modo de operación y tope), bots y despertadores, usuarios y tokens | Sólo Biguá |
 
 Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/tokens`) llevan a su lugar nuevo.
@@ -227,6 +227,10 @@ node bin/admin.mjs reloj-tick                                              # una
 ### LinkedIn por Dripify (etapa 3)
 
 Una campaña esqueleto por cliente (invitación con nota, mensaje 1, mensaje 2) cuyo texto son los campos personalizados `sdr_nota`, `sdr_mensaje1` y `sdr_mensaje2`; el bot los escribe por persona y `dripify_cargar` los sube con la Open API de Dripify (`https://api.dripify.com`, `X-Api-Key`; `MAILGW_DRIPIFY_URL` la reemplaza en las pruebas). Lo que pasa vuelve por el webhook de la campaña, `POST /hook/dripify/<cliente>/<secreto>?e=invitacion|conexion|mensaje|respuesta` (el secreto va en la URL porque Dripify no deja poner cabeceras; en la base, su hash; el cuerpo se guarda crudo en `sdr.dripify_evento`), y por la lectura de las conversaciones abiertas que hace el reloj, porque el webhook de respuesta sólo llega con la primera. La API key, la campaña y el webhook se cargan en el panel (pestaña Canales, sólo Biguá). Detalle y alta: `docs/20-etapa-3-linkedin-dripify.md`.
+
+### WhatsApp de seguimiento (etapa 5)
+
+El bot `whatsapp` manda por WhatsApp Web en el navegador de su asiento de Grok; el gateway no toca WhatsApp, pero da el turno de cada mensaje (`whatsapp_turno`) y lo registra (`whatsapp_resultado`). En el turno hace cumplir horario del cliente, pausa al azar entre envíos (compartida por todos los chats), topes por persona y por día, sólo contactos tibios, nada repetido en 24 horas, la aprobación del primer mensaje a cada persona y, ante un bloqueo, la pausa de todo el canal con aviso al orquestador (migración `011`: `sdr.whatsapp_config`, `sdr.whatsapp_envio`). Las reglas las carga Biguá en el panel (Canales → WhatsApp) y sólo Biguá reanuda una pausa. Detalle: `docs/22-whatsapp-y-monitor.md`.
 
 Un cliente sin configuración del SDR (`sdr.cliente_config`) usa el gateway como antes, sin calibración.
 

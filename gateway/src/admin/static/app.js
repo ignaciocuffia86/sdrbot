@@ -256,7 +256,7 @@ async function renderClient(clientId, tab, sub) {
   if (tab === 'resumen') body.append(await resumenView(v));
   if (tab === 'empresa') body.append(await empresaView(v));
   if (tab === 'canales') body.append(await canalesView(v));
-  if (tab === 'actividad') body.append(await activityView(clientId));
+  if (tab === 'actividad') body.append(await monitorView(clientId));
   if (tab === 'admin') body.append(await adminView(v, sub));
 }
 
@@ -285,6 +285,7 @@ async function resumenView({ clientId, bigua, base }) {
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
     if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, `${base}/canales`, 'Ver');
+    if (r.whatsapp?.pausado) aviso('err', `WhatsApp en pausa: ${r.whatsapp.pausa_motivo ?? 'bloqueo'}.`, `${base}/canales`, bigua ? 'Revisar y reanudar' : 'Ver');
     for (const [bot, d] of Object.entries(r.despertadores ?? {})) {
       if (!d) aviso('mute', `El despertador de ${bot} no está cargado: el bot corre sólo en su horario.`, `${base}/admin/bots`, 'Cargarlo');
       else if (d.fallas) aviso('err', `El despertador de ${bot} falla (${d.fallas})${d.ultimo_error ? `: ${d.ultimo_error}` : ''}.`, `${base}/admin/bots`, 'Ver');
@@ -530,13 +531,78 @@ async function canalesView({ clientId, data, bigua, reload }) {
   const pronto = (titulo, texto) => h('div', { class: 'card' },
     h('div', { class: 'row spread' }, h('strong', {}, titulo), h('span', { class: 'badge b-mute' }, 'próximamente')),
     h('p', { class: 'small muted' }, texto));
+  const w = resumen.whatsapp;
+  const wa = bigua && sdr?.activo
+    ? whatsappCard(clientId, sdr, w, reload)
+    : h('section', { class: 'card' },
+      h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'WhatsApp'), whatsappBadge(w)),
+      h('p', { class: 'small muted' }, 'Sólo para seguir una conversación con quien ya respondió o ya tiene chat con nosotros: nunca a números fríos. ' +
+        'Lo activa Biguá.'),
+      w?.activo ? h('p', { class: 'small' }, `Horario ${w.horario} · ${w.hoy.enviados} de ${w.hoy.tope_dia} mensajes hoy`) : null,
+      w?.pausado ? h('p', { class: 'small err' }, w.pausa_motivo ?? 'En pausa.') : null);
   return h('div', { class: 'stack' },
     h('section', { class: 'stack' }, h('h2', { class: 'first' }, 'Correo'), mailboxesView(data, reload),
       h('h3', {}, 'Dominios'), await domainsView(clientId, reload)),
     h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
+    h('section', { class: 'stack' }, h('h2', {}, 'WhatsApp'), wa),
     h('section', {}, h('h2', {}, 'Más canales'), h('div', { class: 'grid' },
-      pronto('WhatsApp', 'Para seguir una conversación cuando la persona lo pide o deja su número. No para el primer contacto.'),
       pronto('CRM', 'HubSpot primero: los interesados se cargan solos, con el mapeo que apruebe el cliente.'))));
+}
+
+function whatsappBadge(w) {
+  if (!w?.activo) return h('span', { class: 'badge b-mute' }, 'no activado');
+  if (w.pausado) return h('span', { class: 'badge b-err' }, 'en pausa');
+  return h('span', { class: 'badge b-ok' }, w.en_horario ? 'activo' : 'activo · fuera de horario');
+}
+
+// Las reglas del turno de WhatsApp (docs/22): las hace cumplir el gateway, no el bot.
+function whatsappCard(clientId, sdr, w, reload) {
+  const c = sdr.whatsapp ?? {};
+  const num = (name, v, min, max) => h('input', { name, type: 'number', min, max, required: true, value: v });
+  const form = h('form', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'WhatsApp · seguimiento'), whatsappBadge(w)),
+    h('p', { class: 'muted small' }, 'El bot whatsapp manda desde WhatsApp Web, en el navegador de su asiento de Grok. Antes de cada mensaje le pide ' +
+      'el turno al gateway, que sólo se lo da dentro del horario, con una pausa al azar entre envíos, sin pasar los topes, a contactos ' +
+      'tibios (ya respondieron o ya tienen chat) y sin repetir un texto en 24 horas. Si WhatsApp avisa un bloqueo, todo queda en pausa.'),
+    w?.pausado ? h('div', { class: 'note' }, h('strong', {}, 'En pausa. '), w.pausa_motivo ?? '', ` (${fmtDate(w.pausado_at)}). `,
+      'Revisá la sesión de WhatsApp Web en el asiento antes de reanudar.') : null,
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'activo', checked: Boolean(c.activo) }), 'WhatsApp activado para este cliente'),
+    h('div', { class: 'cols2' },
+      field('Número de la sesión', h('input', { name: 'numero', value: c.numero ?? '', placeholder: '+54 9 11 5555 5555' }), 'Sólo para mostrar.'),
+      field('Primer mensaje a cada persona', h('label', { class: 'check' },
+        h('input', { type: 'checkbox', name: 'aprobar_primero', checked: c.aprobar_primero ?? true }), 'Con el OK del operador'))),
+    h('div', { class: 'cols2' },
+      field('Desde (hora del cliente)', num('hora_desde', c.hora_desde ?? 8, 0, 23)),
+      field('Hasta', num('hora_hasta', c.hora_hasta ?? 24, 1, 24))),
+    h('label', {}, 'Días'),
+    h('div', { class: 'row' }, DIAS.map((x, i) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', name: 'dia', value: i + 1, checked: (c.dias ?? [1, 2, 3, 4, 5, 6, 7]).includes(i + 1) }), x))),
+    h('div', { class: 'cols2' },
+      field('Pausa entre envíos: mínimo (segundos)', num('pausa_min_seg', c.pausa_min_seg ?? 20, 5, 600)),
+      field('Máximo (segundos)', num('pausa_max_seg', c.pausa_max_seg ?? 60, 5, 1800))),
+    h('div', { class: 'cols2' },
+      field('Mensajes por persona por día', num('tope_contacto_dia', c.tope_contacto_dia ?? 8, 1, 50)),
+      field('Mensajes por día en total', num('tope_dia', c.tope_dia ?? 60, 1, 500))));
+  const err = h('p', { class: 'err', role: 'alert' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar');
+  const reanudar = w?.pausado ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/sdr/whatsapp`, { reanudar: true }), err);
+    if (r) { toast('WhatsApp reanudado.'); reload(); }
+  } }, 'Reanudar') : null;
+  form.append(err, h('div', { class: 'row' }, btn, reanudar));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      activo: fd.get('activo') === 'on', aprobar_primero: fd.get('aprobar_primero') === 'on',
+      numero: String(fd.get('numero') ?? '').trim() || null, dias: fd.getAll('dia').map(Number),
+      ...Object.fromEntries(['hora_desde', 'hora_hasta', 'pausa_min_seg', 'pausa_max_seg', 'tope_contacto_dia', 'tope_dia']
+        .map((k) => [k, Number(fd.get(k))])),
+    };
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/whatsapp`, body), err);
+    if (r) { toast('Reglas de WhatsApp guardadas.'); reload(); }
+  });
+  return form;
 }
 
 // ----- administración (sólo Biguá)
@@ -1073,6 +1139,7 @@ const OPS = {
   'admin.sdr.despertador.apagar': 'despertador apagado',
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.dripify.webhook': 'URL del webhook de Dripify',
   'admin.sdr.no_contactar': 'alta en no contactar', 'admin.sdr.no_contactar.quitar': 'baja de no contactar',
+  'admin.sdr.whatsapp': 'reglas de WhatsApp', 'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado',
 };
 
 async function activityView(clientId) {
@@ -1085,6 +1152,66 @@ async function activityView(clientId) {
       h('td', { class: 'small' }, a.mailbox ?? a.detail?.mailbox ?? a.detail?.domain ?? (a.detail?.domains ? Object.keys(a.detail.domains).join(', ') : '—')),
       h('td', { class: 'small' }, a.actor ?? 'bot'),
       h('td', {}, a.ok ? h('span', { class: 'badge b-ok' }, 'ok') : h('span', { class: 'badge b-err' }, a.error_code ?? 'error'))))));
+}
+
+// ----- monitor: a la izquierda los canales con su modo; a la derecha, lo que pasó hoy
+
+const ICONO = { ok: '✓', espera: '◐', error: '✕' };
+const MODO = { supervisado: 'Supervisado', autonomo: 'Autónomo' };
+
+async function monitorView(clientId) {
+  const reloj = h('span', {});
+  const procesos = h('div', { class: 'mon-procesos' });
+  const lista = h('div', { class: 'mon-lista', role: 'log', 'aria-live': 'polite' });
+  const espera = h('span', {});
+  const caja = h('section', { class: 'monitor' },
+    h('div', { class: 'mon-izq' },
+      h('div', { class: 'mon-cab' }, h('span', {}, 'Canales'), h('span', {}, 'Modo')),
+      procesos),
+    h('div', { class: 'mon-der' },
+      h('div', { class: 'mon-cab' }, reloj,
+        h('span', { class: 'mon-leyenda' }, h('span', {}, '✓ ejecutado'), h('span', {}, '◐ espera OK'), espera)),
+      h('div', { class: 'mon-marco' }, lista)));
+  let ultimo = '';
+  async function pintar() {
+    const r = await api('GET', `/clients/${enc(clientId)}/monitor`);
+    const hora = (v, seg = true) => new Date(v).toLocaleTimeString('es-AR', { timeZone: r.zona_horaria, hour: '2-digit', minute: '2-digit',
+      ...(seg ? { second: '2-digit' } : {}), hourCycle: 'h23' });
+    reloj.textContent = `Hoy · ${hora(r.ahora, false)}`;
+    espera.textContent = r.esperando_ok ? `${r.esperando_ok} esperando` : '';
+    procesos.replaceChildren(...(r.canales.length ? r.canales.map((p) => h('div', { class: `mon-proc${p.modo === 'apagado' ? ' off' : ''}` },
+      h('div', { class: 'mon-proc-txt' },
+        h('div', { class: 'mon-proc-nombre' }, p.titulo, p.pausado ? h('span', { class: 'mon-pausa' }, 'en pausa') : null),
+        h('div', { class: 'mon-ruta' }, p.ruta),
+        h('div', { class: 'mon-det' }, p.detalle)),
+      p.modo === 'apagado'
+        ? h('span', { class: 'mon-off' }, 'apagado')
+        : h('div', { class: 'mon-seg', role: 'img', 'aria-label': `Modo: ${MODO[p.modo]}` },
+          ['supervisado', 'autonomo'].map((m) => h('span', { class: m === p.modo ? 'on' : '' }, MODO[m])))))
+      : [h('p', { class: 'mon-vacio' }, 'El SDR no está activado.')]));
+    const firma = JSON.stringify(r.eventos.map((e) => [e.at, e.estado, e.texto]));
+    if (firma === ultimo) return;
+    ultimo = firma;
+    const abajo = lista.scrollHeight - lista.scrollTop - lista.clientHeight < 40;
+    lista.replaceChildren(...(r.eventos.length ? r.eventos.map((e) => h('div', { class: `mon-ev ev-${e.estado}` },
+      h('span', { class: 'mon-hora' }, hora(e.at)),
+      h('span', { class: 'mon-ico', 'aria-label': e.estado }, ICONO[e.estado]),
+      h('span', { class: 'mon-canal' }, e.canal),
+      h('span', { class: 'mon-texto' }, e.texto)))
+      : [h('p', { class: 'mon-vacio' }, 'Todavía no pasó nada hoy.')]));
+    if (abajo || !lista.dataset.listo) { lista.scrollTop = lista.scrollHeight; lista.dataset.listo = '1'; }
+  }
+  await pintar();
+  // Se actualiza solo cada 30 segundos mientras la pestaña esté a la vista.
+  const timer = setInterval(() => {
+    if (!caja.isConnected) { clearInterval(timer); return; }
+    if (!document.hidden) pintar().catch(() => {});
+  }, 30_000);
+  const registro = h('details', { class: 'mon-registro' }, h('summary', {}, 'Registro completo del panel'));
+  registro.addEventListener('toggle', async () => {
+    if (registro.open && registro.children.length === 1) registro.append(await activityView(clientId));
+  });
+  return h('div', { class: 'stack' }, caja, registro);
 }
 
 // ---------------------------------------------------------------- equipo de Biguá

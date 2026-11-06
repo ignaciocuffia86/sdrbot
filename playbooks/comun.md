@@ -130,6 +130,10 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `dripify_campana_inactiva`, `dripify_faltan_campos`, `dripify_sin_configurar`, `dripify_clave`, `dripify_sin_api` | La campaña o la cuenta de Dripify del cliente no está lista | No cargues ni contestes por LinkedIn; avisá al orquestador con un pedido |
 | `dripify_sin_conversacion` | No aceptó la invitación todavía | No se le puede escribir por LinkedIn: esperá o seguí por mail |
 | `dripify_en_curso` | Una carga o un mensaje con esa clave quedó a medias | No reintentes con otra clave: avisá al orquestador |
+| `whatsapp_fuera_de_horario`, `whatsapp_tope` | WhatsApp fuera del horario del cliente, o se llegó al tope de la persona o del día | No lo mandes: queda para la próxima pasada (o mañana) |
+| `whatsapp_contacto_frio` | La persona nunca respondió ni tiene chat con nosotros | Por WhatsApp no se le escribe: seguí por mail o LinkedIn |
+| `whatsapp_repetido` | Ese texto ya le salió en las últimas 24 horas | No lo repitas |
+| `whatsapp_pausado`, `whatsapp_sin_configurar` | WhatsApp está en pausa (un bloqueo) o no está activado | Nada por WhatsApp hasta que Biguá lo reanude o lo active |
 | Presupuesto de ASCI agotado | No hay más créditos hoy | Seguí con lo que no gasta; avisá en el resumen |
 
 **Clave de idempotencia** de un mail: `<id del prospecto>:<paso>` (por ejemplo

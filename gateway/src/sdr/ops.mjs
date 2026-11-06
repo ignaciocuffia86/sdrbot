@@ -9,6 +9,7 @@ import { normalizeLinkedin } from './linkedin.mjs';
 import * as sdr from './store.mjs';
 import * as correo from './correo.mjs';
 import * as dripify from './dripify.mjs';
+import * as whatsapp from './whatsapp.mjs';
 import { errors } from '../errors.mjs';
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -60,14 +61,15 @@ export const SDR_OPS = [
   // ------------------------------------------------------------ registro
   {
     op: 'registro_buscar', mcp: 'registro_buscar', scope: 'sdr',
-    description: '¿Ya tenemos a esta cuenta o persona? Busca por email, URL de LinkedIn, id de ASCI, dominio o nombre ' +
-      'y devuelve cuentas y prospectos con su estado. Usalo antes de prospectar, revelar o escribir a alguien.',
-    schema: obj({ email: texto(320), linkedin_url: texto(300), asci_id: texto(100), dominio: texto(253), nombre: texto(200), ...META }),
+    description: '¿Ya tenemos a esta cuenta o persona? Busca por email, URL de LinkedIn, id de ASCI, dominio, nombre o ' +
+      'número de WhatsApp y devuelve cuentas y prospectos con su estado. Usalo antes de prospectar, revelar o escribir a alguien.',
+    schema: obj({ email: texto(320), linkedin_url: texto(300), asci_id: texto(100), dominio: texto(253), nombre: texto(200),
+      whatsapp: texto(40), ...META }),
     handler: (ctx, a) => {
-      if (!a.email && !a.linkedin_url && !a.asci_id && !a.dominio && !a.nombre) throw errors.invalid('Pasar al menos un criterio.');
+      if (!a.email && !a.linkedin_url && !a.asci_id && !a.dominio && !a.nombre && !a.whatsapp) throw errors.invalid('Pasar al menos un criterio.');
       return sdr.buscar(ctx.clientId, {
         email: email(a.email), linkedin_url: a.linkedin_url ? normalizeLinkedin(a.linkedin_url) : undefined,
-        asci_id: a.asci_id, dominio: dominio(a.dominio), nombre: a.nombre,
+        asci_id: a.asci_id, dominio: dominio(a.dominio), nombre: a.nombre, whatsapp: a.whatsapp,
       });
     },
     summary: (r) => ({ cuentas: r.cuentas.length, prospectos: r.prospectos.length }),
@@ -119,6 +121,9 @@ export const SDR_OPS = [
     }, ['tipo']),
     handler: (ctx, a) => {
       if (!a.prospecto_id && !a.cuenta_id) throw errors.invalid('Pasar prospecto_id o cuenta_id.');
+      if (a.tipo === 'whatsapp.enviado') {
+        throw errors.invalid('Un WhatsApp enviado lo registra el gateway: pedí el turno con whatsapp_turno y confirmalo con whatsapp_resultado.');
+      }
       return sdr.evento(ctx.clientId, a, meta(a));
     },
     summary: (r) => ({ evento: r.id }),
@@ -184,12 +189,13 @@ export const SDR_OPS = [
       'respuesta_positivo) poné en contenido exactamente lo que vas a mandar: buzon, destinatario, asunto y texto; el ' +
       'gateway sólo deja enviar eso. Si el primer contacto va también por LinkedIn, sumá contenido.linkedin con nota, ' +
       'mensaje1 y mensaje2: es lo único que dripify_cargar va a dejar cargar. Una respuesta a un positivo por LinkedIn ' +
-      'lleva contenido.canal "linkedin" y el texto.',
+      'lleva contenido.canal "linkedin" y el texto. El primer WhatsApp a una persona (whatsapp_primero) o la respuesta ' +
+      'a un positivo por WhatsApp llevan contenido.canal "whatsapp" y el texto exacto.',
     schema: obj({
       tipo: { enum: ['calibracion_mail', 'respuesta_positivo', 'crm_mapeo', 'crm_cambio', 'whatsapp_primero', 'otro'] },
       prospecto_id: uuid,
       contenido: obj({
-        canal: { enum: ['mail', 'linkedin'], description: 'Para respuesta_positivo: por dónde sale la respuesta (por defecto mail).' },
+        canal: { enum: ['mail', 'linkedin', 'whatsapp'], description: 'Para respuesta_positivo o whatsapp_primero: por dónde sale (por defecto mail).' },
         buzon: texto(254), destinatario: texto(320), asunto: texto(500), texto: texto(20000),
         linkedin: obj({ nota: texto(300), mensaje1: texto(1000), mensaje2: texto(1000) }, ['nota', 'mensaje1', 'mensaje2']),
         contexto: texto(4000), datos: { type: 'object', maxProperties: 50 },
@@ -207,8 +213,12 @@ export const SDR_OPS = [
         const conMail = ['buzon', 'destinatario', 'asunto', 'texto'].some((x) => k[x]) || !k.linkedin;
         if (conMail) exigir(['buzon', 'destinatario', 'asunto', 'texto'], 'un mail');
       }
+      if (a.tipo === 'whatsapp_primero') {
+        if (k.canal !== 'whatsapp') throw errors.invalid('Una aprobación whatsapp_primero lleva contenido.canal "whatsapp".');
+        exigir(['texto'], 'un WhatsApp');
+      }
       if (a.tipo === 'respuesta_positivo') {
-        if (k.canal === 'linkedin') exigir(['texto'], 'una respuesta por LinkedIn');
+        if (k.canal === 'linkedin' || k.canal === 'whatsapp') exigir(['texto'], `una respuesta por ${k.canal === 'linkedin' ? 'LinkedIn' : 'WhatsApp'}`);
         else exigir(['buzon', 'texto'], 'un mail');
       }
       return sdr.pedirAprobacion(ctx.clientId, a, meta(a));
@@ -372,6 +382,43 @@ export const SDR_OPS = [
     summary: (r) => ({ atendidos: r.atendidos.length }),
   },
   // ------------------------------------------------------------ bitácora y pruebas
+  {
+    op: 'whatsapp_estado', mcp: 'whatsapp_estado', scope: 'sdr',
+    description: 'Cómo está el WhatsApp del cliente: si está activo o en pausa (y por qué), el horario, si ahora se puede ' +
+      'mandar, la pausa entre envíos, cuántos van hoy y los topes. Llamalo al empezar cada pasada del bot whatsapp.',
+    schema: obj({ ...META }),
+    handler: (ctx) => whatsapp.estado(ctx.clientId),
+    summary: (r) => ({ activo: r.activo, pausado: r.pausado ?? null }),
+  },
+  {
+    op: 'whatsapp_turno', mcp: 'whatsapp_turno', scope: 'sdr',
+    description: 'Pide el turno para mandar UN mensaje de WhatsApp a un prospecto, ANTES de escribirlo en WhatsApp Web. ' +
+      'El gateway controla horario, pausa entre envíos, topes, que la persona sea un contacto tibio (ya respondió o ya ' +
+      'tiene chat), que el texto no se haya mandado en 24 horas y la aprobación (primer mensaje a cada persona: ' +
+      'whatsapp_primero; a un positivo: respuesta_positivo, las dos con contenido.canal "whatsapp"). Devuelve envio_id, ' +
+      'espera_segundos (esperá eso antes de mandarlo), el número y el ritual (cuánto tiempo escribiendo). Si te frena, ' +
+      'no lo mandes por otro lado.',
+    schema: obj({
+      prospecto_id: uuid, texto: { type: 'string', minLength: 1, maxLength: 4000 }, aprobacion_id: uuid,
+      idempotency_key: { type: 'string', minLength: 8, maxLength: 200, description: 'Clave única de este mensaje: <id del prospecto>:whatsapp-<n>. Un reintento con la misma clave devuelve el mismo turno.' },
+      ...META,
+    }, ['prospecto_id', 'texto', 'idempotency_key']),
+    handler: (ctx, a) => whatsapp.turno(ctx.clientId, a, meta(a)),
+    summary: (r) => ({ envio: r.envio_id, espera: r.espera_segundos, repetido: r.repetido }),
+  },
+  {
+    op: 'whatsapp_resultado', mcp: 'whatsapp_resultado', scope: 'sdr',
+    description: 'Cuenta cómo terminó un mensaje con turno: "enviado" (salió con los dos tildes o al menos uno: queda en ' +
+      'la línea de tiempo como whatsapp.enviado), "fallido" (no salió por algo de esa conversación) o "bloqueado" ' +
+      '(WhatsApp avisó un bloqueo, una restricción, un límite de mensajes a contactos nuevos o la sesión se cayó: el ' +
+      'gateway pausa TODO el WhatsApp del cliente y le avisa al operador). En detalle, el texto exacto del aviso.',
+    schema: obj({
+      envio_id: { type: 'integer', minimum: 1 }, resultado: { enum: ['enviado', 'fallido', 'bloqueado'] },
+      detalle: texto(500), ...META,
+    }, ['envio_id', 'resultado']),
+    handler: (ctx, a) => whatsapp.resultado(ctx.clientId, a, meta(a)),
+    summary: (r) => ({ estado: r.envio.estado, pausado: r.pausado ?? false }),
+  },
   {
     op: 'bitacora_inicio', mcp: 'bitacora_inicio', scope: 'sdr',
     description: 'Primera llamada de cada corrida: anota que empezó y devuelve el id de corrida (pasalo en las demás ' +

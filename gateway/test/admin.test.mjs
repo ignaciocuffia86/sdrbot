@@ -695,3 +695,28 @@ test('resumen: lo que necesita atención, para Biguá y para el cliente, sin cru
   const sin = (await otroCli.call('GET', '/clients/adm-a/resumen')).body.data;
   assert.equal(typeof sin.sdr_activo, 'boolean');
 });
+
+test('monitor y WhatsApp en el panel: canales con su modo, lo de hoy y las reglas que carga Biguá', async () => {
+  const r = await ctx.bigua.call('GET', '/clients/adm-b/monitor');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const d = r.body.data;
+  assert.deepEqual(d.canales.map((x) => x.clave), ['prospeccion', 'correo', 'linkedin', 'whatsapp', 'respuestas']);
+  assert.equal(d.canales.find((x) => x.clave === 'correo').modo, 'supervisado', 'adm-b está en calibración');
+  assert.ok(d.eventos.some((e) => e.canal === 'panel' && e.texto === 'alta en no contactar'), 'lo del panel de hoy también');
+  assert.ok(d.eventos.every((e, i, a) => i === 0 || new Date(a[i - 1].at) <= new Date(e.at)), 'en orden');
+
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  assert.equal((await cli.call('GET', '/clients/adm-b/monitor')).status, 200);
+  assert.equal((await (await usuarioDeOtroCliente()).call('GET', '/clients/adm-b/monitor')).status, 404);
+
+  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/whatsapp', { activo: true })).status, 403, 'las reglas las carga Biguá');
+  const mal = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/whatsapp', { hora_desde: 20, hora_hasta: 9 });
+  assert.equal(mal.status, 400);
+  const w = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/whatsapp',
+    { activo: true, numero: '+54 9 11 5555 5555', hora_desde: 9, hora_hasta: 21, tope_dia: 40 });
+  assert.equal(w.status, 200, JSON.stringify(w.body));
+  assert.equal(w.body.data.sdr.whatsapp.tope_dia, 40);
+  const res = (await cli.call('GET', '/clients/adm-b/resumen')).body.data;
+  assert.equal(res.whatsapp.activo, true);
+  assert.equal(res.whatsapp.horario, 'de 9 a 21 h, todos los días');
+});
