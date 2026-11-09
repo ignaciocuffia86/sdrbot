@@ -274,24 +274,60 @@ export async function buscar(clientId, q) {
         [clientId, q.dominio ?? null, q.asci_id ?? null, q.nombre ?? null]);
       cuentas.push(...rows);
     }
-    // Un número de WhatsApp se compara por sus últimos 10 dígitos: «+54 9 11 …» y «11 …» son el mismo.
-    const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : null;
-    if (q.email || q.linkedin_url || q.asci_id || q.nombre || q.dominio || digitos) {
+    if (q.email || q.linkedin_url || q.asci_id || q.nombre || q.dominio) {
       const { rows } = await c.query(
         `select p.* from sdr.prospecto p left join sdr.cuenta k on k.id = p.cuenta_id
           where p.client_id = $1
             and (($2::text is not null and p.email = $2) or ($3::text is not null and p.linkedin_url = $3)
                  or ($4::text is not null and p.asci_id = $4) or ($5::text is not null and p.nombre ilike '%' || $5 || '%')
-                 or ($6::text is not null and (k.dominio = $6 or split_part(p.email, '@', 2) = $6))
-                 or ($7::text is not null and p.whatsapp is not null
-                     and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 10) = right($7, 10)))
+                 or ($6::text is not null and (k.dominio = $6 or split_part(p.email, '@', 2) = $6)))
           order by p.actualizado_at desc limit 20`,
-        [clientId, q.email ?? null, q.linkedin_url ?? null, q.asci_id ?? null, q.nombre ?? null, q.dominio ?? null,
-          digitos && digitos.length >= 8 ? digitos : null]);
+        [clientId, q.email ?? null, q.linkedin_url ?? null, q.asci_id ?? null, q.nombre ?? null, q.dominio ?? null]);
       prospectos.push(...rows);
     }
-    return { cuentas, prospectos };
+    let aviso;
+    const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : '';
+    if (digitos.length >= 8) {
+      // Candidatos por los últimos 10 dígitos; el cruce de verdad lo hace mismoWhatsapp.
+      const { rows } = await c.query(
+        `select p.* from sdr.prospecto p
+          where p.client_id = $1 and p.whatsapp is not null
+            and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 10) = right($2, 10)
+          order by p.actualizado_at desc limit 20`, [clientId, digitos]);
+      const exactos = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'exacto');
+      const locales = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'local');
+      if (exactos.length) prospectos.push(...exactos);
+      else if (locales.length === 1) prospectos.push(...locales);
+      else if (locales.length > 1) {
+        aviso = `El número ${q.whatsapp} no tiene código de país y coincide con ${locales.length} personas: no se elige ninguna. ` +
+          'Buscá con el número completo (con +código de país) o por otro dato.';
+      }
+    }
+    const vistos = new Set();
+    const unicos = prospectos.filter((p) => !vistos.has(p.id) && vistos.add(p.id));
+    return { cuentas, prospectos: unicos, ...(aviso ? { aviso } : {}) };
   });
+}
+
+// Un número de WhatsApp en dígitos, con las formas equivalentes unificadas: el 9 de los celulares de
+// Argentina («+54 9 11…» es «+54 11…») y el 1 viejo de los de México («+52 1 55…» es «+52 55…»).
+export function canonWhatsapp(n) {
+  let d = String(n ?? '').replace(/\D/g, '').replace(/^00/, '');
+  if (d.length === 13 && d.startsWith('549')) d = `54${d.slice(3)}`;
+  if (d.length === 13 && d.startsWith('521')) d = `52${d.slice(3)}`;
+  return d;
+}
+
+// 'exacto': el mismo número. 'local': uno de los dos no trae código de país (10 dígitos o menos) y
+// los últimos 10 coinciden; sirve sólo si hay un único candidato. null: no es el mismo (dos números
+// con código de país distinto no se igualan por el final, aunque los últimos 10 coincidan).
+export function mismoWhatsapp(a, b) {
+  const x = canonWhatsapp(a);
+  const y = canonWhatsapp(b);
+  if (!x || !y) return null;
+  if (x === y) return 'exacto';
+  if (x.length > 10 && y.length > 10) return null;
+  return x.slice(-10) === y.slice(-10) && Math.min(x.length, y.length) >= 8 ? 'local' : null;
 }
 
 const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta'];
