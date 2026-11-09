@@ -211,3 +211,20 @@ label.btn { margin: 0; color: var(--text); font-size: inherit; }
   .mon-canal { display: none; }
 }
 .nota { white-space: pre-wrap; font: inherit; background: var(--muted-bg); padding: 8px 10px; border-radius: 6px; margin: 4px 0; }
+
+/* Campañas (docs/21 §3.2). */
+.campana-sec > summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; list-style: none; }
+.campana-sec > summary::-webkit-details-marker { display: none; }
+.campana-sec > summary::before { content: "▸"; color: var(--muted); }
+.campana-sec[open] > summary::before { content: "▾"; }
+.campana-sec[open] > summary { margin-bottom: 6px; }
+.resumen-sec { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opciones { display: flex; flex-direction: column; gap: 4px; }
+.opciones .check { margin: 0; }
+.hereda .de-empresa { padding: 8px 10px; border: 1px dashed var(--line); border-radius: 6px; margin-bottom: 6px; }
+.hereda .row { margin-top: 6px; }
+td.num { font-variant-numeric: tabular-nums; }
+.efectivos { margin: 0; display: grid; gap: 6px; }
+.efectivos dt { font-size: .85rem; color: var(--muted); }
+.efectivos dd { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.m0 { margin: 0; }

@@ -371,7 +371,7 @@ export async function cargar(clientId, a, meta) {
 
   const ids = a.prospectos.map((x) => x.prospecto_id);
   const { rows: carga } = await asClient(clientId, (c) => c.query(
-    `insert into sdr.dripify_carga (client_id, clave, campana_id, prospectos) values ($1, $2, $3, $4)
+    `insert into sdr.dripify_carga (client_id, clave, dripify_campana_id, prospectos) values ($1, $2, $3, $4)
      on conflict (client_id, clave) do update set estado = 'enviando', error = null, prospectos = excluded.prospectos, creado_at = now()
        where sdr.dripify_carga.estado = 'error'
      returning *`, [clientId, a.idempotency_key, cx.cuenta.campana_id, ids]));
@@ -438,7 +438,7 @@ export async function cargar(clientId, a, meta) {
 
 function resultadoCarga(r) {
   return {
-    carga: Number(r.id), campana_id: Number(r.campana_id), lead_list_id: r.lead_list_id === null ? null : Number(r.lead_list_id),
+    carga: Number(r.id), campana_id: Number(r.dripify_campana_id), lead_list_id: r.lead_list_id === null ? null : Number(r.lead_list_id),
     prospectos: r.prospectos.length, aceptados: r.aceptados, duplicados: r.duplicados,
     nota: 'Dripify procesa la lista en unos minutos y arranca la secuencia (invitación, mensaje 1 al aceptar, mensaje 2 después). ' +
       'Lo que pase vuelve solo al registro.',
@@ -481,11 +481,16 @@ export async function responder(clientId, a, meta) {
       if (!ap) throw errorsSdr.noExiste(`la aprobación ${a.aprobacion_id}`);
       const reintento = ap.estado === 'usada' && ap.usada_clave === `dripify:${a.idempotency_key}`;
       if (ap.estado !== 'aprobada' && !reintento) throw errorsSdr.aprobacionRequerida(`La aprobación está ${ap.estado}: no se puede usar.`);
+      // Sólo una respuesta a un positivo, para LinkedIn y para esta persona: una calibración, una
+      // aprobación de mail o una sin prospecto no habilitan un mensaje por LinkedIn.
+      if (ap.tipo !== 'respuesta_positivo') {
+        throw errorsSdr.aprobacionRequerida(`La aprobación es de tipo ${ap.tipo}: un mensaje por LinkedIn necesita una respuesta_positivo.`);
+      }
       const final = ap.decision_contenido ?? ap.contenido;
       const dif = [];
-      if (final.canal && final.canal !== 'linkedin') dif.push('el canal');
+      if (final.canal !== 'linkedin') dif.push(`el canal (la aprobación es para ${final.canal ?? 'mail'})`);
       if (norm(final.texto) !== texto) dif.push('el texto');
-      if (ap.prospecto_id && ap.prospecto_id !== p.id) dif.push('el prospecto');
+      if (ap.prospecto_id !== p.id) dif.push('el prospecto');
       if (dif.length) throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${dif.join(', ')}. Mandá exactamente lo aprobado.`);
     }
     return { p, ap };
@@ -558,9 +563,32 @@ async function frenarEn(cx, p, motivo, meta) {
   return { frenado: true, lead_id: lead };
 }
 
+// Quién puede volver a la secuencia: los que se cargan y quien respondió (seguimiento decidió seguir
+// por LinkedIn). Nunca quien pidió la baja, dijo que no, quedó descartado o pasó al CRM.
+const ESTADOS_REANUDABLES = [...ESTADOS_CARGABLES, 'respondio'];
+
 export async function reanudar(clientId, prospectoId, meta) {
   const cx = await conexion(clientId);
-  const p = await asClient(clientId, (c) => prospectoEn(c, clientId, prospectoId));
+  const p = await asClient(clientId, async (c) => {
+    const p = await prospectoEn(c, clientId, prospectoId);
+    const no = (msg) => new GatewayError('prospecto_cerrado', `No se reanuda: ${msg}`, 409);
+    if (!ESTADOS_REANUDABLES.includes(p.estado)) throw no(`la persona está en estado ${p.estado}.`);
+    // Una baja registrada vale aunque el estado haya cambiado después, y por cualquier canal.
+    const { rowCount: baja } = await c.query(
+      `select 1 from sdr.evento where client_id = $1 and prospecto_id = $2 and tipo = 'baja' limit 1`, [clientId, p.id]);
+    if (baja) throw no('la persona pidió la baja.');
+    if (p.dripify?.frenado_motivo === 'pidió la baja') throw no('la secuencia se frenó porque pidió la baja.');
+    if (p.email) {
+      const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);
+      if (rowCount) throw no('está en la supresión del cliente (baja o rebote).');
+    }
+    const dominio = p.cuenta_id
+      ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
+      : null;
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    if (nc.length) throw no(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}.`);
+    return p;
+  });
   const lead = await leadDe(cx, p);
   if (!lead) throw errorsDripify.noEncontrado('Dripify no tiene a esta persona.');
   await api(cx, 'DELETE', `/v1/open-api/leads/${lead}/blacklist`);
@@ -616,14 +644,30 @@ function recorrer(x, fn, clave = '', prof = 0) {
   fn(clave, x);
 }
 
+// Las URLs de LinkedIn que identifican a la persona del evento. Sólo valen los campos cuyo valor
+// entero es una URL de perfil: una URL mencionada adentro de un texto no cuenta, y las partes del
+// cuerpo que son conversación o mensajes no se miran. Si no, quien responde podría escribir la URL
+// de otra persona y el evento quedaría atado a ella.
+const PARTES_DE_TEXTO = /conversation|message|text|reply|body|content|note|comment/i;
+const URL_PERFIL = /^(https?:\/\/)?([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/[^\s"'<>?#]+\/?([?#][^\s]*)?$/i;
+
 export function urlsDe(cuerpo) {
   const urls = new Set();
-  recorrer(cuerpo, (_k, v) => {
-    if (typeof v !== 'string' || !/linkedin\.com\/in\//i.test(v)) return;
-    for (const m of v.match(/(https?:\/\/)?([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/[^\s"'<>?#]+/gi) ?? []) {
-      try { urls.add(normalizeLinkedin(m)); } catch { /* una URL cortada no sirve para atar */ }
+  const ver = (x, prof = 0) => {
+    if (prof > 8 || x === null || x === undefined) return;
+    if (Array.isArray(x)) { for (const y of x) ver(y, prof + 1); return; }
+    if (typeof x !== 'object') return;
+    for (const [k, v] of Object.entries(x)) {
+      if (PARTES_DE_TEXTO.test(k)) continue;
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (URL_PERFIL.test(t)) { try { urls.add(normalizeLinkedin(t)); } catch { /* una URL cortada no sirve para atar */ } }
+      } else {
+        ver(v, prof + 1);
+      }
     }
-  });
+  };
+  ver(cuerpo);
   return [...urls];
 }
 
@@ -666,15 +710,21 @@ export async function webhook(clientId, secreto, e, cuerpo) {
   const urls = urlsDe(cuerpo);
   return asClient(clientId, async (c) => {
     const { rows: ps } = urls.length
-      ? await c.query(`select * from sdr.prospecto where client_id = $1 and linkedin_url = any($2) order by actualizado_at desc limit 1`, [clientId, urls])
+      ? await c.query(`select * from sdr.prospecto where client_id = $1 and linkedin_url = any($2) order by actualizado_at desc limit 2`, [clientId, urls])
       : { rows: [] };
-    const p = ps[0] ?? null;
+    // Con dos personas posibles no se adivina: el evento queda sin atar, para revisar.
+    const ambiguo = ps.length > 1;
+    const p = ambiguo ? null : (ps[0] ?? null);
     const { rows: ins } = await c.query(
       `insert into sdr.dripify_evento (client_id, tipo, linkedin_url, prospecto_id, cuerpo) values ($1, $2, $3, $4, $5) returning id`,
       [clientId, tipo, p?.linkedin_url ?? urls[0] ?? null, p?.id ?? null, JSON.stringify(cuerpo ?? {})]);
     const id = Number(ins[0].id);
     const marcar = (procesado, error = null) => c.query(`update sdr.dripify_evento set procesado = $2, error = $3 where id = $1`, [id, procesado, error]);
-    if (!p) { await marcar(false, urls.length ? 'ningún prospecto con esa URL de LinkedIn' : 'el cuerpo no trae una URL de LinkedIn'); return { evento: id, atado: false }; }
+    if (!p) {
+      await marcar(false, ambiguo ? 'el cuerpo trae URLs de más de un prospecto: no se ata a ninguno'
+        : urls.length ? 'ningún prospecto con esa URL de LinkedIn' : 'el cuerpo no trae una URL de LinkedIn');
+      return { evento: id, atado: false };
+    }
     if (tipo === 'desconocido') { await marcar(false, 'no se sabe qué evento es: agregar ?e=… a la URL del webhook'); return { evento: id, atado: true, tipo }; }
     const meta = { bot: 'gateway', tarea: 'dripify', version: await versionActual(c, clientId) };
     const ev = { tipo: TIPOS_WEBHOOK[tipo], canal: 'linkedin', prospecto_id: p.id, ref: `dripify:webhook:${id}`, datos: { dripify_evento: id } };

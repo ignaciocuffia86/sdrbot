@@ -13,6 +13,7 @@ import * as dripify from '../src/sdr/dripify.mjs';
 import { newToken } from '../src/crypto.mjs';
 import { startServer } from '../src/server.mjs';
 import { gw } from './helpers.mjs';
+import { normalizeLinkedin } from '../src/sdr/linkedin.mjs';
 
 const C = 'dripify-c';
 const D = 'dripify-d';
@@ -264,6 +265,21 @@ test('webhook de la campaña: secreto en la URL, eventos por tipo y la respuesta
   const ajeno = await hook(ruta, 'conexion', { lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/nadie-sabe' } });
   assert.equal(ajeno.body.data.atado, false);
 
+  // La URL de otra persona escrita en el texto de una respuesta no elige a quién se ata el evento.
+  assert.deepEqual(dripify.urlsDe({
+    lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/ana-qa/' },
+    linkedinConversation: [{ text: 'Mejor hablá con https://www.linkedin.com/in/beto-ti' }],
+    nota: 'ver linkedin.com/in/caro-cto', perfil: 'Mi perfil: https://www.linkedin.com/in/caro-cto',
+  }), [normalizeLinkedin('https://www.linkedin.com/in/ana-qa/')]);
+  const sinPerfil = await hook(ruta, 'respuesta', { linkedinConversation: [{ text: 'Hablá con https://www.linkedin.com/in/beto-ti' }] });
+  assert.equal(sinPerfil.body.data.atado, false, 'sólo con la URL del texto no se ata a nadie');
+  // Con dos personas posibles en el cuerpo, no se adivina.
+  const dos = await hook(ruta, 'conexion', { lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/ana-qa/' },
+    otro: { profileUrl: 'https://www.linkedin.com/in/beto-ti' } });
+  assert.equal(dos.body.data.atado, false);
+  const ev = (await sql(`select error from sdr.dripify_evento where id = $1`, [dos.body.data.evento])).rows[0];
+  assert.match(ev.error, /más de un prospecto/);
+
   // La respuesta llega con la conversación: sin ?e= se reconoce igual.
   const resp = await hook(ruta, null, {
     ...cuerpo, linkedinConversation: [{ from: 'Ana', text: 'Hola, sí, contame más. ¿El martes?' }],
@@ -328,6 +344,25 @@ test('dripify_conversacion y dripify_responder: lee de Dripify, contesta y a un 
   });
   assert.equal(sinAp.status, 409);
   assert.equal(sinAp.error.code, 'aprobacion_requerida');
+  // Una aprobación de otra cosa no sirve: de otro tipo, para mail, o sin prospecto.
+  const texto = 'Te paso el link de la agenda.';
+  const aprobada = async (pedido) => {
+    const x = (await ok(tok.c, 'registro_pedir_aprobacion', { ...pedido, bot: 'seguimiento' })).aprobacion;
+    await ok(tok.c, 'registro_aprobar', { id: x.id, decision: 'aprobada', operador: 'Ignacio', bot: 'orquestador' });
+    return x.id;
+  };
+  const conAp = (id, clave) => call(tok.c, 'dripify_responder', {
+    prospecto_id: P.ana.id, texto, aprobacion_id: id, idempotency_key: clave, bot: 'seguimiento', tarea: 'respuestas' });
+  const otra = await aprobada({ tipo: 'otro', prospecto_id: P.ana.id, contenido: { canal: 'linkedin', texto } });
+  assert.equal((await conAp(otra, 'resp-ana-otra')).error.code, 'aprobacion_requerida');
+  const deMail = await aprobada({ tipo: 'respuesta_positivo', prospecto_id: P.ana.id, contenido: { buzon: 'ventas@cliente.test', texto } });
+  assert.match((await conAp(deMail, 'resp-ana-mail')).error.message, /el canal/);
+  const sinPersona = await call(tok.c, 'registro_pedir_aprobacion', { tipo: 'respuesta_positivo', contenido: { canal: 'linkedin', texto }, bot: 'seguimiento' });
+  assert.equal(sinPersona.status, 400, 'una respuesta a un positivo se pide para una persona');
+  const deOtro = await aprobada({ tipo: 'respuesta_positivo', prospecto_id: P.beto.id, contenido: { canal: 'linkedin', texto } });
+  assert.match((await conAp(deOtro, 'resp-ana-otro')).error.message, /el prospecto/);
+  assert.equal(mock.s.mensajesEnviados.length, 1, 'no salió nada');
+
   const ap = (await ok(tok.c, 'registro_pedir_aprobacion', {
     tipo: 'respuesta_positivo', prospecto_id: P.ana.id, contenido: { canal: 'linkedin', texto: 'Te paso el link de la agenda.' }, bot: 'seguimiento',
   })).aprobacion;
@@ -391,6 +426,17 @@ test('freno cruzado: si responde por mail o pide la baja, sale de la campaña de
   // Reanudar lo saca de la lista negra.
   await ok(tok.c, 'dripify_reanudar', { prospecto_id: P.beto.id, bot: 'seguimiento', tarea: 'respuestas' });
   assert.ok(!mock.s.blacklist.has(mock.s.leads.get('beto-ti').id));
+
+  // A quien pidió la baja no se lo reanuda, ni aunque su estado se haya cambiado después.
+  const conBaja = await call(tok.c, 'dripify_reanudar', { prospecto_id: P.caro.id, bot: 'seguimiento', tarea: 'respuestas' });
+  assert.equal(conBaja.status, 409);
+  assert.equal(conBaja.error.code, 'prospecto_cerrado');
+  await sql(`update sdr.prospecto set estado = 'en_contacto' where id = $1`, [P.caro.id]);
+  const igual = await call(tok.c, 'dripify_reanudar', { prospecto_id: P.caro.id, bot: 'seguimiento', tarea: 'respuestas' });
+  assert.equal(igual.status, 409);
+  assert.match(igual.error.message, /pidió la baja|supresión/);
+  assert.ok(mock.s.blacklist.has(mock.s.leads.get('caro-cto').id), 'sigue en la lista negra de Dripify');
+  await sql(`update sdr.prospecto set estado = 'baja' where id = $1`, [P.caro.id]);
 });
 
 test('errores de Dripify y cupo de la API', async () => {

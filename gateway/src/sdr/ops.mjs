@@ -214,6 +214,9 @@ export const SDR_OPS = [
         const conMail = ['buzon', 'destinatario', 'asunto', 'texto'].some((x) => k[x]) || !k.linkedin;
         if (conMail) exigir(['buzon', 'destinatario', 'asunto', 'texto'], 'un mail');
       }
+      if ((a.tipo === 'respuesta_positivo' || a.tipo === 'whatsapp_primero') && !a.prospecto_id) {
+        throw errors.invalid(`Una aprobación ${a.tipo} es para una persona: falta prospecto_id.`);
+      }
       if (a.tipo === 'whatsapp_primero') {
         if (k.canal !== 'whatsapp') throw errors.invalid('Una aprobación whatsapp_primero lleva contenido.canal "whatsapp".');
         exigir(['texto'], 'un WhatsApp');
@@ -373,7 +376,8 @@ export const SDR_OPS = [
   {
     op: 'dripify_reanudar', mcp: 'dripify_reanudar', scope: 'sdr',
     description: 'Vuelve a poner en marcha la secuencia de LinkedIn de una persona frenada o pausada (la saca de la ' +
-      'lista negra y la reanuda). Sólo si seguimiento decidió seguir por LinkedIn.',
+      'lista negra y la reanuda). Sólo si seguimiento decidió seguir por LinkedIn. El gateway no reanuda a quien pidió ' +
+      'la baja, dijo que no, quedó descartado o en el CRM, ni a quien está en la supresión o en no contactar (prospecto_cerrado).',
     schema: obj({ prospecto_id: uuid, ...META }, ['prospecto_id']),
     handler: (ctx, a) => dripify.reanudar(ctx.clientId, a.prospecto_id, meta(a)),
     summary: (r) => ({ reanudado: r.reanudado }),

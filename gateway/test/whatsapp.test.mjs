@@ -236,3 +236,21 @@ test('monitor: los textos de cada línea y el modo de cada canal', () => {
   assert.equal(por.prospeccion.modo, 'autonomo');
   assert.equal(por.respuestas.modo, 'supervisado');
 });
+
+test('buscar por WhatsApp: números de países distintos con el mismo final no son la misma persona', async () => {
+  // Las formas del mismo número se igualan; dos códigos de país distintos, no.
+  assert.equal(sdr.mismoWhatsapp('+54 9 11 4000-0002', '+54 11 4000 0002'), 'exacto');
+  assert.equal(sdr.mismoWhatsapp('+52 1 55 1234 5678', '+52 55 1234 5678'), 'exacto');
+  assert.equal(sdr.mismoWhatsapp('+1 555 123 4567', '+52 555 123 4567'), null);
+  assert.equal(sdr.mismoWhatsapp('555 123 4567', '+52 555 123 4567'), 'local');
+
+  const us = (await ok(tok.w, 'registro_guardar_prospecto', { nombre: 'Pat US', email: 'pat@us-w.test', whatsapp: '+1 555 123 4567' })).prospecto;
+  const mx = (await ok(tok.w, 'registro_guardar_prospecto', { nombre: 'Paty MX', email: 'paty@mx-w.test', whatsapp: '+52 555 123 4567' })).prospecto;
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+1 (555) 123-4567' })).prospectos.map((p) => p.id), [us.id]);
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+52 1 555 123 4567' })).prospectos.map((p) => p.id), [mx.id]);
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+44 555 123 4567' })).prospectos, [], 'otro país: nadie');
+  // Sin código de país y con dos candidatos, no se adivina.
+  const ambiguo = await ok(tok.w, 'registro_buscar', { whatsapp: '555 123 4567' });
+  assert.deepEqual(ambiguo.prospectos, []);
+  assert.match(ambiguo.aviso, /coincide con 2 personas/);
+});

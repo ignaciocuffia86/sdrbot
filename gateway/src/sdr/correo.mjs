@@ -16,6 +16,7 @@ import { asRole, asOwner } from '../store.mjs';
 import { aadFor, decryptSecret, encryptSecret } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
+import { checkWebhookHost, postWebhook } from '../mail/net.mjs';
 import { insertarEvento, aplicarEvento, versionActual } from './store.mjs';
 import * as dripify from './dripify.mjs';
 import * as crm from './crm.mjs';
@@ -368,7 +369,8 @@ export async function configurarDespertador(clientId, bot, d) {
       const { rowCount } = await c.query(`update sdr.despertador set activo = false, actualizado_at = now() where client_id = $1 and bot = $2`, [clientId, bot]);
       return { apagado: rowCount > 0 };
     }
-    if (!/^https:\/\/[^\s]+$/.test(d.url ?? '')) throw new GatewayError('invalid_request', 'La URL del webhook tiene que empezar con https://.', 400);
+    // Sólo https al 443 y a un dominio público (src/mail/net.mjs): la URL la llama el gateway.
+    await checkWebhookHost(d.url);
     let enc = null;
     if (d.clave) {
       enc = encryptSecret(d.clave, aadDespertador(clientId, bot));
@@ -471,7 +473,11 @@ export const BOTS_CON_AVISO = Object.keys(FUENTES);
 // Despierta al bot de un cliente si hay algo nuevo sin avisar. Agrupa: un aviso con la lista,
 // a lo sumo uno cada espera_min minutos; si el webhook falla, reintenta en el próximo tick con
 // una espera que crece (2, 4, 8… hasta 60 minutos).
-export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = fetch, ahora = new Date() } = {}) {
+// fetchImpl: para las pruebas. En producción, postWebhook: controla la dirección al conectar y no
+// sigue redirecciones.
+const postDespertador = (url, init) => postWebhook(url, { headers: init.headers, body: init.body, signal: init.signal, timeoutMs: 10_000 });
+
+export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = postDespertador, ahora = new Date() } = {}) {
   const { rows } = await asOwner((c) => c.query(
     `select d.*, coalesce(k.zona_horaria, 'America/Argentina/Buenos_Aires') as zona_horaria
        from sdr.despertador d left join sdr.cliente_config k on k.client_id = d.client_id
