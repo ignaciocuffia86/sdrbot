@@ -167,8 +167,9 @@ En el mismo MCP que el gateway (`sdrbot.bigua.lat/mcp`), mismo token del cliente
 
 ## 5. Cómo se carga: el bot decide, con un mínimo obligatorio
 
-> **09/11/2026:** `23-crm-carga-mixta.md` propone que el mínimo de §5.1 lo escriba el gateway por
-> código (con cola y reintentos) y que el bot sólo enriquezca. Si se adopta, cambian §5, §5.3 y §6.1.
+> **09/11/2026:** decidido en `23-crm-carga-mixta.md`: el mínimo de §5.1 lo escribe el gateway por
+> código al aprobarse la respuesta a un positivo (con cola y reintentos; etapa 4a, construida) y el
+> bot sólo enriquece (4b). Cambian §5, §5.3 y §6.1.
 
 Como pidió Biguá, el bot no completa un formulario fijo: mira cómo tiene armado el CRM el
 cliente (qué campos existen, cuáles usa, qué listas de valores tiene) y decide qué completar y

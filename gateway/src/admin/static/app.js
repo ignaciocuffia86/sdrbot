@@ -285,6 +285,8 @@ async function resumenView({ clientId, bigua, base }) {
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
     if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, `${base}/canales`, 'Ver');
+    if (r.crm?.estado === 'credencial_vencida') aviso('err', `CRM: HubSpot rechazó el token. Las cargas esperan en cola.${r.crm.ultimo_error ? ` ${r.crm.ultimo_error}` : ''}`, `${base}/canales`, 'Reconectar');
+    if (r.crm?.con_problema) aviso('err', `${plural(r.crm.con_problema, 'positivo no se pudo', 'positivos no se pudieron')} cargar en el CRM.`, `${base}/canales`, 'Ver');
     if (r.whatsapp?.pausado) aviso('err', `WhatsApp en pausa: ${r.whatsapp.pausa_motivo ?? 'bloqueo'}.`, `${base}/canales`, bigua ? 'Revisar y reanudar' : 'Ver');
     for (const [bot, d] of Object.entries(r.despertadores ?? {})) {
       if (!d) aviso('mute', `El despertador de ${bot} no está cargado: el bot corre sólo en su horario.`, `${base}/admin/bots`, 'Cargarlo');
@@ -325,6 +327,8 @@ async function resumenView({ clientId, bigua, base }) {
     canal('Correo', activos.length ? (activos.length < r.buzones.length ? ['b-warn', 'revisar'] : ['b-ok', 'activo']) : ['b-err', 'sin buzones'],
       `${plural(activos.length, 'buzón activo', 'buzones activos')} · ${envios} de ${tope} envíos hoy`, dom),
     canal('LinkedIn · Dripify', li, d?.ultimo_ok_at ? `Última respuesta buena: ${fmtDate(d.ultimo_ok_at)}` : 'Va con la campaña de Dripify del cliente'),
+    canal('CRM · HubSpot', !r.crm?.token ? ['b-mute', 'sin conectar'] : r.crm.con_problema ? ['b-err', 'con problemas'] : CRM_ESTADO[r.crm.estado] ?? ['b-mute', r.crm.estado],
+      r.crm?.token ? `${plural(r.crm.semana, 'cargado', 'cargados')} en 7 días${r.crm.en_cola ? ` · ${r.crm.en_cola} en cola` : ''}` : 'Los positivos aprobados se cargan solos'),
     h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
       h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails))),
       h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
@@ -545,8 +549,179 @@ async function canalesView({ clientId, data, bigua, reload }) {
       h('h3', {}, 'Dominios'), await domainsView(clientId, reload)),
     h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
     h('section', { class: 'stack' }, h('h2', {}, 'WhatsApp'), wa),
-    h('section', {}, h('h2', {}, 'Más canales'), h('div', { class: 'grid' },
-      pronto('CRM', 'HubSpot primero: los interesados se cargan solos, con el mapeo que apruebe el cliente.'))));
+    h('section', { class: 'stack' }, h('h2', {}, 'CRM'), resumen.sdr_activo
+      ? await crmView(clientId, bigua, reload)
+      : pronto('CRM · HubSpot', 'Se conecta cuando el SDR esté activado: los positivos aprobados se cargan solos.')));
+}
+
+// ----- CRM (docs/23): la conexión con HubSpot, la cola de cargas y la vista previa.
+
+const CRM_ESTADO = {
+  activa: ['b-ok', 'conectado'], pausada: ['b-mute', 'en pausa'], credencial_vencida: ['b-err', 'token rechazado'],
+};
+const CARGA_ESTADO = {
+  pendiente: ['b-mute', 'en cola'], en_curso: ['b-mute', 'cargando'], hecha: ['b-ok', 'cargado'],
+  error: ['b-err', 'falló'], bloqueada: ['b-warn', 'bloqueada'],
+};
+const badge = ([cls, texto]) => h('span', { class: `badge ${cls}` }, texto);
+
+async function crmView(clientId, bigua, reload) {
+  const datos = await api('GET', `/clients/${enc(clientId)}/crm`);
+  const wrap = h('div', { class: 'stack' });
+  const pintar = (d) => wrap.replaceChildren(crmConexionCard(clientId, bigua, d.conexion, reload), ...(d.conexion ? crmCargasCards(clientId, d, pintar).filter(Boolean) : []));
+  pintar(datos);
+  return wrap;
+}
+
+function crmConexionCard(clientId, bigua, cx, reload) {
+  const estado = !cx?.token ? badge(['b-mute', 'sin conectar']) : badge(CRM_ESTADO[cx.estado] ?? ['b-mute', cx.estado]);
+  const err = h('p', { class: 'err', role: 'alert' });
+  const salida = h('div', {});
+  const campoSel = h('select', { name: 'origen_campo' },
+    h('option', { value: '' }, '— sólo en la nota —'),
+    cx?.origen_campo ? h('option', { value: cx.origen_campo, selected: true }, cx.origen_campo) : null);
+  const valorSel = h('select', { name: 'origen_valor' },
+    h('option', { value: '' }, '—'),
+    cx?.origen_valor ? h('option', { value: cx.origen_valor, selected: true }, cx.origen_valor) : null);
+  const duenoSel = h('select', { name: 'dueno_defecto' },
+    h('option', { value: '' }, '— sin asignar —'),
+    cx?.dueno_defecto ? h('option', { value: cx.dueno_defecto, selected: true }, `Dueño ${cx.dueno_defecto}`) : null);
+  let propiedades = [];
+  const llenarValores = () => {
+    const p = propiedades.find((x) => x.name === campoSel.value);
+    const actual = valorSel.value;
+    if (p?.options?.length) {
+      valorSel.replaceChildren(h('option', { value: '' }, '— elegí un valor —'),
+        ...p.options.map((o) => h('option', { value: o.value, selected: o.value === actual }, `${o.label} (${o.value})`)));
+    } else if (p) {
+      valorSel.replaceChildren(h('option', { value: 'SDR Bot Biguá', selected: true }, 'SDR Bot Biguá'));
+    }
+  };
+  campoSel.addEventListener('change', llenarValores);
+  const fijos = h('textarea', { name: 'campos_fijos', rows: 3, class: 'mono', placeholder: 'propiedad=valor, una por renglón' });
+  fijos.value = Object.entries(cx?.campos_fijos ?? {}).map(([k, v]) => `${k}=${v}`).join('\n');
+
+  const form = h('form', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'HubSpot'), estado),
+    h('p', { class: 'muted small' }, 'Cuando el operador de Biguá aprueba la respuesta a un positivo, el gateway lo carga solo en el ' +
+      'HubSpot del cliente: el contacto (si ya existe, sólo completa lo vacío y no cambia el dueño), la empresa por dominio, una nota ' +
+      'con lo que respondió y una tarea para el dueño. Nunca borra nada.'),
+    cx?.ultimo_error ? h('p', { class: 'small err' }, cx.ultimo_error) : null,
+    cx?.ultimo_ok_at ? h('p', { class: 'small' }, `Última respuesta buena de HubSpot: ${fmtDate(cx.ultimo_ok_at)}`) : null,
+    field('Token de la app privada', h('input', { name: 'token', type: 'password', autocomplete: 'off', required: !cx?.token, minlength: 20 }),
+      cx?.token ? 'Dejalo vacío para conservar el guardado. Se guarda cifrado y no se vuelve a mostrar.'
+        : 'En HubSpot: Settings → Integrations → Private Apps → Create a private app. Scopes: crm.objects.contacts (read y write), ' +
+          'crm.objects.companies (read y write), crm.objects.owners.read y crm.schemas.contacts.read. Se guarda cifrado y no se vuelve a mostrar.'),
+    cx?.token ? h('div', { class: 'cols2' },
+      field('Propiedad que dice que vino del SDR', campoSel, 'Apretá «Probar conexión» para elegir entre las del cliente.'),
+      field('Con el valor', valorSel)) : null,
+    cx?.token ? field('Dueño por defecto', duenoSel, 'A quién le llega la tarea si el contacto es nuevo. Si ya existía, la tarea va a su dueño.') : null,
+    cx?.token && bigua ? h('div', { class: 'cols2' },
+      field('Campos fijos', fijos, 'Propiedades que el CRM del cliente exige, con un valor fijo. Sólo Biguá.'),
+      field('Tope de cargas por día', h('input', { name: 'tope_dia', type: 'number', min: 1, max: 1000, value: cx.tope_dia }), 'Sólo Biguá.')) : null);
+
+  const btn = h('button', { type: 'submit', class: 'primary' }, cx?.token ? 'Guardar' : 'Conectar HubSpot');
+  const probar = cx?.token ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/crm/probar`), err);
+    if (!r) return;
+    const e = r.prueba;
+    propiedades = e.propiedades ?? [];
+    if (propiedades.length) {
+      const actual = campoSel.value;
+      campoSel.replaceChildren(h('option', { value: '' }, '— sólo en la nota —'),
+        ...propiedades.map((p) => h('option', { value: p.name, selected: p.name === actual }, `${p.label} (${p.name})`)));
+      llenarValores();
+    }
+    if (e.duenos?.length) {
+      const actual = duenoSel.value;
+      duenoSel.replaceChildren(h('option', { value: '' }, '— sin asignar —'),
+        ...e.duenos.map((o) => h('option', { value: o.id, selected: o.id === actual }, `${o.nombre}${o.email ? ` · ${o.email}` : ''}`)));
+    }
+    salida.replaceChildren(h('div', { class: 'small' },
+      h('p', {}, e.listo ? badge(['b-ok', 'listo']) : badge(['b-err', 'falta algo']), e.portal_id ? ` Portal ${e.portal_id}.` : ''),
+      e.problemas?.length ? h('ul', {}, e.problemas.map((x) => h('li', { class: 'err' }, x))) : null,
+      e.avisos?.length ? h('ul', {}, e.avisos.map((x) => h('li', { class: 'muted' }, x))) : null));
+  } }, 'Probar conexión') : null;
+  const vista = cx?.token ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/crm/vista-previa`, {}), err);
+    if (r) salida.replaceChildren(crmVistaPrevia(r.vista));
+  } }, 'Vista previa') : null;
+  const pausa = cx?.token ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/crm`, { estado: cx.estado === 'pausada' ? 'activa' : 'pausada' }), err);
+    if (r) { toast(cx.estado === 'pausada' ? 'Cargas reanudadas.' : 'Cargas en pausa: quedan en cola.'); reload(); }
+  } }, cx.estado === 'pausada' ? 'Reanudar' : 'Pausar') : null;
+  form.append(err, h('div', { class: 'row' }, btn, probar, vista, pausa), salida);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = {};
+    if (fd.get('token')) body.token = String(fd.get('token')).trim();
+    if (cx?.token) {
+      body.origen_campo = String(fd.get('origen_campo') ?? '') || null;
+      body.origen_valor = body.origen_campo ? String(fd.get('origen_valor') ?? '') || null : null;
+      body.dueno_defecto = String(fd.get('dueno_defecto') ?? '') || null;
+      if (bigua) {
+        body.tope_dia = Number(fd.get('tope_dia'));
+        const pares = String(fd.get('campos_fijos') ?? '').split('\n').map((x) => x.trim()).filter(Boolean);
+        const mal = pares.filter((x) => !/^[a-z0-9_]+=.+$/.test(x));
+        if (mal.length) { err.textContent = `Campos fijos: «${mal[0]}» no es propiedad=valor.`; return; }
+        body.campos_fijos = Object.fromEntries(pares.map((x) => [x.slice(0, x.indexOf('=')).trim(), x.slice(x.indexOf('=') + 1).trim()]));
+      }
+    }
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/crm`, body), err);
+    if (r) { toast(cx?.token ? 'CRM guardado.' : 'HubSpot conectado. Probá la conexión y elegí el dueño por defecto.'); reload(); }
+  });
+  return form;
+}
+
+function crmVistaPrevia(v) {
+  const filas = (o) => h('table', {}, h('tbody', {}, Object.entries(o).map(([k, x]) => h('tr', {}, h('td', { class: 'mono small' }, k), h('td', {}, String(x))))));
+  const nota = h('pre', { class: 'nota' });
+  // La nota va a HubSpot como HTML; acá se muestra como texto, sin interpretarlo.
+  nota.textContent = v.nota.hs_note_body.replace(/<br>/g, '\n').replace(/<\/(p|blockquote)>/g, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  return h('div', { class: 'stack small' },
+    h('p', {}, v.ejemplo ? 'Con un positivo de ejemplo (todavía no hay uno real):' : `Con el último positivo: ${v.nombre}.`,
+      ' Nada de esto se escribió en HubSpot.'),
+    h('p', {}, `Se busca el contacto por email (${v.buscar_por ?? 'sin email: la carga se bloquearía'}). Si existe, sólo se completan las propiedades vacías.`),
+    h('strong', {}, 'Contacto'), filas(v.contacto),
+    v.empresa ? [h('strong', {}, 'Empresa (por dominio)'), filas(v.empresa)] : h('p', { class: 'muted' }, 'Sin dominio: no se asocia empresa.'),
+    h('strong', {}, 'Nota'), nota,
+    h('strong', {}, 'Tarea'), filas({ asunto: v.tarea.hs_task_subject, vence: fmtDate(v.tarea.hs_timestamp), detalle: v.tarea.hs_task_body }));
+}
+
+function crmCargasCards(clientId, d, pintar) {
+  const err = h('p', { class: 'err', role: 'alert' });
+  const accion = (texto, path, body) => h('button', { type: 'button', class: 'small', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', path, body), err);
+    if (r) { toast(r.aviso ?? 'Listo.'); pintar(r); }
+  } }, texto);
+  const sinCargar = d.positivos_sin_cargar.length ? h('section', { class: 'card' },
+    h('h3', { class: 'first' }, 'Positivos sin cargar'),
+    h('p', { class: 'small muted' }, 'Positivos que no tienen carga (por ejemplo, de antes de conectar el CRM).'),
+    h('table', {}, h('tbody', {}, d.positivos_sin_cargar.map((p) => h('tr', {},
+      h('td', {}, p.nombre, h('div', { class: 'small muted' }, [p.email, p.empresa].filter(Boolean).join(' · '))),
+      h('td', { class: 'small' }, fmtDate(p.actualizado_at)),
+      h('td', {}, accion('Cargar en el CRM', `/clients/${enc(clientId)}/crm/cargar`, { prospecto_id: p.id }))))))) : null;
+  const detalle = (k) => {
+    if (k.estado === 'hecha') return k.url ? h('a', { href: k.url, target: '_blank', rel: 'noopener noreferrer' }, 'Ver en HubSpot') : fmtDate(k.hecha_at);
+    if (k.error) return h('span', { class: k.estado === 'pendiente' ? 'muted' : 'err' }, k.error);
+    if (k.proximo_intento) return `Próximo intento: ${fmtDate(k.proximo_intento)}`;
+    return '—';
+  };
+  const cargas = h('section', { class: 'card' },
+    h('h3', { class: 'first' }, 'Cargas'),
+    d.cargas.length ? h('table', {},
+      h('thead', {}, h('tr', {}, ['Persona', 'Por', 'Estado', 'Detalle', ''].map((t) => h('th', {}, t)))),
+      h('tbody', {}, d.cargas.map((k) => h('tr', {},
+        h('td', {}, k.nombre, h('div', { class: 'small muted' }, [k.email, k.empresa].filter(Boolean).join(' · '))),
+        h('td', { class: 'small' }, k.motivo === 'positivo' ? 'positivo aprobado' : `pedido${k.pedida_por ? ` · ${k.pedida_por}` : ''}`),
+        h('td', {}, badge(CARGA_ESTADO[k.estado] ?? ['b-mute', k.estado]), k.intentos > 1 ? h('div', { class: 'small muted' }, `${k.intentos} intentos`) : null),
+        h('td', { class: 'small' }, detalle(k)),
+        h('td', {}, ['error', 'bloqueada'].includes(k.estado) ? accion('Reintentar', `/clients/${enc(clientId)}/crm/cargas/${k.id}/reintentar`) : null)))))
+      : h('p', { class: 'muted small' }, 'Todavía no hay cargas. Entran solas cuando se aprueba la respuesta a un positivo.'),
+    err);
+  return [sinCargar, cargas];
 }
 
 function whatsappBadge(w) {
@@ -1140,6 +1315,8 @@ const OPS = {
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.dripify.webhook': 'URL del webhook de Dripify',
   'admin.sdr.no_contactar': 'alta en no contactar', 'admin.sdr.no_contactar.quitar': 'baja de no contactar',
   'admin.sdr.whatsapp': 'reglas de WhatsApp', 'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado',
+  'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida',
+  'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
 };
 
 async function activityView(clientId) {

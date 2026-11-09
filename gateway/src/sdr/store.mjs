@@ -587,7 +587,23 @@ export async function aprobar(clientId, a, meta) {
         datos: { aprobacion: a.id, decision: a.decision, operador: a.operador, editada: Object.keys(cambios).length > 0 } },
       { ...meta, version: await versionActual(c, clientId) });
     }
-    return { aprobacion: rows[0], aviso: `Avisale a ${prev[0].pedida_por} que la aprobación está decidida.` };
+    // Un positivo aprobado entra a la cola del CRM en esta misma transacción (docs/23 §3.1): si la
+    // decisión se guarda, la carga existe. Sólo si el cliente tiene el CRM conectado.
+    let crm = null;
+    if (a.decision === 'aprobada' && prev[0].tipo === 'respuesta_positivo' && prev[0].prospecto_id) {
+      const { rows: k } = await c.query(
+        `insert into sdr.crm_carga (client_id, prospecto_id, motivo, aprobacion_id, pedida_por)
+         select $1, $2, 'positivo', $3, $4 where exists (select 1 from sdr.crm_conexion where client_id = $1)
+         on conflict (client_id, prospecto_id) do nothing returning id`,
+        [clientId, prev[0].prospecto_id, a.id, a.operador]);
+      if (k.length) crm = { carga: Number(k[0].id), estado: 'pendiente' };
+    }
+    return {
+      aprobacion: rows[0],
+      aviso: `Avisale a ${prev[0].pedida_por} que la aprobación está decidida.` +
+        (crm ? ' El positivo entra solo al CRM del cliente en el próximo minuto.' : ''),
+      ...(crm ? { crm } : {}),
+    };
   });
 }
 

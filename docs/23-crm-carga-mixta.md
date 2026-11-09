@@ -1,7 +1,8 @@
 # Carga en el CRM: variante mixta
 
-Estado: **propuesta, 09/11/2026.** Revisa la carga en el CRM de `11-datos-crm-y-seguimiento.md`
-(§5 y §6). Lo que no se toca de `11` sigue igual: qué va al CRM (sólo lo positivo, lo que se le
+Estado: **decidido el 09/11/2026; etapa 4a (capa 1 con HubSpot) construida** en el gateway
+(migración `012_crm`, `src/sdr/crm.mjs`, `test/crm.test.mjs`). Revisa la carga en el CRM de
+`11-datos-crm-y-seguimiento.md` (§5 y §6). Lo que está construido y cómo se usa está en §13. Lo que no se toca de `11` sigue igual: qué va al CRM (sólo lo positivo, lo que se le
 pida al bot y las bajas de personas que ya estaban), las exclusiones antes de prospectar (§7), las
 credenciales (§6.4) y el dashboard (§8).
 
@@ -46,7 +47,7 @@ sequenceDiagram
   S->>G: registro_pedir_aprobacion (respuesta_positivo)
   O->>G: registro_aprobar (aprobada)
   G->>Q: encola «positivo» en la misma transacción
-  Note over G,Q: pg_cron → POST /cron/crm, cada minuto
+  Note over G,Q: el reloj (POST /cron/correo), cada minuto
   G->>Q: toma la carga
   G->>C: busca duplicado · crea o completa · empresa · nota · tarea
   G->>Q: hecha (ids, antes y después)
@@ -98,10 +99,11 @@ contactada y se agrega el evento `aviso.cliente`. Si no existe, no se crea nada.
 
 ### 3.3 Dónde corre
 
-Igual que la lectura de buzones (`/cron/correo`): pg_cron llama a `POST /cron/crm` cada minuto. Cada
-llamada toma hasta 20 cargas pendientes con `for update skip locked`, de modo que dos llamadas
-superpuestas no toman la misma. El límite de 60 segundos de la función alcanza de sobra para 20
-cargas de unos pocos pedidos HTTP cada una.
+En la vuelta del reloj que ya existe (`POST /cron/correo`, pg_cron cada minuto), antes de leer los
+buzones y con hasta 15 segundos: así no hace falta otro job de pg_cron, y un positivo no espera a
+que se lean todos los buzones. Cada vuelta toma hasta 20 cargas, de a una, con `for update skip
+locked`: dos vueltas superpuestas no toman la misma. Una carga que quedó tomada más de 10 minutos
+(la función se cortó) se vuelve a tomar.
 
 ## 4. El mapeo del mínimo
 
@@ -130,7 +132,7 @@ En **Canales → CRM** (`21` §3), por cliente:
 |---|---|---|
 | Conexión | HubSpot: token de la app privada. Dynamics: id de la aplicación, tenant, certificado y URL del entorno. Se guarda cifrada con la misma clave que los buzones | Cliente o Biguá |
 | Probar conexión | Lee el esquema y los dueños, y verifica que los permisos alcancen (`11` §6.4) | Cualquiera |
-| Propiedad y valor de origen | Elegir de las propiedades que el cliente ya tiene (con su lista de valores) o usar `sdr_origen` | Cliente o Biguá |
+| Propiedad y valor de origen | Elegir de las propiedades que el cliente ya tiene (con su lista de valores). Vacía: el origen va sólo en la nota (el gateway no crea propiedades en el portal del cliente) | Cliente o Biguá |
 | Dueño por defecto | De la lista de dueños del CRM | Cliente |
 | Campos obligatorios propios | Si el CRM del cliente exige un campo que no está en el mínimo, se le pone un valor fijo acá (§6) | Biguá |
 | Vista previa | Toma un positivo real (o uno de ejemplo) y muestra exactamente qué se escribiría, sin escribir | Cualquiera |
@@ -140,9 +142,10 @@ En **Canales → CRM** (`21` §3), por cliente:
 La vista previa reemplaza a la «carga de prueba»: una prueba real dejaría un registro en el CRM del
 cliente, y no borramos nada.
 
-En el resumen del cliente, la lista de **Positivos** (`11` §8.2) suma una columna de estado del
-CRM: *cargado* (con enlace al registro), *en cola*, *reintentando* o *bloqueado* (con el motivo), y
-los botones *Reintentar* y *Cargar ahora*.
+Debajo, en la misma sección, las **cargas** con su estado: *cargado* (con enlace al contacto), *en
+cola*, *falló* o *bloqueada* (con el motivo y el botón *Reintentar*), y los **positivos sin cargar**
+(por ejemplo, de antes de conectar el CRM) con el botón *Cargar en el CRM*. El **Resumen** suma el
+canal CRM y avisa si el token fue rechazado o si hay cargas con problemas.
 
 ## 6. Cuando algo falla
 
@@ -218,9 +221,9 @@ Una migración nueva (`012_crm.sql`), en el esquema `sdr`, con RLS por `client_i
 | `error` | Último error, legible |
 | `pedida_por`, `creado_at`, `hecha_at` | |
 
-Restricción única en `(client_id, prospecto_id, motivo)` mientras la carga no esté en `error`: un
-mismo positivo no se encola dos veces aunque se apruebe y además se apriete el botón. Una carga en
-`error` se reintenta sobre la misma fila.
+Restricción única en `(client_id, prospecto_id)`: un mismo positivo no se encola dos veces aunque se
+apruebe y además se apriete el botón. Una carga en `error` o `bloqueada` se reintenta sobre la misma
+fila.
 
 Los eventos `crm.cargado` llevan `datos.capa` (1 o 2) y el id de la carga.
 
@@ -245,7 +248,7 @@ Reemplaza las etapas 4 (HubSpot) y 6 (Dynamics) de `09` §9.
 
 | Etapa | Qué | Cómo se sabe que está |
 |---|---|---|
-| **4a** · Capa 1 con HubSpot | Migración, adaptador de HubSpot, `/cron/crm`, disparo desde `registro_aprobar`, `crm_cargar`, la tarjeta CRM del panel con la vista previa y la columna de estado en Positivos | Se aprueba un positivo en el chat y, sin que ningún bot haga nada más, aparece en HubSpot con nota y tarea. Con el token revocado, queda en cola y se carga solo al reconectar |
+| **4a** · Capa 1 con HubSpot · **construida** | Migración, adaptador de HubSpot, la cola en la vuelta del reloj, disparo desde `registro_aprobar`, `crm_cargar` y `crm_cargas`, la sección CRM de Canales con la vista previa, las cargas y los positivos sin cargar | Se aprueba un positivo en el chat y, sin que ningún bot haga nada más, aparece en HubSpot con nota y tarea. Con el token revocado, queda en cola y se carga solo al reconectar |
 | **4b** · Capa 2 | Pedido de enriquecimiento a `seguimiento`, herramientas `crm_*` acotadas, `crm_mapeo` | La primera carga de un cliente propone el mapeo en el chat; aprobado, las siguientes completan los campos del cliente sin tocar los de la capa 1 |
 | **4c** · Bajas | Disparo desde la supresión del gateway | La baja de una persona que estaba en HubSpot la marca ahí y aparece como aviso en el dashboard |
 | **6** · Dynamics 365 | Adaptador con usuario de aplicación y rol acotado (`11` §6.3) | Un positivo aprobado de un cliente de D365 aparece como Lead con nota y tarea |
@@ -265,11 +268,55 @@ reintentos, la idempotencia de cada paso y el aislamiento por cliente de las dos
 
 ## 12. Abierto
 
-- **¿Disparar al aprobar o al enviar la respuesta?** Se propone al aprobar (§3.1). Si un cliente
-  prefiere que su vendedor no vea el lead hasta que salió la respuesta, se puede pasar a cuando la
-  aprobación queda `usada`.
+- ~~¿Disparar al aprobar o al enviar la respuesta?~~ **Al aprobar** (decidido el 09/11/2026).
 - **Clientes sin CRM** (Excel o Google Sheets): la misma cola admite un adaptador de planilla que
   sólo agrega filas. No entra en estas etapas.
 - Si la reunión agendada actualiza el CRM (`11` §10): sería un motivo más de la capa 1.
 - Los scopes exactos de la app privada de HubSpot y el rol de Dynamics se cierran al implementar
   (`11` §6.4).
+
+## 13. Lo construido en la etapa 4a
+
+Diferencias con lo de arriba, decididas al construir:
+
+- **Una carga por prospecto** (`unique (client_id, prospecto_id)`), sea del motivo que sea: un
+  pedido sobre alguien ya cargado devuelve «ya está cargado»; sobre una carga con error o
+  bloqueada, la vuelve a la cola. Los motivos son `positivo` y `pedido`; `baja` llega con la 4c.
+- **Sin email no se carga:** la carga se bloquea con el motivo, sin tocar HubSpot (el email es lo
+  que evita duplicados). Un prospecto con baja tampoco.
+- **Reintentos:** 7 intentos, con esperas de 1 min, 5 min, 30 min, 2 h, 6 h y 12 h; después,
+  `error`. Al pasar a `error` o `bloqueada`, el gateway le deja un pedido al `orquestador` para que
+  se lo cuente al operador.
+- **Tope por día:** cuenta las cargas hechas en las últimas 24 horas; lo que pasa del tope espera una
+  hora sin gastar intentos.
+- **Si el buscador de HubSpot todavía no ve un contacto recién creado**, el alta responde 409 con el
+  id existente y se usa ese.
+- **El enriquecimiento (capa 2) todavía no existe:** al terminar, el gateway no le deja pedido a
+  `seguimiento`. Llega con la 4b.
+
+### 13.1 Herramientas y rutas
+
+| Dónde | Qué |
+|---|---|
+| `registro_aprobar` | Una `respuesta_positivo` aprobada encola la carga en la misma transacción y devuelve `crm: { carga, estado }` |
+| `crm_cargar(prospecto_id)` | Para el `orquestador`, cuando el operador pide cargar a alguien |
+| `crm_cargas(estado?)` | Cargas recientes, con el enlace al contacto, y los positivos sin carga |
+| `GET/PUT /admin/api/clients/:c/crm` | Ver y guardar la conexión (el cliente y Biguá; campos fijos y tope, sólo Biguá) |
+| `POST …/crm/probar`, `…/crm/vista-previa` | Probar el token y los permisos (devuelve dueños y propiedades); ver qué se escribiría, sin escribir |
+| `POST …/crm/cargar`, `…/crm/cargas/:id/reintentar` | Cargar a mano un positivo sin carga; reintentar una con error o bloqueada |
+
+### 13.2 La app privada de HubSpot
+
+En el portal del cliente: Settings → Integrations → Private Apps → Create a private app, con estos
+scopes:
+
+| Scope | Para qué |
+|---|---|
+| `crm.objects.contacts.read` y `.write` | Buscar, crear y completar el contacto; las notas y las tareas asociadas |
+| `crm.objects.companies.read` y `.write` | Buscar la empresa por dominio, crearla y asociarla |
+| `crm.objects.owners.read` | Elegir el dueño por defecto |
+| `crm.schemas.contacts.read` | Ofrecer las propiedades de origen y validar los valores |
+
+«Probar conexión» verifica las lecturas. Los permisos de escritura se confirman con la primera
+carga: si falta uno, la conexión queda en «token rechazado» con el scope que falta, y la carga
+espera en la cola hasta que se corrija.

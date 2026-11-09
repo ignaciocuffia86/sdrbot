@@ -210,3 +210,4 @@ label.btn { margin: 0; color: var(--text); font-size: inherit; }
   .mon-ev { grid-template-columns: 4.8em 1.2em minmax(0, 1fr); }
   .mon-canal { display: none; }
 }
+.nota { white-space: pre-wrap; font: inherit; background: var(--muted-bg); padding: 8px 10px; border-radius: 6px; margin: 4px 0; }

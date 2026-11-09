@@ -23,6 +23,7 @@ import * as whatsapp from '../sdr/whatsapp.mjs';
 import * as monitor from '../sdr/monitor.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import * as dripify from '../sdr/dripify.mjs';
+import * as crm from '../sdr/crm.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -144,6 +145,19 @@ const V = {
       nota_max: { type: 'integer', minimum: 100, maximum: 300 },
       activo: { type: 'boolean' },
     } }),
+  crm: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: {
+      token: { type: 'string', minLength: 20, maxLength: 500, pattern: '^\\S+$' },
+      origen_campo: { type: ['string', 'null'], maxLength: 100, pattern: '^$|^[a-z0-9_]+$' },
+      origen_valor: { type: ['string', 'null'], maxLength: 200 },
+      dueno_defecto: { type: ['string', 'null'], maxLength: 30, pattern: '^$|^[0-9]+$' },
+      campos_fijos: { type: 'object', maxProperties: 20, propertyNames: { pattern: '^[a-z0-9_]{1,100}$' },
+        additionalProperties: { type: 'string', minLength: 1, maxLength: 200 } },
+      estado: { enum: ['activa', 'pausada'] },
+      tope_dia: { type: 'integer', minimum: 1, maximum: 1000 },
+    } }),
+  crmProspecto: validator({ type: 'object', additionalProperties: false,
+    properties: { prospecto_id: { type: 'string', pattern: '^[0-9a-fA-F-]{36}$' } } }),
   token: validator({ type: 'object', required: ['name', 'scopes'], additionalProperties: false,
     properties: { name: { type: 'string', minLength: 1, maxLength: 120 },
       scopes: { type: 'array', items: { enum: SCOPES }, minItems: 1, uniqueItems: true },
@@ -642,6 +656,76 @@ route('POST', '/clients/:client/sdr/dripify/webhook', async ({ user, params }) =
   return r;
 });
 
+// ----- CRM (docs/23, capa 1): la conexión con HubSpot, la cola de cargas y la vista previa. La
+// conecta el cliente o Biguá; los campos fijos y el tope por día, sólo Biguá.
+
+async function sdrActivo(user, clientId) {
+  await scoped(user, clientId, (c) => clienteExiste(c, clientId));
+  const { rowCount } = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [clientId]));
+  if (!rowCount) throw notFound('El SDR no está activado para este cliente.');
+}
+
+async function verCrm(clientId) {
+  const conexion = await asOwner((c) => crm.ver(c, clientId));
+  return { conexion, ...(conexion ? await crm.cargas(clientId) : { cargas: [], positivos_sin_cargar: [], conteo: {} }) };
+}
+
+route('GET', '/clients/:client/crm', async ({ user, params }) => {
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  return verCrm(params.client);
+});
+
+route('PUT', '/clients/:client/crm', async ({ user, params, body }) => {
+  const b = V.crm(body);
+  if (!isBigua(user) && (b.campos_fijos !== undefined || b.tope_dia !== undefined)) throw forbidden();
+  await sdrActivo(user, params.client);
+  const actual = await asOwner((c) => crm.ver(c, params.client));
+  if (!actual?.token && !b.token) throw errors.invalid('Falta el token de la app privada de HubSpot.');
+  try {
+    await crm.configurar(params.client, b);
+  } catch (e) {
+    if (e.code === 'crm_error') throw errors.invalid(e.message);
+    throw e;
+  }
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.crm', {
+    token_nuevo: Boolean(b.token), origen_campo: b.origen_campo, dueno_defecto: b.dueno_defecto, estado: b.estado,
+    tope_dia: b.tope_dia, campos_fijos: b.campos_fijos ? Object.keys(b.campos_fijos) : undefined }));
+  return verCrm(params.client);
+});
+
+route('POST', '/clients/:client/crm/probar', async ({ user, params }) => {
+  await sdrActivo(user, params.client);
+  try {
+    return { prueba: await crm.probar(params.client) };
+  } catch (e) {
+    if (e instanceof GatewayError) return { prueba: { listo: false, problemas: [e.message], avisos: [], duenos: [], propiedades: [] } };
+    throw e;
+  }
+});
+
+route('POST', '/clients/:client/crm/vista-previa', async ({ user, params, body }) => {
+  const b = V.crmProspecto(body);
+  await sdrActivo(user, params.client);
+  return { vista: await crm.vistaPrevia(params.client, b.prospecto_id) };
+});
+
+route('POST', '/clients/:client/crm/cargar', async ({ user, params, body }) => {
+  const b = V.crmProspecto(body);
+  if (!b.prospecto_id) throw errors.invalid('Falta prospecto_id.');
+  await sdrActivo(user, params.client);
+  const r = await crm.encolar(params.client, b.prospecto_id, { motivo: 'pedido', pedida_por: user.email });
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.crm.cargar', { prospecto_id: b.prospecto_id, carga: r.carga.id }));
+  return { ...r, ...(await verCrm(params.client)) };
+});
+
+route('POST', '/clients/:client/crm/cargas/:id/reintentar', async ({ user, params }) => {
+  if (!/^\d{1,15}$/.test(params.id)) throw notFound('No existe esa carga.');
+  await sdrActivo(user, params.client);
+  const carga = await crm.reintentar(params.client, Number(params.id), user.email);
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.crm.reintentar', { carga: carga.id }));
+  return { carga, ...(await verCrm(params.client)) };
+});
+
 // ----- WhatsApp: las reglas del turno (docs/22). Las carga Biguá; el cliente ve el estado.
 
 route('PUT', '/clients/:client/sdr/whatsapp', async ({ user, params, body }) => {
@@ -672,6 +756,7 @@ const OPS_PANEL = {
   'admin.sdr.no_contactar.quitar': 'baja de no contactar', 'admin.sdr.whatsapp': 'reglas de WhatsApp',
   'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado', 'admin.domain.check': 'dominio verificado',
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
+  'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida', 'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
 };
 
@@ -807,6 +892,7 @@ route('GET', '/clients/:client/resumen', async ({ user, params }) => {
       };
     }));
     out.whatsapp = await whatsapp.estado(params.client);
+    out.crm = await crm.estado(params.client);
     if (isBigua(user)) {
       out.despertadores = await asOwner(async (c) => {
         const r = {};

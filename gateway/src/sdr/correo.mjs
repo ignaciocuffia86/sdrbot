@@ -18,6 +18,7 @@ import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
 import { insertarEvento, aplicarEvento, versionActual } from './store.mjs';
 import * as dripify from './dripify.mjs';
+import * as crm from './crm.mjs';
 import * as noContactar from './no_contactar.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
@@ -536,8 +537,15 @@ export async function hashReloj() {
 
 // Una vuelta del reloj: lee los buzones de los clientes con `seguimiento` activo, del que hace
 // más tiempo que no se lee al más reciente, hasta el tiempo disponible; después despierta.
-export async function tick({ hasta = Date.now() + 40_000, fetchImpl } = {}) {
+export async function tick({ hasta = Date.now() + 40_000, fetchImpl, crmFetch } = {}) {
   const inicio = Date.now();
+  // Primero el CRM (docs/23): un positivo aprobado no espera a que se lean todos los buzones.
+  let cargasCrm;
+  try {
+    cargasCrm = await crm.procesarCola({ hasta: Math.min(hasta, Date.now() + 15_000), fetchImpl: crmFetch });
+  } catch (e) {
+    cargasCrm = [{ error: e.message }];
+  }
   const { rows } = await asOwner((c) => c.query(
     `select a.client_id, a.email from mailgw.account a
        join sdr.cliente_config k on k.client_id = a.client_id and 'seguimiento' = any(k.bots_activos)
@@ -572,7 +580,7 @@ export async function tick({ hasta = Date.now() + 40_000, fetchImpl } = {}) {
       despertados.push({ cliente: clientId, bot, despertado: false, error: e.message });
     }
   }
-  const resultado = { ms: Date.now() - inicio, buzones, linkedin, despertados };
+  const resultado = { ms: Date.now() - inicio, crm: cargasCrm, buzones, linkedin, despertados };
   await asOwner((c) => c.query(`update sdr.reloj set ultimo_tick_at = now(), ultimo_resultado = $1 where id`, [JSON.stringify(resultado)]));
   return resultado;
 }

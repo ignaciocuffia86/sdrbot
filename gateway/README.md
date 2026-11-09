@@ -102,7 +102,7 @@ Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`
 |---|---|---|
 | **Resumen** | Lo que necesita atención (buzones bloqueados, dominio mal, aprobaciones y respuestas que esperan, Dripify con error, despertadores y corridas con error), los números de los últimos 7 días, la calibración y el estado de cada canal (`GET /clients/:id/resumen`) | Los dos roles; despertadores y corridas, sólo Biguá |
 | **Empresa** | Los ajustes que leen los bots, en bloques (identidad y voz, a quién y con qué señal, conversación, operación), la vista previa, la lista de **no contactar** y el historial | Los dos roles |
-| **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, y WhatsApp y CRM como próximamente | Los dos roles; Dripify lo carga Biguá |
+| **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, WhatsApp y CRM (HubSpot: conexión, vista previa y cargas) | Los dos roles; Dripify lo carga Biguá; en el CRM, los campos fijos y el tope, sólo Biguá |
 | **Actividad** | El monitor: a la izquierda los canales con su modo (supervisado o autónomo); a la derecha lo que pasó hoy, en orden, con su estado (`GET /clients/:id/monitor`, se actualiza cada 30 s). Debajo, la auditoría completa (`docs/22`) | Los dos roles |
 | **⚙ Administración** | Operación (activar el SDR, canal de reglas, zona horaria, calibración, bots activos, modo de operación y tope), bots y despertadores, usuarios y tokens | Sólo Biguá |
 
@@ -270,3 +270,32 @@ Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de 
 - No descarga ni envía adjuntos.
 - Las copias ocultas (bcc) no quedan en un borrador.
 - La salida de Vercel no tiene IP fija: un servidor de correo que sólo acepta IPs de una lista no va a dejar entrar al gateway (ver `docs/07` §7).
+
+### CRM: la carga de los positivos en HubSpot
+
+Diseño en `docs/23-crm-carga-mixta.md` (etapa 4a, migración `012`). Cuando el operador aprueba la
+respuesta a un positivo (`registro_aprobar` sobre una `respuesta_positivo`), la carga entra a
+`sdr.crm_carga` en la misma transacción, si el cliente tiene el CRM conectado. La vuelta del reloj
+(`POST /cron/correo`) la procesa antes de leer los buzones (`src/sdr/crm.mjs`, adaptador en
+`src/sdr/hubspot.mjs`):
+
+1. **Contacto** buscado por email. Si no existe, se crea con nombre, cargo, empresa, la propiedad de
+   origen y el dueño por defecto. Si existe, sólo se completan las propiedades vacías y no se
+   cambia el dueño.
+2. **Empresa** por dominio (la que haya o una nueva), asociada al contacto.
+3. **Nota** con lo que respondió, qué pide, la respuesta aprobada y la referencia al registro.
+4. **Tarea** para el dueño, para el día hábil siguiente.
+
+Cada paso guarda lo que creó: si se corta, el reintento sigue desde ahí sin duplicar. Los errores
+de red o de HubSpot se reintentan (1 min, 5 min, 30 min, 2 h, 6 h, 12 h; después, `error`). Un token
+rechazado pausa la conexión sin gastar intentos. Un dato que HubSpot no acepta, o un prospecto sin
+email, bloquea la carga con el motivo. En los dos últimos casos el orquestador recibe un pedido para
+contárselo al operador. Al terminar, el prospecto pasa a `en_crm` y queda el evento `crm.cargado`
+con el enlace al contacto.
+
+- **El token** de la app privada se guarda cifrado con `MAILGW_ENC_KEYS` (y `rekey` lo recifra);
+  nunca vuelve al navegador.
+- **Herramientas para los bots:** `crm_cargar(prospecto_id)` para cuando el operador pide cargar a
+  alguien a mano, y `crm_cargas` para el resumen. Los bots no escriben en el CRM.
+- **Pruebas:** `test/crm.test.mjs`, contra un HubSpot simulado (`MAILGW_HUBSPOT_URL`). Para correr
+  sólo ese archivo: `MAILGW_TESTS=test/crm.test.mjs npm test`.

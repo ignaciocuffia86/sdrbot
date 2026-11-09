@@ -10,6 +10,7 @@ import * as sdr from './store.mjs';
 import * as correo from './correo.mjs';
 import * as dripify from './dripify.mjs';
 import * as whatsapp from './whatsapp.mjs';
+import * as crm from './crm.mjs';
 import { errors } from '../errors.mjs';
 
 const obj = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -246,7 +247,27 @@ export const SDR_OPS = [
       nota: texto(2000), ...META,
     }, ['id', 'decision', 'operador']),
     handler: (ctx, a) => sdr.aprobar(ctx.clientId, a, meta(a)),
-    summary: (r) => ({ decision: r.aprobacion.estado }),
+    summary: (r) => ({ decision: r.aprobacion.estado, crm: r.crm?.carga ?? null }),
+  },
+  // ------------------------------------------------------------ CRM (docs/23, capa 1)
+  {
+    op: 'crm_cargar', mcp: 'crm_cargar', scope: 'sdr',
+    description: 'Pone a un prospecto en la cola del CRM del cliente: el gateway lo carga solo (contacto, empresa, nota ' +
+      'con la respuesta y tarea al dueño) en el próximo minuto. Los positivos aprobados ya entran solos al aprobar la ' +
+      'respuesta: usala sólo cuando el operador pide en el chat cargar a alguien («cargá a X como lead»). Si ya estaba ' +
+      'cargado no hace nada; si había fallado, lo reintenta.',
+    schema: obj({ prospecto_id: uuid, por_que: texto(500), ...META }, ['prospecto_id']),
+    handler: (ctx, a) => crm.encolar(ctx.clientId, a.prospecto_id, { motivo: 'pedido', pedida_por: a.bot ?? null }),
+    summary: (r) => ({ carga: r.carga.id, estado: r.carga.estado }),
+  },
+  {
+    op: 'crm_cargas', mcp: 'crm_cargas', scope: 'sdr',
+    description: 'Las cargas en el CRM del cliente: en cola, hechas (con el enlace al contacto), con error o bloqueadas ' +
+      '(con el motivo), y los positivos que todavía no tienen carga. Para el resumen del orquestador.',
+    schema: obj({ estado: { enum: ['pendiente', 'en_curso', 'hecha', 'error', 'bloqueada'] },
+      limite: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, ...META }),
+    handler: (ctx, a) => crm.cargas(ctx.clientId, { estado: a.estado, limite: a.limite }),
+    summary: (r) => ({ cargas: r.cargas.length, sin_cargar: r.positivos_sin_cargar.length }),
   },
   // ------------------------------------------------------------ memoria del correo (etapa 2)
   {
