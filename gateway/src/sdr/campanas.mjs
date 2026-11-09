@@ -73,8 +73,9 @@ async function buzonesDelCliente(c, clientId) {
 // ---------------------------------------------------------------- lectura
 
 // Personas por campaña. Se leen con el rol de la aplicación y el cliente fijado, como el Resumen:
-// el portal no ve el registro (007).
-async function numeros(clientId) {
+// el portal no ve el registro (007). Abre su propia conexión, así que se llama con la del panel ya
+// cerrada (el pool es chico: una conexión pedida adentro de otra puede trabar a todos).
+export async function numeros(clientId) {
   const { rows } = await asRole('mailgw_app', clientId, (c) => c.query(
     `select campana_id, count(*)::int as prospectos,
             count(*) filter (where estado in ('respondio', 'positivo', 'en_crm'))::int as respondieron
@@ -82,6 +83,7 @@ async function numeros(clientId) {
   return Object.fromEntries(rows.map((r) => [r.campana_id, r]));
 }
 
+// Sin los números de personas: los suma conNumeros, afuera de la transacción del panel.
 export async function listar(c, clientId, { esBigua }) {
   const cfg = await contexto(c, clientId);
   const { rows } = await c.query(
@@ -94,11 +96,8 @@ export async function listar(c, clientId, { esBigua }) {
        from sdr.campana k where client_id = $1
       order by case estado when 'activa' then 0 when 'pausada' then 1 when 'borrador' then 2 else 3 end, creado_at`,
     [clientId]);
-  const n = await numeros(clientId);
   const campanas = rows.map(({ ajustes, buzones, ...r }) => ({
     ...publica(r),
-    prospectos: n[r.id]?.prospectos ?? 0,
-    respondieron: n[r.id]?.respondieron ?? 0,
     pendientes: r.estado === 'terminada' ? 0 : faltantesParaActivar({ ...r, ajustes, buzones: buzones ?? [] }, cfg.ajustes).length,
   }));
   return {
@@ -110,6 +109,14 @@ export async function listar(c, clientId, { esBigua }) {
     // Decisión 1: el cliente crea borradores en los dos modos.
     puede_crear: true,
     puede_activar: esBigua || cfg.modo === 'autogestionado',
+  };
+}
+
+export async function conNumeros(clientId, lista) {
+  const n = await numeros(clientId);
+  return {
+    ...lista,
+    campanas: lista.campanas.map((k) => ({ ...k, prospectos: n[k.id]?.prospectos ?? 0, respondieron: n[k.id]?.respondieron ?? 0 })),
   };
 }
 

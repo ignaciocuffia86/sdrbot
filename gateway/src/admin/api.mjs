@@ -687,10 +687,14 @@ async function avisarCampana(user, clientId, id, texto) {
   }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de campaña', e.message));
 }
 
-route('GET', '/clients/:client/sdr/campanas', async ({ user, params }) => scoped(user, params.client, async (c) => {
-  await clienteExiste(c, params.client);
-  return campanas.listar(c, params.client, { esBigua: isBigua(user) });
-}));
+route('GET', '/clients/:client/sdr/campanas', async ({ user, params }) => {
+  const lista = await scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    return campanas.listar(c, params.client, { esBigua: isBigua(user) });
+  });
+  // Con la conexión del panel ya devuelta: una conexión adentro de otra puede trabar el pool.
+  return campanas.conNumeros(params.client, lista);
+});
 
 route('POST', '/clients/:client/sdr/campanas', async ({ user, params, body }) => {
   const r = await scoped(user, params.client, async (c) => {
