@@ -1,6 +1,7 @@
 # Panel por cliente: canales, campañas y ajustes del SDR
 
-Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); C en adelante, diseño.
+Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); C en adelante, diseño, con todas las
+definiciones cerradas (§6, decisiones 9 a 14, del 09/11/2026).
 Escrito el 05/11/2026. Propone cómo reorganizar
 la ficha de cada cliente en `https://sdrbot.bigua.lat/admin`: qué se configura, dónde, quién lo
 toca y en qué orden se construye. Complementa a `15` (alta), `16` (guía del cliente) y `20`
@@ -56,11 +57,11 @@ Los niveles se explican en §3.
 | A quién no escribirle | `ajustes.excluir` | Cliente | prospector | **Empresa** (exclusiones de siempre) + **Campaña** (las propias) |
 | Tono | `ajustes.tono` | Cliente | Todos | **Empresa**, con override por campaña |
 | Idioma y trato | `ajustes.idioma` | Cliente | Todos | **Empresa**, con override por campaña |
-| Firma | `ajustes.firma` | Cliente | prospector, seguimiento | **Canal → buzón** (la firma es de quien manda), con default en Empresa |
+| Firma | `ajustes.firma` | Cliente | prospector, seguimiento | **Canal → buzón** (la firma es de quien manda), con default en Empresa; la campaña no tiene firma (decisión 11) |
 | Objeciones | `ajustes.objeciones` | Cliente | seguimiento | **Empresa** (generales) + **Campaña** (las de esa oferta) |
 | Qué cuenta como positivo | `ajustes.positivos` | Cliente | seguimiento | **Campaña** (en un webinar, positivo es «se inscribió») |
 | Qué buzón usar para qué | `ajustes.buzones` (texto libre) | Biguá | prospector | **Campaña** → buzones asignados (selección, no texto) |
-| Cuentas nuevas por día | `ajustes.cuentas_por_dia` | Biguá | orquestador | **Campaña** (con un tope total del cliente en Operación) |
+| Cuentas nuevas por día | `ajustes.cuentas_por_dia` | Biguá | orquestador | **Campaña** (con un tope total del cliente en Operación; sin peso, decisión 12) |
 | Antigüedad máxima del aviso | `ajustes.dias_aviso` | Biguá | prospector | **Campaña → señal** |
 | Señal en los avisos | `ajustes.senal_avisos` | Biguá | prospector | **Campaña → señal** |
 | Acepta mails extrapolados | `ajustes.acepta_mails_extrapolados` | Biguá | prospector | **Campaña** (default de Empresa) |
@@ -88,7 +89,7 @@ Los niveles se explican en §3.
 | **Link de agenda** | No hay | Para que el positivo pueda agendar directo (Calendly, HubSpot Meetings) | Empresa, con override por campaña |
 | **A quién avisar un positivo** | Biguá avisa a mano | El vendedor del cliente que toma la reunión | Empresa (y por campaña si cada una tiene dueño) |
 | **Lista de no contactar** | `excluir` en texto libre + supresión de bajas y rebotes | Clientes actuales, partners, competidores por dominio: mejor una lista de dominios y mails, cargable por CSV, que el gateway haga cumplir | Empresa |
-| **Presupuesto de ASCI** | Tope «3 publicantes por tanda», sin tope diario de créditos | Cada reveal cuesta; con varias campañas hay que repartir | Operación (tope del cliente) y Campaña (peso) |
+| **Presupuesto de ASCI** | Tope «3 publicantes por tanda», sin tope diario de créditos | Cada reveal cuesta; con varias campañas hay que repartir | Operación (tope del cliente), repartido en proporción a las cuentas por día de cada campaña (decisión 12) |
 | **Días y horas de envío** | Los que marcan las routines | Con campañas en varios países, los envíos deberían salir en horario del destinatario | Operación (después) |
 | **Feriados** | No hay | No mandar en feriados del país del destinatario | Operación (después; lista por país) |
 
@@ -111,7 +112,8 @@ Cliente
 ```
 
 **Regla de herencia:** Empresa define los defaults; una campaña sólo dice lo que cambia (tono,
-idioma, firma, extrapolados, link de agenda). En el formulario de la campaña, un campo heredado se
+idioma, extrapolados, link de agenda y quién toma a los interesados; la firma no, es del buzón:
+decisión 11). En el formulario de la campaña, un campo heredado se
 ve atenuado con «De Empresa: …» y un botón «Cambiar para esta campaña».
 
 **Regla de permisos:** el candado reemplaza al «· lo cambia Biguá» al final del título. El cliente
@@ -173,7 +175,7 @@ Webinar: automatización de pruebas (28/11)            [Borrador ▾]  Guardar
  6 Canales y ritmo   Buzones: ana@, info@ · Dripify: campaña 123456 · 8 cuentas/día · 1 persona/cuenta
  7 Respuestas        Qué es positivo · objeciones propias · a quién avisar
  ── Avanzado (Biguá) ───────────────────────────────────────────────────
-    Calibración de la campaña · extrapolados · reveals de publicantes por tanda · peso en el cupo
+    Calibración de la campaña · extrapolados · reveals de publicantes por tanda · campaña de Dripify
  ── Así lo leen los bots ─── (vista previa, a la derecha en pantallas anchas)
  ── Historial de cambios de esta campaña
 ```
@@ -272,8 +274,9 @@ Más adelante: **Cuentas objetivo** (una lista de empresas cargada por CSV, sin 
   que esa termine con ella (respuesta, `sin_respuesta` o pausa). Una de **evento** puede escribirle
   a otra persona de esa cuenta, nunca a una que esté activa en otra campaña (decisión 3).
 - **La supresión es del cliente, no de la campaña.** Una baja o un rebote vale para todas.
-- **El cupo de los buzones es compartido.** El orquestador reparte las cuentas del día por el
-  **peso** de cada campaña activa y nunca pasa el tope total del cliente.
+- **El cupo de los buzones es compartido.** Cada campaña activa pide sus cuentas por día; la suma
+  de las activas no puede pasar el tope total del cliente (el panel no deja guardar ni activar).
+  Si un día los buzones no dan para todo, el orquestador recorta en proporción (decisión 12).
 - **Una respuesta pertenece a la campaña del mensaje que contesta**; `seguimiento` lee la
   configuración de esa campaña (positivos, objeciones, link de agenda).
 
@@ -291,7 +294,7 @@ Hoy es por cliente: los primeros 20 mails. Con campañas:
 
 | Pieza | Hoy | Con campañas |
 |---|---|---|
-| `reglas_manual` | Una sección «Ajustes de este cliente» | Dos secciones: «Empresa» y «Campaña: <nombre>» (la del pedido); el orquestador recibe además «Campañas activas» con peso y cupo |
+| `reglas_manual` | Una sección «Ajustes de este cliente» | Dos secciones: «Empresa» y «Campaña: <nombre>» (la del pedido); el orquestador recibe además «Campañas activas» con sus cuentas por día y el cupo |
 | Pedido del orquestador al prospector | «N cuentas nuevas» | «N cuentas para la campaña X, M para la Y» (`campana` en el pedido) |
 | `registro_guardar_cuenta` / `_prospecto` | — | Llevan `campana`; el gateway rechaza una persona que ya está activa en otra |
 | `enviar` | Cualquier buzón del cliente | Sólo un buzón asignado a la campaña del prospecto; links sólo los permitidos de la campaña |
@@ -318,7 +321,7 @@ create table sdr.campana (
   ajustes        jsonb not null default '{}',      -- lo de §2, validado por tipo como hoy ajustes.mjs
   buzones        uuid[] not null default '{}',     -- mailgw.mailbox
   dripify_campana_id bigint,
-  peso           int not null default 1 check (peso between 0 and 10),
+  cuentas_por_dia int not null default 0 check (cuentas_por_dia between 0 and 100),
   calibracion_mails int not null default 5,
   inicio date, fin date,
   creado_at timestamptz not null default now(), actualizado_at timestamptz not null default now(),
@@ -329,7 +332,7 @@ create table sdr.campana (
 ```
 
 `sdr.cliente_config.ajustes` queda como los ajustes de **Empresa**. Las claves que pasan a la
-campaña (§2.1) se mueven a la campaña «principal» en la migración. Mismas políticas por cliente
+campaña (§6.2) se mueven a la campaña «principal» en la migración. Mismas políticas por cliente
 que el resto de `sdr`.
 
 ## 5. WhatsApp
@@ -363,6 +366,18 @@ Tomadas el 05/11/2026. Maqueta navegable con todas aplicadas: https://claude.ai/
 | 7 | ¿Cadencia configurable? | **Sí:** de 1 a 4 mails, esperas de 2 a 10 días hábiles; LinkedIn sigue con la secuencia de Dripify |
 | 8 | ¿Cuántos perfiles de LinkedIn por cliente? | **Configurable:** varias cuentas de Dripify (cada una con su API key) para sumar volumen. Ver §6.1 |
 
+Las decisiones 9 a 14 se tomaron el 09/11/2026 sin pasar por BairesQA: las define Biguá y después
+se ajustan a cada cliente (decisión 14). El detalle de cada una está en §6.2.
+
+| # | Pregunta | Decisión |
+|---|---|---|
+| 9 | ¿Dónde quedan los ajustes de la etapa B? | `llamado_accion` pasa a la **campaña**, con un valor por defecto según el tipo. `prueba_social` queda en **Empresa** como biblioteca y cada campaña elige qué casos cita (si no elige, todos). `responsable_positivos` y `link_agenda` quedan en **Empresa** y la campaña puede cambiarlos |
+| 10 | ¿Cómo se parten `oferta` y `excluir` al migrar? | La `oferta` de hoy se copia entera a la **propuesta** de la campaña «principal» y también a la nueva **descripción** de Empresa, con un aviso en Resumen para recortarla. `excluir` queda entero en **Empresa** (exclusiones de siempre); las exclusiones propias de la «principal» arrancan vacías |
+| 11 | ¿Qué firma gana? | **Buzón > Empresa.** La campaña no tiene firma: si necesita otra, usa otro buzón |
+| 12 | ¿Peso o cuentas por día? | **Sólo cuentas por día**, por campaña. Se elimina el peso. La suma de las activas no puede pasar el tope del cliente; si un día los buzones no dan, el orquestador recorta en proporción. El presupuesto de ASCI se reparte con la misma proporción |
+| 13 | ¿Qué edita el cliente en una campaña? | Lo ve todo. **En los dos modos** edita el contenido; **en autogestionado**, además, el estado, las fechas, el volumen, los buzones y el ritmo. **Siempre Biguá:** la señal, la calibración, la campaña y los perfiles de Dripify. Detalle en §6.2 |
+| 14 | ¿Se espera a BairesQA para arrancar C? | **No.** C arranca con estas definiciones y se parte en dos entregas: **C1**, campañas con un solo perfil de LinkedIn; **C2**, varios perfiles (§6.1). BairesQA se adecúa después, sobre la «principal» migrada |
+
 ### 6.1 Lo que suma tener varios perfiles de LinkedIn
 
 Una cuenta de Dripify es un perfil de LinkedIn, y LinkedIn limita invitaciones por perfil: dos
@@ -380,7 +395,62 @@ perfiles duplican el techo. No cambia el modelo, pero toca más piezas que una s
 | Textos | La nota y los mensajes hablan en nombre de la persona del perfil: el bot recibe el nombre del perfil con cada persona |
 | Riesgo | Cada perfil tiene que ser de una persona real del cliente que acepte que se use; un perfil restringido por LinkedIn no frena a los demás |
 
-Es trabajo de la etapa C (campañas), no un proyecto aparte.
+Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
+
+### 6.2 Detalle de las decisiones 9 a 14
+
+**Qué vive dónde.** Esta tabla reemplaza la columna «Nivel propuesto» de §2.1 donde no coinciden:
+
+| Nivel | Campos |
+|---|---|
+| **Empresa** | `nombre_comercial`, `descripcion` (nueva: qué hace la empresa), zona horaria, `tono`, `idioma`, `firma` (por defecto), `excluir` (de siempre), no contactar, `prueba_social` (biblioteca), `objeciones` (generales), `responsable_positivos`, `link_agenda` |
+| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `icp`, `roles_objetivo`, `excluir` (propias), `senal_avisos`, `dias_aviso`, `llamado_accion`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones` (propias), `prueba_social` (cuáles de la biblioteca), buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
+| **La campaña puede cambiar lo de Empresa** | `tono`, `idioma`, `acepta_mails_extrapolados`, `responsable_positivos`, `link_agenda`. Nada más: lo demás se suma (exclusiones, objeciones) o es sólo de un nivel |
+| **Buzón** | `firma` (gana a la de Empresa) |
+| **Se va** | `ajustes.buzones` (texto libre): lo reemplaza la selección de buzones de la campaña |
+
+Las listas que existen en los dos niveles (`excluir`, `objeciones`) **se suman**: el bot ve las de
+Empresa y las de la campaña juntas.
+
+**Valores por defecto de `llamado_accion` según el tipo.** Prospección: «una charla corta para ver
+si tiene sentido»; Evento: «inscribirse con el link»; Reactivación: «¿sigue vigente el tema?».
+Para la «principal» se copia el `llamado_accion` que el cliente tenga hoy.
+
+**Volumen (12).**
+
+- Se guarda en la campaña o se activa sólo si la suma de las `cuentas_por_dia` de las activas no
+  pasa el `tope_cuentas_dia` del cliente. Para activar una segunda campaña el tope tiene que
+  estar cargado (Administración → Operación).
+- El orquestador pide a cada campaña lo suyo. Si el cupo de los buzones asignados no alcanza ese
+  día, recorta cada campaña en proporción a lo que pidió y lo anota en la bitácora.
+- Los reveals de ASCI del día se reparten con la misma proporción.
+
+**Permisos (13).** El cliente ve todos los campos de la campaña; los que no puede tocar se ven en
+sólo lectura, con candado.
+
+| Quién | Qué edita en la campaña |
+|---|---|
+| **Cliente, en los dos modos** | Nombre, propuesta, ICP, cargos, exclusiones propias, qué le pedimos al prospecto, links permitidos (sólo `https`, hasta 3), positivos, objeciones propias, qué casos cita, lo que puede cambiar de Empresa (tono, idioma, responsable, link de agenda). En modo operado por Biguá, la campaña nueva queda en borrador |
+| **Cliente, en autogestionado** | Además: activar, pausar y terminar; inicio y fin; `cuentas_por_dia` (dentro del tope); buzones; `dias_aviso`; extrapolados; cadencia (desde la etapa D) |
+| **Sólo Biguá** | Tipo (una vez activa, no cambia), `senal_avisos`, `calibracion_mails`, campaña y perfiles de Dripify, «Avanzado» |
+
+Una campaña **terminada** no se reactiva. Para repetirla se usa **Duplicar**, que crea un borrador
+con la misma configuración. Así los números de cada campaña no se mezclan.
+
+**Migración de la «principal» (10).** Por cliente, en la migración de C:
+
+1. Se crea `sdr.campana` con `clave = 'principal'`, `nombre = 'Principal'`, tipo prospección y
+   estado `activa` si el cliente tiene bots activos (si no, `pausada`).
+2. Pasan a la campaña: `icp`, `roles_objetivo`, `senal_avisos`, `dias_aviso`, `llamado_accion`,
+   `positivos`, `cuentas_por_dia`, `acepta_mails_extrapolados`, y `oferta` como `propuesta`. Los
+   buzones se cargan con todos los activos del cliente; el id de Dripify, con el que tiene hoy.
+3. En Empresa: `descripcion` arranca con una copia de `oferta` (y aparece «Revisar la descripción
+   de la empresa» en Resumen hasta que alguien la guarde); `excluir`, `objeciones` y
+   `prueba_social` quedan como están; `ajustes.buzones` se borra, y su texto queda en el historial.
+4. La calibración de la «principal» arranca con la que el cliente ya lleva: si ya terminó, queda
+   terminada.
+5. Todas las filas que ya existen de `cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y
+   `dripify_carga` quedan con el `campana_id` de la «principal».
 
 ## 7. Por etapas
 
@@ -390,12 +460,13 @@ Cada etapa se puede usar sola; la A no toca la base ni las reglas.
 |---|---|---|
 | **A · Reordenar** (hecha) | Barra nueva (Resumen, Empresa, Canales, Actividad, ⚙; Campañas aparece en C y, mientras tanto, «A quién y con qué» vive como un bloque de Empresa). Canales junta Buzones, Dominios y Dripify. Administración junta Usuarios, Tokens, lo técnico y los despertadores. El formulario de ajustes de hoy partido en bloques (Empresa / A quién y con qué / Operación) con candados en vez de sufijos. Resumen con lo que ya hay (aprobaciones, calibración, estado de buzones y Dripify) | Sólo `gateway/src/admin/static/` y un endpoint de resumen |
 | **B · Ajustes nuevos** (hecha) | Lista de no contactar (con el gateway haciéndola cumplir), firma por buzón, link de agenda, a quién avisar un positivo, prueba social, llamado a la acción. Las reglas los leen | `ajustes.mjs`, una tabla de supresión del cliente, `playbooks/` |
-| **C · Campañas** | Tabla `sdr.campana`, la «principal» migrada, tipo Prospección, buzones y Dripify por campaña, `campana` en las herramientas MCP, reparto en el orquestador, calibración por campaña, resumen por campaña | Base, gateway, MCP, `playbooks/`, panel |
+| **C · Campañas** (C1 y C2) | Tabla `sdr.campana`, la «principal» migrada (§6.2), tipo Prospección, buzones y Dripify por campaña, `campana` en las herramientas MCP, reparto en el orquestador, calibración por campaña, resumen por campaña | Base, gateway, MCP, `playbooks/`, panel |
 | **D · Más tipos** | Invitación a evento y Reactivación, cadencia configurable | `playbooks/` (tareas nuevas), panel |
 | **E · Canales nuevos** | CRM (HubSpot), WhatsApp de seguimiento | Según `11` y §5 |
 
-Sugerencia: A y B juntas en una entrega, C después de revisar con
-BairesQA cómo quieren usar la segunda campaña.
+A y B se entregaron juntas. C arranca ya, sin la revisión con BairesQA (decisión 14), en dos
+entregas: **C1**, todo lo de la fila C con un perfil de LinkedIn por cliente, y **C2**, varios
+perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que lo pida.
 
 ### 7.1 Lo que quedó construido en A y B
 
