@@ -11,6 +11,7 @@
 // MAILGW_ALLOW_PRIVATE_HOSTS=1 levanta las dos restricciones (sólo para las pruebas locales).
 
 import dns from 'node:dns/promises';
+import https from 'node:https';
 import net from 'node:net';
 import { errors } from '../errors.mjs';
 
@@ -76,4 +77,85 @@ export async function resolveTarget(host, port, proto) {
     throw errors.notAllowed(`El servidor ${h} apunta a una dirección interna o reservada; no se permite.`);
   }
   return { address: ok.address, servername: net.isIP(h) ? undefined : h };
+}
+
+// ---------------------------------------------------------------- webhooks salientes
+//
+// El despertador (src/sdr/correo.mjs) le hace un POST a una URL que carga Biguá en el panel, con la
+// clave del webhook en la cabecera. Sin control, sirve para que el gateway llame a la red interna de
+// Vercel o a la metadata del proveedor. Por eso, como con IMAP y SMTP:
+//   - sólo https, puerto 443, sin usuario ni contraseña en la URL;
+//   - el nombre se resuelve al conectar y se rechaza si alguna dirección es interna o reservada
+//     (un DNS que cambia entre la carga y el aviso no cambia lo que se controla);
+//   - no se siguen redirecciones.
+
+
+export function validateWebhookUrl(raw) {
+  let u = null;
+  try { u = new URL(String(raw ?? '').trim()); } catch { /* inválida */ }
+  if (!u || u.protocol !== 'https:') throw errors.invalid('La URL del webhook tiene que empezar con https://.');
+  if (u.username || u.password) throw errors.invalid('La URL del webhook no puede llevar usuario ni contraseña.');
+  if (u.port && u.port !== '443' && !allowPrivate()) throw errors.notAllowed('La URL del webhook va al puerto 443 (el de https).');
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (!allowPrivate()) {
+    if (net.isIP(host)) {
+      if (isPrivateIp(host)) throw errors.notAllowed('La URL del webhook apunta a una dirección interna o reservada; no se permite.');
+    } else {
+      validateHostSyntax(host);
+      if (!host.includes('.') || /\.(local|internal|localhost|lan|home|corp)$/i.test(host) || host === 'localhost') {
+        throw errors.notAllowed('La URL del webhook tiene que ser de un dominio público.');
+      }
+    }
+  }
+  return u;
+}
+
+// Resuelve y controla: lo usan la carga (para avisar enseguida) y cada conexión.
+export async function publicAddresses(host) {
+  if (net.isIP(host)) {
+    if (!allowPrivate() && isPrivateIp(host)) throw errors.notAllowed(`${host} es una dirección interna o reservada; no se permite.`);
+    return [{ address: host, family: net.isIPv6(host) ? 6 : 4 }];
+  }
+  let addrs;
+  try {
+    addrs = await dns.lookup(host, { all: true, verbatim: true });
+  } catch (e) {
+    throw errors.invalid(`No se encontró ${host} (${e.code ?? e.message}).`);
+  }
+  if (!allowPrivate() && (!addrs.length || addrs.some((a) => isPrivateIp(a.address)))) {
+    throw errors.notAllowed(`${host} apunta a una dirección interna o reservada; no se permite.`);
+  }
+  return addrs;
+}
+
+// Al cargar la URL: avisa enseguida si el dominio no resuelve o apunta adentro. Con
+// MAILGW_ALLOW_PRIVATE_HOSTS=1 (pruebas locales) no se resuelve.
+export async function checkWebhookHost(raw) {
+  const u = validateWebhookUrl(raw);
+  if (!allowPrivate()) await publicAddresses(u.hostname.replace(/^\[|\]$/g, ''));
+  return u;
+}
+
+// POST con cuerpo JSON. Devuelve { ok, status } como fetch; una redirección cuenta como falla.
+export async function postWebhook(raw, { headers = {}, body = '', timeoutMs = 10_000 } = {}) {
+  const u = validateWebhookUrl(raw);
+  const lookup = (hostname, opts, cb) => {
+    publicAddresses(hostname.replace(/^\[|\]$/g, '')).then((addrs) => {
+      if (opts?.all) cb(null, addrs);
+      else cb(null, addrs[0].address, addrs[0].family);
+    }, (e) => cb(e));
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(u, {
+      method: 'POST', lookup, timeout: timeoutMs,
+      headers: { ...headers, 'content-length': Buffer.byteLength(body) },
+    }, (res) => {
+      res.resume();
+      const status = res.statusCode ?? 0;
+      resolve({ ok: status >= 200 && status < 300, status });
+    });
+    req.on('timeout', () => req.destroy(new Error(`sin respuesta en ${Math.round(timeoutMs / 1000)} s`)));
+    req.on('error', reject);
+    req.end(body);
+  });
 }

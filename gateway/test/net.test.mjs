@@ -2,7 +2,9 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPrivateIp, resolveTarget, validateHostSyntax, validatePort } from '../src/mail/net.mjs';
+import fs from 'node:fs';
+import https from 'node:https';
+import { isPrivateIp, resolveTarget, validateHostSyntax, validatePort, validateWebhookUrl, postWebhook, checkWebhookHost } from '../src/mail/net.mjs';
 
 let saved;
 beforeEach(() => { saved = process.env.MAILGW_ALLOW_PRIVATE_HOSTS; delete process.env.MAILGW_ALLOW_PRIVATE_HOSTS; });
@@ -39,4 +41,40 @@ test('MAILGW_ALLOW_PRIVATE_HOSTS=1 lo levanta para las pruebas locales', async (
   process.env.MAILGW_ALLOW_PRIVATE_HOSTS = '1';
   assert.deepEqual(await resolveTarget('127.0.0.1', 11993, 'IMAP'), { address: '127.0.0.1', servername: undefined });
   assert.deepEqual(await resolveTarget('localhost', 993, 'IMAP'), { address: 'localhost', servername: 'localhost' });
+});
+
+test('webhooks salientes (despertador): sólo https al 443 de un dominio público', async () => {
+  assert.equal(validateWebhookUrl('https://hooks.grok.test/r/abc?x=1').hostname, 'hooks.grok.test');
+  for (const [url, re] of [
+    ['http://hooks.grok.test/r', /https:\/\//], ['ftp://x.com', /https:\/\//], ['no es una url', /https:\/\//],
+    ['https://user:pass@hooks.grok.test/r', /usuario ni contraseña/], ['https://hooks.grok.test:8443/r', /puerto 443/],
+    ['https://169.254.169.254/latest/meta-data', /interna/], ['https://127.0.0.1/', /interna/], ['https://[::1]/', /interna/],
+    ['https://10.0.0.5/hook', /interna/], ['https://localhost/hook', /dominio público/], ['https://metadata.internal/x', /dominio público/],
+    ['https://intranet/x', /dominio público/],
+  ]) {
+    assert.throws(() => validateWebhookUrl(url), re, url);
+  }
+  // Al conectar también se controla (aunque la URL se haya cargado antes con otro DNS).
+  await assert.rejects(postWebhook('https://169.254.169.254/latest', { body: '{}' }), /interna/);
+  await assert.rejects(checkWebhookHost('https://10.1.2.3/x'), /interna/);
+});
+
+test('webhooks salientes: una redirección no se sigue', async (t) => {
+  const dir = process.env.MAILGW_TEST_DIR;
+  if (!dir || !fs.existsSync(`${dir}/server.pem`)) { t.skip('sin el certificado de prueba de run.sh'); return; }
+  process.env.MAILGW_ALLOW_PRIVATE_HOSTS = '1';
+  const pedidos = [];
+  const srv = https.createServer({ cert: fs.readFileSync(`${dir}/server.pem`), key: fs.readFileSync(`${dir}/server.key`) }, (req, res) => {
+    pedidos.push(req.url);
+    if (req.url === '/hook') { res.writeHead(302, { location: 'https://127.0.0.1:1/adentro' }); res.end(); return; }
+    res.end('ok');
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const r = await postWebhook(`https://127.0.0.1:${srv.address().port}/hook`, { headers: { 'content-type': 'application/json' }, body: '{}' });
+    assert.deepEqual(r, { ok: false, status: 302 });
+    assert.deepEqual(pedidos, ['/hook']);
+  } finally {
+    await new Promise((r) => srv.close(r));
+  }
 });
