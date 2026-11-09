@@ -518,3 +518,57 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
 - **Modo de operación** (`sdr.cliente_config.modo` y `tope_cuentas_dia`): en autogestionado el
   cliente cambia volumen, buzones, extrapolados y antigüedad del aviso, con las cuentas por día
   hasta el tope. La activación de campañas por el cliente llega con la etapa C.
+
+### 7.2 C1: lo hecho y lo que falta (en pausa desde el 09/11/2026)
+
+C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review.
+Este es el punto donde se retoma.
+
+**Hecho** (PR `ignaciocuffia86/sdrbot#6`):
+
+- **Decisiones** 9 a 14 (§6 y §6.2).
+- **Migración `012_campanas`.** Tablas `sdr.campana` y `sdr.campana_buzon`; la «principal» de
+  cada cliente; `campana_id` en el registro, con un disparador que lo completa mientras el código
+  no lo mande. **No está aplicada en producción.**
+- **`ajustes.mjs` partido** en Empresa y campaña. El formulario de hoy sigue igual.
+- **API de campañas del panel** (`src/sdr/campanas.mjs`).
+- **Pestaña Campañas.** Sólo la ve Biguá, con aviso de transición
+  (`CAMPANAS_PARA_CLIENTES = false` en `static/app.js`).
+
+**Falta, en este orden:**
+
+1. **Las herramientas MCP con `campana`.**
+   - `registro_guardar_cuenta`, `registro_guardar_prospecto`, `pedir`, `pedir_aprobacion` y
+     `dripify_cargar` reciben la campaña.
+   - El gateway hace cumplir:
+     - que una persona esté en una sola campaña activa;
+     - que `enviar` y `responder` salgan sólo por los buzones de la campaña del prospecto;
+     - que los mails lleven sólo los links permitidos de la campaña;
+     - que la campaña de Dripify sea la de la campaña.
+   - Las aprobaciones llevan la campaña y la calibración se cuenta por campaña (decisión 4).
+2. **Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).
+   - `reglas_manual` arma dos secciones, «Empresa» y «Campaña: <nombre>», con
+     `ajustesEfectivos`.
+   - El orquestador recibe «Campañas activas» con sus cuentas por día y reparte el pedido diario
+     por campaña (decisión 12).
+   - El prospector toma la campaña del pedido.
+   - `seguimiento` lee la campaña del prospecto.
+   - Se publica una versión de las reglas en canario.
+3. **`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).
+4. **Migración `013`** (§6.2, paso 3):
+   - `descripcion` de Empresa;
+   - borrar de Empresa las claves que pasaron a la campaña, salvo `acepta_mails_extrapolados`;
+   - sacar `ajustes.buzones`;
+   - el formulario de Empresa pasa a `CAMPOS_EMPRESA`.
+5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
+   transición.
+6. **Aplicar `012` y `013` en producción**, en ese orden y después de publicar las reglas.
+
+**Pendientes chicos, vistos al construir:**
+
+- Un buzón dado de alta después de la `012` no entra solo en la «principal»: decidir si se suma
+  a la «principal» o queda sin campaña hasta que se lo asigne.
+- Volver una campaña a una versión anterior del historial, como en Empresa.
+
+**Después de C1:** C2, con varios perfiles de LinkedIn (§6.1), y D, con los tipos Evento y
+Reactivación y la cadencia configurable.
