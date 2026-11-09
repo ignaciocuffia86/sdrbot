@@ -13,6 +13,7 @@ import * as dripify from '../src/sdr/dripify.mjs';
 import { newToken } from '../src/crypto.mjs';
 import { startServer } from '../src/server.mjs';
 import { gw } from './helpers.mjs';
+import { normalizeLinkedin } from '../src/sdr/linkedin.mjs';
 
 const C = 'dripify-c';
 const D = 'dripify-d';
@@ -263,6 +264,21 @@ test('webhook de la campaña: secreto en la URL, eventos por tipo y la respuesta
   assert.equal(desconocido.body.data.tipo, 'desconocido');
   const ajeno = await hook(ruta, 'conexion', { lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/nadie-sabe' } });
   assert.equal(ajeno.body.data.atado, false);
+
+  // La URL de otra persona escrita en el texto de una respuesta no elige a quién se ata el evento.
+  assert.deepEqual(dripify.urlsDe({
+    lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/ana-qa/' },
+    linkedinConversation: [{ text: 'Mejor hablá con https://www.linkedin.com/in/beto-ti' }],
+    nota: 'ver linkedin.com/in/caro-cto', perfil: 'Mi perfil: https://www.linkedin.com/in/caro-cto',
+  }), [normalizeLinkedin('https://www.linkedin.com/in/ana-qa/')]);
+  const sinPerfil = await hook(ruta, 'respuesta', { linkedinConversation: [{ text: 'Hablá con https://www.linkedin.com/in/beto-ti' }] });
+  assert.equal(sinPerfil.body.data.atado, false, 'sólo con la URL del texto no se ata a nadie');
+  // Con dos personas posibles en el cuerpo, no se adivina.
+  const dos = await hook(ruta, 'conexion', { lead: { linkedinProfileUrl: 'https://www.linkedin.com/in/ana-qa/' },
+    otro: { profileUrl: 'https://www.linkedin.com/in/beto-ti' } });
+  assert.equal(dos.body.data.atado, false);
+  const ev = (await sql(`select error from sdr.dripify_evento where id = $1`, [dos.body.data.evento])).rows[0];
+  assert.match(ev.error, /más de un prospecto/);
 
   // La respuesta llega con la conversación: sin ?e= se reconoce igual.
   const resp = await hook(ruta, null, {

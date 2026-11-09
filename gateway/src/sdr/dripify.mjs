@@ -639,14 +639,30 @@ function recorrer(x, fn, clave = '', prof = 0) {
   fn(clave, x);
 }
 
+// Las URLs de LinkedIn que identifican a la persona del evento. Sólo valen los campos cuyo valor
+// entero es una URL de perfil: una URL mencionada adentro de un texto no cuenta, y las partes del
+// cuerpo que son conversación o mensajes no se miran. Si no, quien responde podría escribir la URL
+// de otra persona y el evento quedaría atado a ella.
+const PARTES_DE_TEXTO = /conversation|message|text|reply|body|content|note|comment/i;
+const URL_PERFIL = /^(https?:\/\/)?([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/[^\s"'<>?#]+\/?([?#][^\s]*)?$/i;
+
 export function urlsDe(cuerpo) {
   const urls = new Set();
-  recorrer(cuerpo, (_k, v) => {
-    if (typeof v !== 'string' || !/linkedin\.com\/in\//i.test(v)) return;
-    for (const m of v.match(/(https?:\/\/)?([a-z]{2,3}\.|www\.)?linkedin\.com\/in\/[^\s"'<>?#]+/gi) ?? []) {
-      try { urls.add(normalizeLinkedin(m)); } catch { /* una URL cortada no sirve para atar */ }
+  const ver = (x, prof = 0) => {
+    if (prof > 8 || x === null || x === undefined) return;
+    if (Array.isArray(x)) { for (const y of x) ver(y, prof + 1); return; }
+    if (typeof x !== 'object') return;
+    for (const [k, v] of Object.entries(x)) {
+      if (PARTES_DE_TEXTO.test(k)) continue;
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (URL_PERFIL.test(t)) { try { urls.add(normalizeLinkedin(t)); } catch { /* una URL cortada no sirve para atar */ } }
+      } else {
+        ver(v, prof + 1);
+      }
     }
-  });
+  };
+  ver(cuerpo);
   return [...urls];
 }
 
@@ -689,15 +705,21 @@ export async function webhook(clientId, secreto, e, cuerpo) {
   const urls = urlsDe(cuerpo);
   return asClient(clientId, async (c) => {
     const { rows: ps } = urls.length
-      ? await c.query(`select * from sdr.prospecto where client_id = $1 and linkedin_url = any($2) order by actualizado_at desc limit 1`, [clientId, urls])
+      ? await c.query(`select * from sdr.prospecto where client_id = $1 and linkedin_url = any($2) order by actualizado_at desc limit 2`, [clientId, urls])
       : { rows: [] };
-    const p = ps[0] ?? null;
+    // Con dos personas posibles no se adivina: el evento queda sin atar, para revisar.
+    const ambiguo = ps.length > 1;
+    const p = ambiguo ? null : (ps[0] ?? null);
     const { rows: ins } = await c.query(
       `insert into sdr.dripify_evento (client_id, tipo, linkedin_url, prospecto_id, cuerpo) values ($1, $2, $3, $4, $5) returning id`,
       [clientId, tipo, p?.linkedin_url ?? urls[0] ?? null, p?.id ?? null, JSON.stringify(cuerpo ?? {})]);
     const id = Number(ins[0].id);
     const marcar = (procesado, error = null) => c.query(`update sdr.dripify_evento set procesado = $2, error = $3 where id = $1`, [id, procesado, error]);
-    if (!p) { await marcar(false, urls.length ? 'ningún prospecto con esa URL de LinkedIn' : 'el cuerpo no trae una URL de LinkedIn'); return { evento: id, atado: false }; }
+    if (!p) {
+      await marcar(false, ambiguo ? 'el cuerpo trae URLs de más de un prospecto: no se ata a ninguno'
+        : urls.length ? 'ningún prospecto con esa URL de LinkedIn' : 'el cuerpo no trae una URL de LinkedIn');
+      return { evento: id, atado: false };
+    }
     if (tipo === 'desconocido') { await marcar(false, 'no se sabe qué evento es: agregar ?e=… a la URL del webhook'); return { evento: id, atado: true, tipo }; }
     const meta = { bot: 'gateway', tarea: 'dripify', version: await versionActual(c, clientId) };
     const ev = { tipo: TIPOS_WEBHOOK[tipo], canal: 'linkedin', prospecto_id: p.id, ref: `dripify:webhook:${id}`, datos: { dripify_evento: id } };
