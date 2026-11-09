@@ -243,7 +243,7 @@ node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sq
 node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
 ```
 
-Publicado en producción: `2026.11.05-6` (estable y canario), con LinkedIn por Dripify y el prospector sobre `avisos_recientes` de ASCI. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
+Publicado en producción: `2026.11.05-6` en estable, con LinkedIn por Dripify y el prospector sobre `avisos_recientes` de ASCI; `2026.11.09-1` en canario (09/11), con lo de las etapas A y B del panel (no contactar, firma por buzón, pedido al prospecto, casos citables, interesados y agenda) y el bot `whatsapp`. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
 
 ## Envíos cortados
 
