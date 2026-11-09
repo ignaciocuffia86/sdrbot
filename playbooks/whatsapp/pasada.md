@@ -49,6 +49,9 @@ Un turno vence a los 10 minutos: si no llegaste a mandarlo, pedí uno nuevo con 
 
 1. En WhatsApp Web, mirá los chats con mensajes nuevos **sólo de números que están en el registro**
    (`registro_buscar` por el número). Los demás chats no son del SDR: no los abras ni los toques.
+   Buscá con el número **completo**, con el `+` y el código de país como lo muestra WhatsApp. Si
+   `registro_buscar` no devuelve a nadie o trae un `aviso` (el número coincide con más de una
+   persona), no atribuyas el chat: avisale al orquestador con el número.
 2. Por cada mensaje nuevo de un prospecto: `registro_evento` tipo `respuesta`, canal `whatsapp`,
    `prospecto_id`, y en `datos` el `texto` **textual** (no un resumen) y la hora que muestra
    WhatsApp. Si es un audio, una imagen o un archivo, registrá qué es («audio de 40 s») sin abrirlo.

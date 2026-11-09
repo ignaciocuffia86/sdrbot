@@ -54,6 +54,7 @@ Respuesta REST: `{"ok": true, "data": ...}` o `{"ok": false, "error": {"code": "
 - **Contraseñas cifradas** con AES-256-GCM. La clave vive sólo en la variable de entorno `MAILGW_ENC_KEYS` de Vercel; la base guarda el texto cifrado, atado a su buzón. Un volcado de la base sola no expone contraseñas.
 - **Tokens con hash** (sha256) y permisos `read`, `draft`, `send` y `manage`.
 - **Servidores de correo permitidos.** El gateway resuelve el servidor una vez, se conecta a esa IP (con el nombre como SNI para el certificado) y rechaza direcciones internas, de loopback, link-local y reservadas, y puertos que no sean de correo (25, 143, 465, 587, 993, 2525). Sin esto, el botón "Probar" del panel serviría para que el gateway abra conexiones a la red interna de Vercel.
+- **Webhooks salientes (despertadores).** La URL va sólo por `https`, al puerto 443 y a un dominio público, sin usuario ni contraseña. El nombre se controla al cargarla y otra vez al conectar, y no se siguen redirecciones (`src/mail/net.mjs`).
 - **Aislamiento entre clientes en la base**, no sólo en el código. Cada pedido corre en una transacción con el rol `mailgw_app` (sin `BYPASSRLS`, sin ser dueño de nada) y con el cliente del token fijado; las políticas de cada tabla dejan ver y escribir sólo las filas de ese cliente. Todas las tablas llevan `client_id`, y un envío no puede quedar a nombre de un buzón de otro cliente (clave foránea compuesta). Los tokens no se leen directo: `mailgw.autenticar(hash)` devuelve el cliente. Lo prueba `test/aislamiento.test.mjs` contra la base, sin pasar por el gateway.
 - **Auditoría** por operación (`mailgw.audit_log`): quién, qué buzón, resultado y conteos, sin contenido de mensajes.
 
@@ -107,6 +108,37 @@ Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`
 | **⚙ Administración** | Operación (activar el SDR, canal de reglas, zona horaria, calibración, bots activos, modo de operación y tope), bots y despertadores, usuarios y tokens | Sólo Biguá |
 
 Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/tokens`) llevan a su lugar nuevo.
+
+### Campañas (etapa C1, en construcción)
+
+Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Los campos de Empresa y de campaña, con sus permisos, los estados, el tope y la herencia, están en `src/sdr/ajustes.mjs`.
+
+La API del panel (`src/sdr/campanas.mjs`) es la misma para los dos roles; qué puede tocar cada uno lo decide el modo del cliente (`docs/21` §6.2, decisión 13):
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /clients/:id/sdr/campanas` | Las campañas con estado, buzones, volumen, personas, respuestas y pendientes para activar; el modo, el tope y cuántas cuentas por día suman las activas |
+| `POST /clients/:id/sdr/campanas` | Crea una campaña en borrador (`nombre`, `tipo`, columnas y `ajustes`). Los dos roles, en los dos modos |
+| `GET /clients/:id/sdr/campanas/:campana` | La campaña, sus campos y columnas con `editable`, lo que hereda de Empresa, los ajustes efectivos, lo que falta para activarla, los buzones del cliente y el historial |
+| `PUT /clients/:id/sdr/campanas/:campana` | Cambia columnas y `ajustes` (y `nota`). Activar exige que no falte nada y que la suma de las activas no pase el tope. Una campaña activa no puede quedar con pendientes nuevos. Una terminada no se edita |
+| `POST /clients/:id/sdr/campanas/:campana/duplicar` | Copia en borrador: ajustes, buzones, tipo y volumen. No copia las fechas ni la campaña de Dripify |
+
+Cada cambio queda en `sdr.ajustes_historial` (con `campana_id`) y en la auditoría. Si lo hizo el cliente, el orquestador recibe un pedido para contárselo al operador.
+
+**Pestaña Campañas** (entre Resumen y Empresa):
+- **Lista:** estado, buzones, volumen, personas, respuestas y pendientes. Muestra cuánto suman las activas contra el tope y tiene el botón **Nueva campaña**, que crea un borrador con nombre y tipo.
+- **Editor:** las secciones de `docs/21` §3.2, plegables y con un resumen de una línea cada una.
+  - Lo que se hereda de Empresa se ve como «De Empresa: …», con **Cambiar para esta campaña** y **Usar lo de Empresa**.
+  - Los casos se eligen de la biblioteca de Empresa.
+  - Botones **Activar** (sólo sin pendientes), **Pausar**, **Terminar** y **Duplicar**.
+  - Al costado, lo que falta para activar y «Así la van a leer los bots». Abajo, el historial.
+
+Mientras las herramientas y las reglas no usen las campañas, los bots siguen con el formulario de Empresa: pausar o terminar una campaña todavía no los frena. Por eso la pestaña la ve **sólo Biguá**, con un aviso de transición (`CAMPANAS_PARA_CLIENTES` en `static/app.js`). Se abre a los clientes cuando las reglas lean la campaña. La API ya responde a los dos roles.
+
+Lo prueban:
+- `test/campanas.test.mjs`: la base.
+- `test/ajustes.test.mjs`: los ajustes.
+- `test/campanas_panel.test.mjs`: la API.
 
 ### SDR: ajustes del cliente
 
