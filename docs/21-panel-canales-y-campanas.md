@@ -1,7 +1,7 @@
 # Panel por cliente: canales, campañas y ajustes del SDR
 
 Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); de C1, la base
-(migración `012`), los ajustes partidos, la API y la pestaña Campañas del panel (09/11/2026; la
+(migración `012`, aplicada en producción el 09/11/2026), los ajustes partidos, la API y la pestaña Campañas del panel (09/11/2026; la
 pestaña la ve sólo Biguá hasta que las reglas lean la campaña); el resto de C en adelante, diseño, con todas las
 definiciones cerradas (§6, decisiones 9 a 14, del 09/11/2026).
 Escrito el 05/11/2026. Propone cómo reorganizar
@@ -521,15 +521,16 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
 
 ### 7.2 C1: lo hecho y lo que falta (en pausa desde el 09/11/2026)
 
-C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review.
-Este es el punto donde se retoma.
+C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review;
+las correcciones entraron con el PR #6 y las reglas, en canario (`2026.11.09-2`). Este es el
+punto donde se retoma.
 
 **Hecho** (PR `ignaciocuffia86/sdrbot#6`):
 
 - **Decisiones** 9 a 14 (§6 y §6.2).
 - **Migración `012_campanas`.** Tablas `sdr.campana` y `sdr.campana_buzon`; la «principal» de
   cada cliente; `campana_id` en el registro, con un disparador que lo completa mientras el código
-  no lo mande. **No está aplicada en producción.**
+  no lo mande. **Aplicada en producción el 09/11/2026**, antes del merge del PR #6.
 - **`ajustes.mjs` partido** en Empresa y campaña. El formulario de hoy sigue igual.
 - **API de campañas del panel** (`src/sdr/campanas.mjs`).
 - **Pestaña Campañas.** Sólo la ve Biguá, con aviso de transición
@@ -562,7 +563,7 @@ Este es el punto donde se retoma.
    - el formulario de Empresa pasa a `CAMPOS_EMPRESA`.
 5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
    transición.
-6. **Aplicar `012` y `013` en producción**, en ese orden y después de publicar las reglas.
+6. **Aplicar la `013` en producción**, después de publicar las reglas que leen la campaña.
 
 **Pendientes chicos, vistos al construir:**
 
