@@ -478,3 +478,34 @@ test('aislamiento: otro cliente no ve ni usa el Dripify ni las respuestas de est
   const res = await hook(`/hook/dripify/${D}/${secretoC}`, 'conexion', {});
   assert.equal(res.status, 404);
 });
+
+test('dripify_cargar por campaña: la campaña de Dripify de la campaña, una campaña por carga, y nada si está en pausa', async () => {
+  const k = (await sql(
+    `insert into sdr.campana (client_id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails, dripify_campana_id)
+     values ($1, 'li-dos', 'LinkedIn dos', 'prospeccion', 'activa', 3, 0, 76) returning *`, [C])).rows[0];
+  const nuevo = async (n) => (await ok(tok.c, 'registro_guardar_prospecto', {
+    nombre: n, email: `${n}@empresa-dos.test`, linkedin_url: `https://www.linkedin.com/in/${n}-qa/`, campana: 'li-dos', ...META })).prospecto;
+  const dani = await nuevo('dani');
+  const eli = await nuevo('eli');
+  assert.equal(dani.campana_id, k.id);
+
+  // No se mezclan campañas en una carga.
+  const mezcla = await call(tok.c, 'dripify_cargar', {
+    prospectos: [{ prospecto_id: dani.id, ...textos('Dani') }, { prospecto_id: P.sin.id, ...textos('Sin') }], idempotency_key: 'li-dos-mezcla', ...META });
+  assert.equal(mezcla.error.code, 'dripify_carga_rechazada');
+  assert.match(mezcla.error.message, /distintas campañas/);
+
+  // Va a la campaña de Dripify de la campaña (76), no a la de la cuenta (77).
+  const antes = mock.s.pedidos.length;
+  const r = await call(tok.c, 'dripify_cargar', { prospectos: [{ prospecto_id: dani.id, ...textos('Dani') }], idempotency_key: 'li-dos-1', ...META });
+  assert.ok(mock.s.pedidos.slice(antes).some((x) => x.method === 'POST' && x.path === '/v1/open-api/campaigns/76/leads'), JSON.stringify(r));
+  const carga = (await sql(`select campana_id, dripify_campana_id from sdr.dripify_carga where client_id = $1 and clave = 'li-dos-1'`, [C])).rows[0];
+  assert.equal(carga.campana_id, k.id);
+  assert.equal(Number(carga.dripify_campana_id), 76);
+
+  // En pausa, no se carga a nadie.
+  await sql(`update sdr.campana set estado = 'pausada' where id = $1`, [k.id]);
+  const pausa = await call(tok.c, 'dripify_cargar', { prospectos: [{ prospecto_id: eli.id, ...textos('Eli') }], idempotency_key: 'li-dos-2', ...META });
+  assert.equal(pausa.status, 409);
+  assert.equal(pausa.error.code, 'campana_inactiva');
+});

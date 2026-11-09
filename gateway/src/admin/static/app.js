@@ -445,9 +445,9 @@ const ESTADO_CAMPANA = { borrador: ['borrador', 'b-mute'], activa: ['activa', 'b
 const estadoBadge = (e) => { const [label, cls] = ESTADO_CAMPANA[e] ?? [e, 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
 
 function transicionNota() {
-  return h('p', { class: 'note' }, 'Transición: los bots todavía trabajan con los ajustes de Empresa, como si hubiera una sola campaña. ',
-    'Lo que se cambie acá queda guardado, pero no cambia lo que hacen hasta que las reglas lean las campañas: ',
-    'activar, pausar o terminar una campaña todavía no frena ni arranca nada.');
+  return h('p', { class: 'note' }, 'Transición: los bots todavía escriben con los ajustes de Empresa y no reparten el volumen por campaña. ',
+    'El gateway ya hace cumplir cada campaña: en una que no está activa no salen mails nuevos, no se carga a nadie en LinkedIn ',
+    'ni se toman personas nuevas; los mails salen sólo por sus buzones y con sus links permitidos.');
 }
 
 async function campanasView({ clientId, bigua, base, reload }) {

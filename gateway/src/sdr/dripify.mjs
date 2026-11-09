@@ -22,6 +22,7 @@ import { decryptSecret, encryptSecret, hashToken } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { normalizeLinkedin } from './linkedin.mjs';
 import * as noContactar from './no_contactar.mjs';
+import * as enCampana from './en_campana.mjs';
 import { insertarEvento, aplicarEvento, versionActual, errorsSdr } from './store.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
@@ -285,13 +286,20 @@ const marcadores = (s) => /\{\{|\}\}|\[(nombre|empresa|cargo|name|company)\]/i.t
 
 // ---------------------------------------------------------------- cargar en la campaña
 
-// Controles antes de cargar: la persona tiene LinkedIn, no respondió ni está cerrada, no estaba
-// cargada, los textos entran y, en calibración, coinciden con lo aprobado.
+// Controles antes de cargar: todas las personas son de una misma campaña activa, tienen LinkedIn,
+// no respondieron ni están cerradas, no estaban cargadas, los textos entran y, si la campaña está
+// en calibración, coinciden con lo aprobado. Devuelve también la campaña.
 async function controlarCarga(c, clientId, items, notaMax) {
-  const { rows: cfg } = await c.query(`select calibracion_mails from sdr.cliente_config where client_id = $1`, [clientId]);
-  const { rows: usadas } = await c.query(
-    `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId]);
-  const calibrando = (cfg[0]?.calibracion_mails ?? 0) > usadas[0].n;
+  const { rows: personas } = await c.query(
+    `select distinct campana_id from sdr.prospecto where client_id = $1 and id = any($2::uuid[])`, [clientId, items.map((x) => x.prospecto_id)]);
+  if (personas.length > 1) {
+    throw new GatewayError('dripify_carga_rechazada',
+      'La carga mezcla personas de distintas campañas: cada campaña va en su propia carga (con su campaña de Dripify).', 422, { errores: [] });
+  }
+  const k = personas.length ? await enCampana.porId(c, clientId, personas[0].campana_id) : await enCampana.principal(c, clientId);
+  enCampana.exigirActiva(k, 'no se carga a nadie en LinkedIn');
+  const { rows: cfg } = await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId]);
+  const { calibrando } = await enCampana.calibracion(c, clientId, k, cfg[0]);
   const errores = [];
   const aprobaciones = [];
   const vistos = new Set();
@@ -345,23 +353,25 @@ async function controlarCarga(c, clientId, items, notaMax) {
     }
     it.p = p;
   }
-  return { errores, aprobaciones };
+  return { errores, aprobaciones, k };
 }
 
 export async function cargar(clientId, a, meta) {
-  const cx = await conexion(clientId);
+  let cx = await conexion(clientId);
   // Reintento con la misma clave: devuelve lo que pasó la primera vez.
   const { rows: prev } = await asClient(clientId, (c) => c.query(
     `select * from sdr.dripify_carga where client_id = $1 and clave = $2`, [clientId, a.idempotency_key]));
   if (prev[0]?.estado === 'ok') return { repetida: true, ...resultadoCarga(prev[0]) };
   if (prev[0]?.estado === 'enviando') throw errorsDripify.enCurso();
 
-  const { errores, aprobaciones } = await asClient(clientId, (c) => controlarCarga(c, clientId, a.prospectos, cx.cuenta.nota_max));
+  const { errores, aprobaciones, k: enSdr } = await asClient(clientId, (c) => controlarCarga(c, clientId, a.prospectos, cx.cuenta.nota_max));
   if (errores.length) {
     throw new GatewayError('dripify_carga_rechazada',
       `No se cargó nada: ${errores.length} de ${a.prospectos.length} no pasan los controles. Corregí o sacá esos y volvé a cargar.`,
       422, { errores });
   }
+  // La campaña de Dripify de la campaña del SDR; si no tiene una propia, la de la cuenta (C1).
+  cx = { ...cx, cuenta: { ...cx.cuenta, campana_id: enSdr.dripify_campana_id ?? cx.cuenta.campana_id } };
   const k = await campana(cx);
   if (!k) throw errorsDripify.noEncontrado(`No existe la campaña ${cx.cuenta.campana_id} en la cuenta de Dripify del cliente. Avisar a Biguá.`);
   if (k.status !== 'ACTIVE') throw errorsDripify.campanaInactiva(k.status);
@@ -371,10 +381,10 @@ export async function cargar(clientId, a, meta) {
 
   const ids = a.prospectos.map((x) => x.prospecto_id);
   const { rows: carga } = await asClient(clientId, (c) => c.query(
-    `insert into sdr.dripify_carga (client_id, clave, dripify_campana_id, prospectos) values ($1, $2, $3, $4)
+    `insert into sdr.dripify_carga (client_id, clave, dripify_campana_id, prospectos, campana_id) values ($1, $2, $3, $4, $5)
      on conflict (client_id, clave) do update set estado = 'enviando', error = null, prospectos = excluded.prospectos, creado_at = now()
        where sdr.dripify_carga.estado = 'error'
-     returning *`, [clientId, a.idempotency_key, cx.cuenta.campana_id, ids]));
+     returning *`, [clientId, a.idempotency_key, cx.cuenta.campana_id, ids, enSdr.id]));
   if (!carga.length) throw errorsDripify.enCurso();
   const id = Number(carga[0].id);
 

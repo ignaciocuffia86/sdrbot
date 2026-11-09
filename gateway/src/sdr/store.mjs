@@ -8,6 +8,7 @@ import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
 import { CAMPOS, ordenar, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
+import * as enCampana from './en_campana.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -330,7 +331,8 @@ export function mismoWhatsapp(a, b) {
   return x.slice(-10) === y.slice(-10) && Math.min(x.length, y.length) >= 8 ? 'local' : null;
 }
 
-const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta'];
+const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta',
+  'campana_id'];
 
 export async function guardarCuenta(clientId, a, meta) {
   return asClient(clientId, async (c) => {
@@ -356,8 +358,12 @@ export async function guardarCuenta(clientId, a, meta) {
       }
     }
     const val = (k) => (k === 'senales' ? JSON.stringify(a[k]) : a[k]);
+    // La campaña que toma la cuenta: la que mandó el bot o, para una cuenta nueva, la «principal».
+    const destino = a.campana ? await enCampana.porClave(c, clientId, a.campana) : (actual ? null : await enCampana.principal(c, clientId));
+    if (destino) a = { ...a, campana_id: destino.id };
     if (!actual) {
       if (!a.nombre) throw new GatewayError('invalid_request', 'Para crear una cuenta hace falta el nombre.', 400);
+      enCampana.exigirActiva(destino, 'no toma cuentas nuevas');
       const cols = CAMPOS_CUENTA.filter((k) => a[k] !== undefined);
       const { rows } = await c.query(
         `insert into sdr.cuenta (client_id, ${cols.join(', ')}) values ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')}) returning *`,
@@ -367,6 +373,10 @@ export async function guardarCuenta(clientId, a, meta) {
         await insertarEvento(c, clientId, { tipo: 'cuenta.excluida', cuenta_id: rows[0].id, datos: { motivo: rows[0].estado_motivo } }, { ...meta, version });
       }
       return { creada: true, cuenta: rows[0], ...(aviso ? { no_contactar: true, aviso } : {}) };
+    }
+    if (destino && destino.id !== actual.campana_id) {
+      enCampana.exigirActiva(destino, 'no toma cuentas nuevas');
+      await enCampana.controlarCuenta(c, clientId, actual, destino);
     }
     const cols = CAMPOS_CUENTA.filter((k) => a[k] !== undefined);
     if (!cols.length) return { creada: false, cuenta: actual };
@@ -381,7 +391,8 @@ export async function guardarCuenta(clientId, a, meta) {
 }
 
 const CAMPOS_PROSPECTO = ['cuenta_id', 'asci_id', 'apollo_id', 'nombre', 'cargo', 'area', 'seniority', 'email', 'email_calidad',
-  'linkedin_url', 'whatsapp', 'eleccion', 'estado', 'canales', 'dripify', 'proximo_paso', 'proximo_canal', 'proximo_fecha'];
+  'linkedin_url', 'whatsapp', 'eleccion', 'estado', 'canales', 'dripify', 'proximo_paso', 'proximo_canal', 'proximo_fecha',
+  'campana_id'];
 const JSONB_PROSPECTO = new Set(['eleccion', 'dripify']);
 
 export async function guardarProspecto(clientId, a, meta) {
@@ -406,6 +417,20 @@ export async function guardarProspecto(clientId, a, meta) {
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);
+    }
+    // La campaña de la persona (§4.3): la que mandó el bot; si no, una persona nueva va a la campaña
+    // que tomó su cuenta o a la «principal». Una persona está en una sola campaña activa.
+    let destino = null;
+    if (a.campana) destino = await enCampana.porClave(c, clientId, a.campana);
+    else if (!actual) {
+      const cta = cuentaId ? await cuentaDe(c, clientId, cuentaId) : null;
+      destino = cta?.campana_id ? await enCampana.porId(c, clientId, cta.campana_id) : await enCampana.principal(c, clientId);
+    }
+    if (destino && destino.id !== actual?.campana_id) {
+      enCampana.exigirActiva(destino, 'no toma personas nuevas');
+      if (actual) await enCampana.controlarCambio(c, clientId, actual, destino);
+      if (cuentaId) await enCampana.controlarCuenta(c, clientId, await cuentaDe(c, clientId, cuentaId), destino);
+      a = { ...a, campana_id: destino.id };
     }
     const version = await versionActual(c, clientId);
     const val = (k) => (JSONB_PROSPECTO.has(k) ? JSON.stringify(a[k]) : a[k]);
@@ -545,12 +570,18 @@ export async function pedir(clientId, a, meta) {
     }
     const escalado = idas > TOPE_IDAS;
     const para = escalado ? 'orquestador' : a.para_bot;
+    // La campaña del pedido: la que mandó el bot, la del prospecto o la «principal».
+    let campanaId = a.campana_id ?? null;
+    if (!campanaId && (a.campana || a.prospecto_id)) {
+      const p = a.prospecto_id ? await prospectoDe(c, clientId, a.prospecto_id) : null;
+      campanaId = (await enCampana.resolver(c, clientId, { clave: a.campana, prospecto: p })).id;
+    }
     const { rows } = await c.query(
       `insert into sdr.pedido (client_id, de_bot, para_bot, prospecto_id, que, por_que, para_cuando, relacionado_con, idas, escalado,
                                campana_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
       [clientId, meta.bot, para, a.prospecto_id ?? null, a.que, a.por_que ?? null, a.para_cuando ?? null,
-        a.relacionado_con ?? null, idas, escalado, a.campana_id ?? null]);
+        a.relacionado_con ?? null, idas, escalado, campanaId]);
     if (a.prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'pedido', prospecto_id: a.prospecto_id,
         datos: { pedido: rows[0].id, de: meta.bot, para, que: a.que, escalado } }, { ...meta, version: await versionActual(c, clientId) });
@@ -598,10 +629,12 @@ export async function resolverPedido(clientId, a) {
 
 export async function pedirAprobacion(clientId, a, meta) {
   return asClient(clientId, async (c) => {
-    if (a.prospecto_id) await prospectoDe(c, clientId, a.prospecto_id);
+    const p = a.prospecto_id ? await prospectoDe(c, clientId, a.prospecto_id) : null;
+    // La aprobación queda en la campaña de la persona: ahí se cuenta la calibración (decisión 4).
+    const k = await enCampana.resolver(c, clientId, { clave: a.campana, prospecto: p });
     const { rows } = await c.query(
-      `insert into sdr.aprobacion (client_id, tipo, prospecto_id, pedida_por, contenido) values ($1, $2, $3, $4, $5) returning *`,
-      [clientId, a.tipo, a.prospecto_id ?? null, meta.bot, JSON.stringify(a.contenido)]);
+      `insert into sdr.aprobacion (client_id, tipo, prospecto_id, pedida_por, contenido, campana_id) values ($1, $2, $3, $4, $5, $6) returning *`,
+      [clientId, a.tipo, a.prospecto_id ?? null, meta.bot, JSON.stringify(a.contenido), k.id]);
     if (a.prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'aprobacion.pedida', prospecto_id: a.prospecto_id,
         datos: { aprobacion: rows[0].id, tipo: a.tipo } }, { ...meta, version: await versionActual(c, clientId) });
@@ -650,26 +683,34 @@ const primerDestinatario = (to) => {
   return limpios.length === 1 ? limpios[0] : null;
 };
 
-// Calibración y aprobaciones que el gateway exige antes de enviar (docs/09 §5.4). Devuelve la
-// aprobación a marcar como usada, o null si el envío no la necesita.
+// Calibración, aprobaciones y campaña que el gateway exige antes de enviar (docs/09 §5.4, docs/21
+// §4.3). Devuelve la aprobación a marcar como usada, o null si el envío no la necesita.
 export async function controlarEnvio(clientId, args, kind) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
+    const p = args.prospecto_id ? await prospectoDe(c, clientId, args.prospecto_id) : null;
+    // Un cliente sin el SDR (sólo el gateway de correo) no tiene campañas ni calibración.
+    const k = cfg ? await enCampana.resolver(c, clientId, { prospecto: p }) : null;
+    if (p && k) {
+      // Un mail nuevo sale sólo si su campaña está activa y por un buzón de la campaña; las respuestas
+      // salen del buzón que recibió, y siguen aunque la campaña esté en pausa.
+      if (kind === 'send') {
+        enCampana.exigirActiva(k, 'no salen mails nuevos');
+        if (!(await enCampana.buzonEnCampana(c, clientId, k, args.mailbox))) throw enCampana.errorsCampana.buzon(args.mailbox, k);
+      }
+      const fuera = await enCampana.linksNoPermitidos(c, clientId, k, cfg, { textos: [args.text, args.subject, args.html], buzon: args.mailbox });
+      if (fuera.length) throw enCampana.errorsCampana.links(fuera, k);
+    }
     let necesita = null;
-    if (kind === 'send' && cfg?.calibracion_mails > 0) {
-      const { rows } = await c.query(
-        `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId]);
-      if (rows[0].n < cfg.calibracion_mails) necesita = { tipo: 'calibracion_mail', usadas: rows[0].n, total: cfg.calibracion_mails };
+    if (kind === 'send' && k) {
+      const cal = await enCampana.calibracion(c, clientId, k, cfg);
+      if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
-    if (kind === 'reply' && args.prospecto_id) {
-      const p = await prospectoDe(c, clientId, args.prospecto_id);
-      if (p.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
-    }
-    if (args.prospecto_id) await prospectoDe(c, clientId, args.prospecto_id);
+    if (kind === 'reply' && p?.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
     if (!necesita && !args.aprobacion_id) return null;
     if (!args.aprobacion_id) {
       throw errorsSdr.aprobacionRequerida(necesita.tipo === 'calibracion_mail'
-        ? `Este cliente está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
+        ? `La campaña «${k.nombre}» está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
           'Pedila con registro_pedir_aprobacion (tipo calibracion_mail, con buzón, destinatario, asunto y texto) y enviá cuando esté aprobada, pasando aprobacion_id.'
         : 'Es la respuesta a un positivo: necesita una aprobación (registro_pedir_aprobacion, tipo respuesta_positivo). Enviá cuando esté aprobada, pasando aprobacion_id.');
     }
