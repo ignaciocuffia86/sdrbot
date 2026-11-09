@@ -12,7 +12,7 @@ import { GatewayError } from '../errors.mjs';
 import { asRole } from '../store.mjs';
 import {
   BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA, TIPOS, ajustesEfectivos, aplicarCambiosCampana,
-  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tituloDe,
+  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tituloCampana, tituloDe,
 } from './ajustes.mjs';
 
 const invalido = (msg) => new GatewayError('invalid_request', msg, 400);
@@ -121,15 +121,19 @@ export async function ver(c, clientId, id, { esBigua }) {
     tipos: Object.entries(TIPOS).map(([clave, t]) => ({ clave, titulo: t.titulo, llamado_accion: t.llamado_accion })),
     // Lo que la campaña hereda de Empresa, para mostrarlo atenuado («De Empresa: …»).
     empresa: cfg.ajustes ?? {},
-    efectivos: ajustesEfectivos(cfg.ajustes, k.ajustes, k.tipo),
+    efectivos: conTitulos(ajustesEfectivos(cfg.ajustes, k.ajustes, k.tipo)),
     faltantes: k.estado === 'terminada' ? [] : faltantesParaActivar(k, cfg.ajustes),
     buzones_disponibles: await buzonesDelCliente(c, clientId),
     modo: cfg.modo,
     tope_cuentas_dia: cfg.tope_cuentas_dia,
     otras_activas: await otrasActivas(c, clientId, id),
-    historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloDe) })),
+    historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloCampana) })),
   };
 }
+
+// En lo que leen los bots, cada clave con su título general (el de Empresa): las listas que se
+// suman no son «de esta campaña».
+const conTitulos = (e) => ({ ...e, titulos: Object.fromEntries(Object.keys(e.valores).map((k) => [k, tituloDe(k)])) });
 
 // ---------------------------------------------------------------- escritura
 

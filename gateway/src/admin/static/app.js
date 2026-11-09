@@ -235,13 +235,18 @@ function newClientDialog() {
 // La ficha de un cliente (docs/21 §3): Resumen, Empresa, Canales y Actividad; Administración
 // aparte, sólo para Biguá. Las direcciones de las pestañas viejas llevan a su lugar nuevo.
 const VIEJAS = { sdr: ['empresa'], buzones: ['canales'], dominios: ['canales'], usuarios: ['admin', 'usuarios'], tokens: ['admin', 'tokens'] };
-const TABS = [['resumen', 'Resumen'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
+const TABS = [['resumen', 'Resumen'], ['campanas', 'Campañas'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
+
+// Mientras los bots no lean las campañas (etapa C1, docs/21 §7), lo que se cambia en la pestaña
+// Campañas no cambia lo que hacen: la ve sólo Biguá. Pasa a true cuando las reglas lean la campaña.
+const CAMPANAS_PARA_CLIENTES = false;
 
 async function renderClient(clientId, tab, sub) {
   if (VIEJAS[tab]) [tab, sub = sub] = VIEJAS[tab];
   const data = await api('GET', `/clients/${enc(clientId)}`);
   const bigua = data.can_manage_access;
-  if (!TABS.some(([k]) => k === tab) && !(bigua && tab === 'admin')) tab = 'resumen';
+  const tabs = TABS.filter(([k]) => k !== 'campanas' || bigua || CAMPANAS_PARA_CLIENTES);
+  if (!tabs.some(([k]) => k === tab) && !(bigua && tab === 'admin')) tab = 'resumen';
   const base = `#/c/${enc(clientId)}`;
   const body = h('div');
   main.replaceChildren(
@@ -249,11 +254,12 @@ async function renderClient(clientId, tab, sub) {
     h('h1', {}, data.client.name),
     h('p', { class: 'sub mono' }, data.client.id),
     h('nav', { class: 'tabs' },
-      TABS.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label)),
+      tabs.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label)),
       bigua ? h('a', { href: `${base}/admin`, class: `gear${tab === 'admin' ? ' on' : ''}` }, '⚙ Administración') : null),
     body);
   const v = { clientId, data, bigua, base, reload: () => renderClient(clientId, tab, sub) };
   if (tab === 'resumen') body.append(await resumenView(v));
+  if (tab === 'campanas') body.append(await (sub ? campanaView(v, sub) : campanasView(v)));
   if (tab === 'empresa') body.append(await empresaView(v));
   if (tab === 'canales') body.append(await canalesView(v));
   if (tab === 'actividad') body.append(await monitorView(clientId));
@@ -431,6 +437,262 @@ async function empresaView({ clientId, bigua, base, reload }) {
     h('section', {}, h('h2', {}, 'Historial de cambios'), historialTabla(clientId, sdr, reload)));
   if (location.hash.endsWith('#no-contactar')) setTimeout(() => nc.scrollIntoView(), 0);
   return out;
+}
+
+// ----- campañas (docs/21 §3.2; etapa C1)
+
+const ESTADO_CAMPANA = { borrador: ['borrador', 'b-mute'], activa: ['activa', 'b-ok'], pausada: ['pausada', 'b-warn'], terminada: ['terminada', 'b-mute'] };
+const estadoBadge = (e) => { const [label, cls] = ESTADO_CAMPANA[e] ?? [e, 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
+
+function transicionNota() {
+  return h('p', { class: 'note' }, 'Transición: los bots todavía trabajan con los ajustes de Empresa, como si hubiera una sola campaña. ',
+    'Lo que se cambie acá queda guardado, pero no cambia lo que hacen hasta que las reglas lean las campañas: ',
+    'activar, pausar o terminar una campaña todavía no frena ni arranca nada.');
+}
+
+async function campanasView({ clientId, bigua, base, reload }) {
+  let d;
+  try { d = await api('GET', `/clients/${enc(clientId)}/sdr/campanas`); } catch (e) {
+    if (e.status !== 404) throw e;
+    return h('div', { class: 'card empty' }, h('p', {}, 'El SDR no está activado para este cliente.'),
+      bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
+  }
+  const tipoDe = Object.fromEntries(d.tipos.map((t) => [t.clave, t.titulo]));
+  const nueva = () => {
+    const nombre = h('input', { name: 'nombre', required: true, maxlength: 120, placeholder: 'Por ejemplo: Webinar de automatización (28/11)' });
+    const tipo = h('select', { name: 'tipo' }, d.tipos.map((t) => h('option', { value: t.clave }, t.titulo)));
+    openDialog('Nueva campaña', h('div', {},
+      field('Nombre', nombre), field('Tipo', tipo, 'Una vez activada, el tipo no cambia.'),
+      h('p', { class: 'small muted' }, 'Arranca en borrador: se activa cuando no le falta nada.')), {
+      submitLabel: 'Crear',
+      submit: async (fd) => {
+        const r = await api('POST', `/clients/${enc(clientId)}/sdr/campanas`, { nombre: fd.get('nombre'), tipo: fd.get('tipo') });
+        location.hash = `${base}/campanas/${r.id}`;
+        return true;
+      },
+    });
+  };
+  const tope = d.tope_cuentas_dia;
+  const volumen = tope === null
+    ? `Las activas suman ${plural(d.cuentas_activas, 'cuenta nueva', 'cuentas nuevas')} por día. Sin tope cargado: puede haber una sola activa.`
+    : `Las activas suman ${d.cuentas_activas} de ${tope} cuentas nuevas por día (el tope del cliente).`;
+  const filas = d.campanas.map((k) => h('tr', {},
+    h('td', {}, h('a', { href: `${base}/campanas/${k.id}` }, k.nombre), h('div', { class: 'small muted' }, tipoDe[k.tipo] ?? k.tipo,
+      k.inicio || k.fin ? ` · ${k.inicio ?? '…'} → ${k.fin ?? '…'}` : '')),
+    h('td', {}, estadoBadge(k.estado)),
+    h('td', { class: 'small' }, k.buzones_emails.length ? k.buzones_emails.join(', ') : h('span', { class: 'muted' }, 'sin buzones')),
+    h('td', { class: 'num' }, String(k.cuentas_por_dia)),
+    h('td', { class: 'num' }, String(k.prospectos)),
+    h('td', { class: 'num' }, String(k.respondieron)),
+    h('td', {}, k.pendientes ? h('span', { class: 'badge b-warn' }, plural(k.pendientes, 'pendiente', 'pendientes')) : h('span', { class: 'muted small' }, '—'))));
+  return h('div', { class: 'stack' },
+    transicionNota(),
+    h('div', { class: 'row spread' },
+      h('p', { class: 'muted small m0' }, volumen,
+        d.puede_activar ? '' : ' Este cliente lo opera Biguá: el cliente arma borradores y Biguá los activa.'),
+      h('button', { class: 'primary', onclick: nueva }, 'Nueva campaña')),
+    h('table', { class: 'campanas' },
+      h('thead', {}, h('tr', {}, ['Campaña', 'Estado', 'Buzones', 'Cuentas por día', 'Personas', 'Respondieron', 'Para activar'].map((x) => h('th', {}, x)))),
+      h('tbody', {}, filas)));
+}
+
+const valorTexto = (v) => (v === undefined || v === null || v === '' ? '(vacío)'
+  : Array.isArray(v) ? v.join(' · ') : typeof v === 'boolean' ? (v ? 'Sí' : 'No') : String(v));
+
+// Un campo de la campaña. Los que se heredan de Empresa muestran el valor de Empresa hasta que se
+// cambian para esta campaña; las listas que se suman muestran también las de Empresa.
+function campoCampana(c, valor, d) {
+  const empresa = d.empresa[c.clave];
+  if (c.tipo === 'seleccion') {
+    const lib = d.empresa[c.de] ?? [];
+    if (!lib.length) return field(conCandado(c), h('p', { class: 'small muted' }, 'Empresa no tiene casos cargados.'), c.ayuda);
+    const elegidos = new Set(valor ?? []);
+    return field(conCandado(c), h('div', { class: 'opciones', 'data-campo': c.clave },
+      lib.map((x) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: x, checked: elegidos.has(x), disabled: !c.editable }), x))), c.ayuda);
+  }
+  const input = campoInput({ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }, valor);
+  if (c.hereda) {
+    const propio = valor !== undefined;
+    const wrap = h('div', { class: 'hereda', 'data-campo': c.clave, 'data-modo': propio ? 'propio' : 'empresa' });
+    const deEmpresa = h('div', { class: 'small muted de-empresa' }, `De Empresa: ${valorTexto(empresa)}`);
+    const cambiar = h('button', { type: 'button', class: 'sm', onclick: () => {
+      wrap.dataset.modo = 'propio';
+      if (c.tipo === 'si_no') input.querySelector('input').checked = empresa === true;
+      else if (!input.value) input.value = Array.isArray(empresa) ? empresa.join('\n') : (empresa ?? '');
+      pintar();
+    } }, 'Cambiar para esta campaña');
+    const volver = h('button', { type: 'button', class: 'sm link', onclick: () => { wrap.dataset.modo = 'empresa'; pintar(); } }, 'Usar lo de Empresa');
+    const pintar = () => {
+      const p = wrap.dataset.modo === 'propio';
+      input.hidden = !p; volver.hidden = !p || !c.editable; cambiar.hidden = p || !c.editable; deEmpresa.hidden = p;
+    };
+    wrap.append(deEmpresa, input, h('div', { class: 'row' }, cambiar, volver));
+    pintar();
+    return field(conCandado(c), wrap, c.ayuda);
+  }
+  const suma = Array.isArray(empresa) && empresa.length && (c.clave === 'excluir' || c.clave === 'objeciones')
+    ? h('div', { class: 'small muted' }, `Además de las de Empresa: ${empresa.join(' · ')}`) : null;
+  return field(conCandado(c), h('div', {}, input, suma), c.ayuda);
+}
+
+function leerCampana(form, campos) {
+  const out = {};
+  for (const c of campos) {
+    if (!c.editable) continue;
+    if (c.tipo === 'seleccion') {
+      const box = form.querySelector(`[data-campo="${c.clave}"]`);
+      if (box) out[c.clave] = [...box.querySelectorAll('input:checked')].map((x) => x.value);
+      continue;
+    }
+    if (c.hereda && form.querySelector(`[data-campo="${c.clave}"]`)?.dataset.modo === 'empresa') { out[c.clave] = null; continue; }
+    Object.assign(out, leerCampos(form, [{ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }]));
+  }
+  return out;
+}
+
+function columnaInput(c, k, d) {
+  const v = k[c.clave];
+  const dis = !c.editable;
+  if (c.clave === 'tipo') {
+    return h('select', { name: 'tipo', disabled: dis }, d.tipos.map((t) => h('option', { value: t.clave, selected: t.clave === v }, t.titulo)));
+  }
+  if (c.tipo === 'fecha') return h('input', { name: c.clave, type: 'date', value: v ?? '', disabled: dis });
+  if (c.tipo === 'ids') {
+    if (!d.buzones_disponibles.length) return h('p', { class: 'small muted' }, 'El cliente no tiene buzones: se cargan en Canales.');
+    const sel = new Set(v ?? []);
+    return h('div', { class: 'opciones', 'data-col': 'buzones' }, d.buzones_disponibles.map((b) => h('label', { class: 'check' },
+      h('input', { type: 'checkbox', value: b.id, checked: sel.has(b.id), disabled: dis }), b.email,
+      b.status !== 'active' ? h('span', { class: 'small muted' }, ` (${b.status === 'paused' ? 'pausado' : 'bloqueado'})`) : null)));
+  }
+  return campoInput({ ...c, editable: !dis }, v);
+}
+
+function leerColumnas(form, columnas) {
+  const out = {};
+  for (const c of columnas) {
+    if (!c.editable || c.clave === 'estado') continue;
+    if (c.tipo === 'ids') {
+      const box = form.querySelector('[data-col="buzones"]');
+      if (box) out.buzones = [...box.querySelectorAll('input:checked')].map((x) => x.value);
+      continue;
+    }
+    const el = form.elements[c.clave];
+    if (!el) continue;
+    if (c.tipo === 'numero') out[c.clave] = el.value === '' ? null : Number(el.value);
+    else if (c.tipo === 'fecha') out[c.clave] = el.value || null;
+    else out[c.clave] = el.value;
+  }
+  return out;
+}
+
+// Una línea por sección, para leer la campaña entera sin abrir nada (docs/21 §3.2).
+function resumenBloque(b, k, d) {
+  const a = k.ajustes;
+  const tipo = d.tipos.find((t) => t.clave === k.tipo)?.titulo ?? k.tipo;
+  const corto = (t, n = 70) => (t && t.length > n ? `${t.slice(0, n)}…` : t);
+  switch (b) {
+    case 'objetivo': return [tipo, k.inicio || k.fin ? `${k.inicio ?? '…'} → ${k.fin ?? '…'}` : null].filter(Boolean).join(' · ');
+    case 'propuesta': return corto(a.propuesta) ?? 'Sin propuesta';
+    case 'audiencia': return [corto(a.icp, 40), a.roles_objetivo?.length ? plural(a.roles_objetivo.length, 'cargo', 'cargos') : null].filter(Boolean).join(' · ') || 'Sin audiencia';
+    case 'mensajes': return corto(d.efectivos.valores.llamado_accion);
+    case 'respuestas': return a.positivos?.length ? plural(a.positivos.length, 'positivo definido', 'positivos definidos') : 'Sin positivos propios';
+    case 'ritmo': return `${plural(k.buzones.length, 'buzón', 'buzones')} · ${k.cuentas_por_dia} cuentas por día${k.dripify_campana_id ? ` · Dripify ${k.dripify_campana_id}` : ''}`;
+    case 'avanzado': return `Calibra ${k.calibracion_mails} mails`;
+    default: return '';
+  }
+}
+
+const ORIGEN = { empresa: 'de Empresa', campana: 'de la campaña', ambas: 'Empresa + campaña', tipo: 'del tipo' };
+
+async function campanaView({ clientId, bigua, base, reload }, id) {
+  const path = `/clients/${enc(clientId)}/sdr/campanas/${enc(id)}`;
+  const d = await api('GET', path);
+  const k = d.campana;
+  const err = h('p', { class: 'err', role: 'alert' });
+  const errEstado = h('p', { class: 'err', role: 'alert' });
+  const puedeEstado = d.columnas.find((c) => c.clave === 'estado')?.editable;
+  const faltanEn = new Set(d.faltantes.map((f) => f.bloque));
+
+  const cambiarEstado = (estado, btn) => busy(btn, async () => {
+    const r = await api('PUT', path, { estado });
+    toast({ activa: 'Campaña activada.', pausada: 'Campaña pausada.', terminada: 'Campaña terminada.' }[estado] ?? 'Listo.');
+    reload();
+    return r;
+  }, errEstado);
+  const acciones = [];
+  if (puedeEstado && (k.estado === 'borrador' || k.estado === 'pausada')) {
+    acciones.push(h('button', { class: 'primary', disabled: d.faltantes.length > 0,
+      title: d.faltantes.length ? 'Falta completar lo que está marcado' : '', onclick: (ev) => cambiarEstado('activa', ev.currentTarget) }, 'Activar'));
+  }
+  if (puedeEstado && k.estado === 'activa') acciones.push(h('button', { onclick: (ev) => cambiarEstado('pausada', ev.currentTarget) }, 'Pausar'));
+  if (puedeEstado && (k.estado === 'activa' || k.estado === 'pausada')) {
+    acciones.push(h('button', { class: 'danger', onclick: () => openDialog('Terminar la campaña', h('p', {},
+      `«${k.nombre}» deja de prospectar y no se puede reactivar: para repetirla, se duplica.`), {
+      submitLabel: 'Terminar', danger: true,
+      submit: async () => { await api('PUT', path, { estado: 'terminada' }); toast('Campaña terminada.'); reload(); return true; },
+    }) }, 'Terminar'));
+  }
+  acciones.push(h('button', { onclick: () => {
+    const nombre = h('input', { name: 'nombre', maxlength: 120, value: `${k.nombre} (copia)` });
+    openDialog('Duplicar la campaña', h('div', {}, field('Nombre de la copia', nombre),
+      h('p', { class: 'small muted' }, 'Se copian los ajustes, los buzones, el tipo y el volumen, en un borrador nuevo. Las fechas y la campaña de Dripify no.')), {
+      submitLabel: 'Duplicar',
+      submit: async (fd) => { const r = await api('POST', `${path}/duplicar`, { nombre: fd.get('nombre') }); location.hash = `${base}/campanas/${r.id}`; return true; },
+    });
+  } }, 'Duplicar'));
+
+  const terminada = k.estado === 'terminada';
+  const nota = h('input', { name: '_nota', maxlength: 300, placeholder: 'Opcional: por qué el cambio' });
+  const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar');
+  const secciones = d.bloques.map((b) => {
+    const cols = d.columnas.filter((c) => c.bloque === b.clave && c.clave !== 'estado');
+    const campos = d.campos.filter((c) => c.bloque === b.clave);
+    if (!cols.length && !campos.length) return null;
+    return h('details', { class: 'card bloque campana-sec', open: faltanEn.has(b.clave) || k.estado === 'borrador' || null },
+      h('summary', {}, h('strong', {}, b.titulo), faltanEn.has(b.clave) ? h('span', { class: 'dot d-warn', title: 'Falta completar' }) : null,
+        h('span', { class: 'small muted resumen-sec' }, resumenBloque(b.clave, k, d))),
+      h('p', { class: 'muted small' }, b.ayuda),
+      cols.map((c) => field(conCandado(c), columnaInput(c, k, d), c.clave === 'cuentas_por_dia' && d.tope_cuentas_dia !== null
+        ? `Las demás activas suman ${d.otras_activas}; el tope del cliente es ${d.tope_cuentas_dia}.` : null)),
+      campos.map((c) => campoCampana(c, k.ajustes[c.clave], d)));
+  });
+  const form = h('form', { class: 'stack' }, secciones,
+    terminada ? null : h('div', { class: 'card guardar' }, field('Nota del cambio', nota), err,
+      h('div', { class: 'row' }, btn, h('span', { class: 'small muted' }, bigua ? '' : 'Le avisamos al operador de Biguá.'))));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { ...leerColumnas(form, d.columnas), ajustes: leerCampana(form, d.campos), ...(nota.value.trim() ? { nota: nota.value.trim() } : {}) };
+    const r = await busy(btn, () => api('PUT', path, body), err);
+    if (r) { toast(r.cambios.length ? 'Campaña guardada.' : 'No había cambios.'); reload(); }
+  });
+
+  const faltan = d.faltantes.length ? h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Para activarla falta'),
+    h('ul', { class: 'avisos' }, d.faltantes.map((f) => h('li', {}, h('span', { class: 'dot d-warn', 'aria-hidden': 'true' }),
+      h('span', { class: 'aviso-texto' }, f.mensaje), f.bloque === 'empresa' ? h('a', { href: `${base}/empresa` }, 'Ir a Empresa') : null)))) : null;
+  const vista = h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Así la van a leer los bots'),
+    h('dl', { class: 'efectivos' }, Object.entries(d.efectivos.valores).map(([clave, v]) => [
+      h('dt', {}, d.efectivos.titulos?.[clave] ?? clave, ' ', h('span', { class: 'small muted' }, `(${ORIGEN[d.efectivos.origen[clave]] ?? ''})`)),
+      h('dd', {}, valorTexto(v))])));
+  const historial = d.historial.length
+    ? h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota'].map((x) => h('th', {}, x)))),
+      h('tbody', {}, d.historial.map((v) => h('tr', {}, h('td', { class: 'small' }, fmtDate(v.at)),
+        h('td', { class: 'small' }, v.por_email ?? '—'), h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
+        h('td', { class: 'small' }, v.nota ?? '')))))
+    : h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
+
+  return h('div', { class: 'stack' },
+    h('a', { href: `${base}/campanas`, class: 'small' }, '← Campañas'),
+    h('div', { class: 'row spread' },
+      h('div', {}, h('h2', { class: 'first' }, k.nombre, ' ', estadoBadge(k.estado)),
+        h('p', { class: 'small muted mono m0' }, k.clave)),
+      h('div', { class: 'row' }, acciones)),
+    transicionNota(),
+    terminada ? h('p', { class: 'note' }, `Terminada el ${fmtDate(k.terminada_at)}. No se edita ni se reactiva: para repetirla, duplicala.`) : null,
+    errEstado,
+    h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, faltan, vista)),
+    h('section', {}, h('h2', {}, 'Historial de cambios'), historial));
 }
 
 // ----- no contactar

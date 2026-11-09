@@ -124,7 +124,15 @@ La API del panel (`src/sdr/campanas.mjs`) es la misma para los dos roles; qué p
 
 Cada cambio queda en `sdr.ajustes_historial` (con `campana_id`) y en la auditoría. Si lo hizo el cliente, el orquestador recibe un pedido para contárselo al operador.
 
-Por ahora ni la pestaña del panel, ni las herramientas, ni las reglas usan las campañas: siguen con el formulario de hoy, que `ajustes.mjs` conserva. Por eso pausar o terminar una campaña todavía no frena a los bots.
+**Pestaña Campañas** (entre Resumen y Empresa):
+- **Lista:** estado, buzones, volumen, personas, respuestas y pendientes. Muestra cuánto suman las activas contra el tope y tiene el botón **Nueva campaña**, que crea un borrador con nombre y tipo.
+- **Editor:** las secciones de `docs/21` §3.2, plegables y con un resumen de una línea cada una.
+  - Lo que se hereda de Empresa se ve como «De Empresa: …», con **Cambiar para esta campaña** y **Usar lo de Empresa**.
+  - Los casos se eligen de la biblioteca de Empresa.
+  - Botones **Activar** (sólo sin pendientes), **Pausar**, **Terminar** y **Duplicar**.
+  - Al costado, lo que falta para activar y «Así la van a leer los bots». Abajo, el historial.
+
+Mientras las herramientas y las reglas no usen las campañas, los bots siguen con el formulario de Empresa: pausar o terminar una campaña todavía no los frena. Por eso la pestaña la ve **sólo Biguá**, con un aviso de transición (`CAMPANAS_PARA_CLIENTES` en `static/app.js`). Se abre a los clientes cuando las reglas lean la campaña. La API ya responde a los dos roles.
 
 Lo prueban:
 - `test/campanas.test.mjs`: la base.

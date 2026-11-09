@@ -16,7 +16,7 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
-import { BLOQUES, CAMPOS, aplicarCambios, diferencias, editable, tituloDe } from '../sdr/ajustes.mjs';
+import { BLOQUES, CAMPOS, aplicarCambios, diferencias, editable, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
 import * as whatsapp from '../sdr/whatsapp.mjs';
@@ -714,7 +714,7 @@ route('PUT', '/clients/:client/sdr/campanas/:id', async ({ user, params, body })
     const estado = r.estado !== r.estado_antes ? ESTADOS_TEXTO[r.estado] : null;
     await avisarCampana(user, params.client, params.id, estado
       ? `El cliente ${estado} la campaña «${r.nombre}» desde el panel.`
-      : `El cliente cambió la campaña «${r.nombre}» en el panel (${r.cambios.map(tituloDe).join(', ')})${body?.nota ? `, con esta nota: «${body.nota}»` : ''}.`);
+      : `El cliente cambió la campaña «${r.nombre}» en el panel (${r.cambios.map(tituloCampana).join(', ')})${body?.nota ? `, con esta nota: «${body.nota}»` : ''}.`);
   }
   return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
 });

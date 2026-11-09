@@ -1,7 +1,8 @@
 # Panel por cliente: canales, campañas y ajustes del SDR
 
 Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); de C1, la base
-(migración `012`), los ajustes partidos y la API de campañas del panel (09/11/2026); el resto de C en adelante, diseño, con todas las
+(migración `012`), los ajustes partidos, la API y la pestaña Campañas del panel (09/11/2026; la
+pestaña la ve sólo Biguá hasta que las reglas lean la campaña); el resto de C en adelante, diseño, con todas las
 definiciones cerradas (§6, decisiones 9 a 14, del 09/11/2026).
 Escrito el 05/11/2026. Propone cómo reorganizar
 la ficha de cada cliente en `https://sdrbot.bigua.lat/admin`: qué se configura, dónde, quién lo

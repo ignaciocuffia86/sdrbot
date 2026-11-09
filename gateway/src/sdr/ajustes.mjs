@@ -456,3 +456,8 @@ export function diferencias(antes, despues) {
 }
 
 export const tituloDe = (k) => DEF[k]?.titulo ?? COLUMNAS_CAMPANA.find((c) => c.clave === k)?.titulo ?? k;
+
+// El título de un cambio en una campaña: el de la campaña primero (en el historial, «buzones» son
+// los buzones elegidos, no el texto libre de Empresa).
+export const tituloCampana = (k) => (k === 'creada' ? 'Creada'
+  : COLUMNAS_CAMPANA.find((c) => c.clave === k)?.titulo ?? CAMPOS_CAMPANA.find((c) => c.clave === k)?.titulo ?? tituloDe(k));

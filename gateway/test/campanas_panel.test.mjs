@@ -235,6 +235,13 @@ test('campañas: queda todo en el historial de la campaña y en la auditoría', 
   assert.ok(h.some((x) => x.cambios.includes('estado') && x.por_email === 'operador@cp.test'));
   const empresa = (await q(`select count(*)::int n from sdr.ajustes_historial where client_id = $1 and campana_id is null`, [A])).rows[0].n;
   assert.equal(empresa, 0, 'las campañas no ensucian el historial de Empresa');
+  // Los títulos son los de la campaña (los buzones elegidos, no el texto libre de Empresa), y lo
+  // que leen los bots lleva el título general de cada clave.
+  const v = ok(await u.bigua.call('GET', `/clients/${A}/sdr/campanas/${webinar.id}`));
+  assert.ok(v.historial.some((x) => x.cambios_titulos.includes('Buzones')), JSON.stringify(v.historial.map((x) => x.cambios_titulos)));
+  assert.ok(v.historial.some((x) => x.cambios_titulos.includes('Creada')));
+  assert.equal(v.efectivos.titulos.nombre_comercial, 'Nombre comercial');
+  assert.equal(v.efectivos.titulos.prueba_social, 'Casos y datos que se pueden citar');
   const ops = (await q(`select op from mailgw.audit_log where client_id = $1 and op like 'admin.sdr.campana.%'`, [A])).rows.map((r) => r.op);
   for (const op of ['admin.sdr.campana.crear', 'admin.sdr.campana.guardar', 'admin.sdr.campana.duplicar']) assert.ok(ops.includes(op), op);
 });
