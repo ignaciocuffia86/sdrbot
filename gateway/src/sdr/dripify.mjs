@@ -558,9 +558,32 @@ async function frenarEn(cx, p, motivo, meta) {
   return { frenado: true, lead_id: lead };
 }
 
+// Quién puede volver a la secuencia: los que se cargan y quien respondió (seguimiento decidió seguir
+// por LinkedIn). Nunca quien pidió la baja, dijo que no, quedó descartado o pasó al CRM.
+const ESTADOS_REANUDABLES = [...ESTADOS_CARGABLES, 'respondio'];
+
 export async function reanudar(clientId, prospectoId, meta) {
   const cx = await conexion(clientId);
-  const p = await asClient(clientId, (c) => prospectoEn(c, clientId, prospectoId));
+  const p = await asClient(clientId, async (c) => {
+    const p = await prospectoEn(c, clientId, prospectoId);
+    const no = (msg) => new GatewayError('prospecto_cerrado', `No se reanuda: ${msg}`, 409);
+    if (!ESTADOS_REANUDABLES.includes(p.estado)) throw no(`la persona está en estado ${p.estado}.`);
+    // Una baja registrada vale aunque el estado haya cambiado después, y por cualquier canal.
+    const { rowCount: baja } = await c.query(
+      `select 1 from sdr.evento where client_id = $1 and prospecto_id = $2 and tipo = 'baja' limit 1`, [clientId, p.id]);
+    if (baja) throw no('la persona pidió la baja.');
+    if (p.dripify?.frenado_motivo === 'pidió la baja') throw no('la secuencia se frenó porque pidió la baja.');
+    if (p.email) {
+      const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);
+      if (rowCount) throw no('está en la supresión del cliente (baja o rebote).');
+    }
+    const dominio = p.cuenta_id
+      ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
+      : null;
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    if (nc.length) throw no(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}.`);
+    return p;
+  });
   const lead = await leadDe(cx, p);
   if (!lead) throw errorsDripify.noEncontrado('Dripify no tiene a esta persona.');
   await api(cx, 'DELETE', `/v1/open-api/leads/${lead}/blacklist`);

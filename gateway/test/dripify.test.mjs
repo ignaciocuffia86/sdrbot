@@ -391,6 +391,17 @@ test('freno cruzado: si responde por mail o pide la baja, sale de la campaña de
   // Reanudar lo saca de la lista negra.
   await ok(tok.c, 'dripify_reanudar', { prospecto_id: P.beto.id, bot: 'seguimiento', tarea: 'respuestas' });
   assert.ok(!mock.s.blacklist.has(mock.s.leads.get('beto-ti').id));
+
+  // A quien pidió la baja no se lo reanuda, ni aunque su estado se haya cambiado después.
+  const conBaja = await call(tok.c, 'dripify_reanudar', { prospecto_id: P.caro.id, bot: 'seguimiento', tarea: 'respuestas' });
+  assert.equal(conBaja.status, 409);
+  assert.equal(conBaja.error.code, 'prospecto_cerrado');
+  await sql(`update sdr.prospecto set estado = 'en_contacto' where id = $1`, [P.caro.id]);
+  const igual = await call(tok.c, 'dripify_reanudar', { prospecto_id: P.caro.id, bot: 'seguimiento', tarea: 'respuestas' });
+  assert.equal(igual.status, 409);
+  assert.match(igual.error.message, /pidió la baja|supresión/);
+  assert.ok(mock.s.blacklist.has(mock.s.leads.get('caro-cto').id), 'sigue en la lista negra de Dripify');
+  await sql(`update sdr.prospecto set estado = 'baja' where id = $1`, [P.caro.id]);
 });
 
 test('errores de Dripify y cupo de la API', async () => {
