@@ -417,7 +417,7 @@ Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
 
 | Nivel | Campos |
 |---|---|
-| **Empresa** | `nombre_comercial`, `descripcion` (nueva: qué hace la empresa), zona horaria, `tono`, `idioma`, `firma` (por defecto), `excluir` (de siempre), no contactar, `prueba_social` (biblioteca), `objeciones` (generales), `responsable_positivos`, `link_agenda` |
+| **Empresa** | `nombre_comercial`, `descripcion` (nueva: qué hace la empresa), zona horaria, `tono`, `idioma`, `firma` (por defecto), `excluir` (de siempre), no contactar, `prueba_social` (biblioteca), `objeciones` (generales), `responsable_positivos`, `link_agenda`, `acepta_mails_extrapolados` (el valor por defecto) |
 | **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `icp`, `roles_objetivo`, `excluir` (propias), `senal_avisos`, `dias_aviso`, `llamado_accion`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones` (propias), `prueba_social` (cuáles de la biblioteca), buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
 | **La campaña puede cambiar lo de Empresa** | `tono`, `idioma`, `acepta_mails_extrapolados`, `responsable_positivos`, `link_agenda`. Nada más: lo demás se suma (exclusiones, objeciones) o es sólo de un nivel |
 | **Buzón** | `firma` (gana a la de Empresa) |
@@ -425,6 +425,17 @@ Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
 
 Las listas que existen en los dos niveles (`excluir`, `objeciones`) **se suman**: el bot ve las de
 Empresa y las de la campaña juntas.
+
+**En el código.** `gateway/src/sdr/ajustes.mjs` tiene los dos esquemas:
+
+- `CAMPOS_EMPRESA` y `CAMPOS_CAMPANA`, con sus bloques.
+- `COLUMNAS_CAMPANA`: nombre, tipo, estado, fechas, buzones, volumen, Dripify y calibración.
+- Los permisos de la decisión 13 y los estados.
+- El control del tope (`aplicarColumnasCampana`).
+- Lo que falta para activar (`faltantesParaActivar`).
+- Lo que leen los bots (`ajustesEfectivos`).
+
+Mientras dure la transición conserva también el formulario de hoy (`CAMPOS`).
 
 **Valores por defecto de `llamado_accion` según el tipo.** Prospección: «una charla corta para ver
 si tiene sentido»; Evento: «inscribirse con el link»; Reactivación: «¿sigue vigente el tema?».
@@ -455,8 +466,9 @@ con la misma configuración. Así los números de cada campaña no se mezclan.
 antes que el código sin romper nada:
 
 - **`012` (hecha):** pasos 1, 2, 4 y 5. Las claves se **copian** y Empresa no cambia.
-- **`013`:** paso 3 y el borrado de Empresa de las claves que pasaron a la campaña. Se aplica
-  cuando el gateway, el panel y las reglas ya lean la campaña.
+- **`013`:** paso 3 y el borrado de Empresa de las claves que pasaron a la campaña, salvo
+  `acepta_mails_extrapolados`, que queda en Empresa como valor por defecto. Se aplica cuando el
+  gateway, el panel y las reglas ya lean la campaña.
 
 Por cliente:
 

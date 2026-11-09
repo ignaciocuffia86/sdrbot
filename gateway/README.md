@@ -110,7 +110,7 @@ Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/
 
 ### Campañas (etapa C1, en construcción)
 
-Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Por ahora ni el panel, ni las herramientas, ni las reglas usan las campañas. Lo prueba `test/campanas.test.mjs`.
+Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Los campos de Empresa y de campaña, con sus permisos, los estados, el tope y la herencia, están en `src/sdr/ajustes.mjs`. Por ahora ni el panel, ni las herramientas, ni las reglas usan las campañas: siguen con el formulario de hoy, que el mismo módulo conserva. Lo prueban `test/campanas.test.mjs` (la base) y `test/ajustes.test.mjs` (los ajustes).
 
 ### SDR: ajustes del cliente
 
