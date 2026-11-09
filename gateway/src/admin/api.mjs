@@ -23,6 +23,7 @@ import * as whatsapp from '../sdr/whatsapp.mjs';
 import * as monitor from '../sdr/monitor.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import * as dripify from '../sdr/dripify.mjs';
+import * as campanas from '../sdr/campanas.mjs';
 import {
   activate, changePassword, clearCookie, cookieFor, createUser, login, logout, resetSetup,
   sessionUser, tokenFromCookie,
@@ -662,6 +663,73 @@ route('PUT', '/clients/:client/sdr/whatsapp', async ({ user, params, body }) => 
   return { sdr: await asOwner((c) => leerSdr(c, user, params.client)) };
 });
 
+// ----- campañas (docs/21 §3.2 y §6.2; etapa C1)
+//
+// Las dos clases de usuario usan las mismas rutas: qué campo puede tocar cada uno según el modo del
+// cliente lo decide src/sdr/ajustes.mjs (decisión 13). El cliente crea borradores en los dos
+// modos; activar, pausar y terminar es suyo sólo si es autogestionado.
+
+const ESTADOS_TEXTO = { activa: 'activó', pausada: 'pausó', terminada: 'terminó' };
+
+// Si el que cambió fue el cliente, el orquestador se lo cuenta al operador en el chat, como con los
+// ajustes de Empresa.
+async function avisarCampana(user, clientId, id, texto) {
+  if (isBigua(user)) return;
+  await pedirABot(clientId, {
+    para_bot: 'orquestador', campana_id: id,
+    que: `${texto} Contáselo al operador de Biguá en el chat. Si algo choca con las reglas o con mails ya aprobados, decíselo.`,
+    por_que: 'Cambio de una campaña hecho por el cliente desde el panel.',
+  }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de campaña', e.message));
+}
+
+route('GET', '/clients/:client/sdr/campanas', async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  return campanas.listar(c, params.client, { esBigua: isBigua(user) });
+}));
+
+route('POST', '/clients/:client/sdr/campanas', async ({ user, params, body }) => {
+  const r = await scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const x = await campanas.crear(c, params.client, body, { user, esBigua: isBigua(user) });
+    await audit(c, user, params.client, 'admin.sdr.campana.crear', { campana: x.id, clave: x.clave });
+    return x;
+  });
+  await avisarCampana(user, params.client, r.id, `El cliente creó la campaña «${body?.nombre}» en borrador desde el panel.`);
+  return { ...r, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, r.id, { esBigua: isBigua(user) }))) };
+});
+
+route('GET', '/clients/:client/sdr/campanas/:id', async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  return campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) });
+}));
+
+route('PUT', '/clients/:client/sdr/campanas/:id', async ({ user, params, body }) => {
+  const r = await scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const x = await campanas.guardar(c, params.client, params.id, body, { user, esBigua: isBigua(user) });
+    if (x.cambios.length) await audit(c, user, params.client, 'admin.sdr.campana.guardar', { campana: params.id, campos: x.cambios });
+    return x;
+  });
+  if (r.cambios.length) {
+    const estado = r.estado !== r.estado_antes ? ESTADOS_TEXTO[r.estado] : null;
+    await avisarCampana(user, params.client, params.id, estado
+      ? `El cliente ${estado} la campaña «${r.nombre}» desde el panel.`
+      : `El cliente cambió la campaña «${r.nombre}» en el panel (${r.cambios.map(tituloDe).join(', ')})${body?.nota ? `, con esta nota: «${body.nota}»` : ''}.`);
+  }
+  return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
+});
+
+route('POST', '/clients/:client/sdr/campanas/:id/duplicar', async ({ user, params, body }) => {
+  const r = await scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const x = await campanas.duplicar(c, params.client, params.id, body ?? {}, { user });
+    await audit(c, user, params.client, 'admin.sdr.campana.duplicar', { campana: x.id, de: params.id });
+    return x;
+  });
+  await avisarCampana(user, params.client, r.id, `El cliente duplicó la campaña «${r.de}» como un borrador nuevo desde el panel.`);
+  return { ...r, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, r.id, { esBigua: isBigua(user) }))) };
+});
+
 // ----- monitor: los canales con su modo y lo que pasó hoy (pestaña Actividad)
 
 const OPS_PANEL = {
@@ -673,6 +741,8 @@ const OPS_PANEL = {
   'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado', 'admin.domain.check': 'dominio verificado',
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
+  'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
+  'admin.sdr.campana.duplicar': 'campaña duplicada',
 };
 
 route('GET', '/clients/:client/monitor', async ({ user, params }) => {

@@ -333,8 +333,10 @@ export const ordenarCampana = (a) => ordenarSegun(CAMPOS_CAMPANA, a);
 // Las columnas de una campaña (nombre, tipo, estado, fechas, buzones, volumen, Dripify,
 // calibración). actual: la fila de hoy, o null para una campaña nueva. tope: el
 // tope_cuentas_dia del cliente; otrasActivas: la suma de cuentas_por_dia de las demás campañas
-// activas del cliente. Devuelve sólo las columnas que cambian, validadas.
-export function aplicarColumnasCampana(actual, cambios, permiso, { tope = null, otrasActivas = 0 } = {}) {
+// activas del cliente. Devuelve sólo las columnas que cambian, validadas. Con controlarTope: false
+// no mira el tope, para que quien llama controle antes otra cosa (lo que falta para activar) y
+// después llame a controlarTope.
+export function aplicarColumnasCampana(actual, cambios, permiso, { tope = null, otrasActivas = 0, controlarTope: conTope = true } = {}) {
   if (!cambios || typeof cambios !== 'object' || Array.isArray(cambios)) throw invalido('Faltan los datos de la campaña.');
   const porClave = new Map(COLUMNAS_CAMPANA.map((c) => [c.clave, c]));
   const out = {};
@@ -369,18 +371,23 @@ export function aplicarColumnasCampana(actual, cambios, permiso, { tope = null, 
   const fin = out.fin !== undefined ? out.fin : actual?.fin ?? null;
   if (inicio && fin && fecha(inicio) > fecha(fin)) throw invalido('El fin de la campaña va después del inicio.');
 
-  const cuentas = out.cuentas_por_dia ?? actual?.cuentas_por_dia ?? 0;
-  if (estado === 'activa' && ('cuentas_por_dia' in out || 'estado' in out)) {
-    // Decisión 12: la suma de las activas no pasa el tope del cliente. Para tener más de una
-    // campaña activa, el tope tiene que estar cargado.
-    if (tope == null && otrasActivas > 0) {
-      throw invalido('Para tener más de una campaña activa, Biguá tiene que cargar el tope de cuentas por día del cliente.');
-    }
-    if (tope != null && otrasActivas + cuentas > tope) {
-      throw invalido(`Las campañas activas sumarían ${otrasActivas + cuentas} cuentas por día; el tope del cliente es ${tope}.`);
-    }
-  }
+  if (conTope) controlarTope(actual, out, { tope, otrasActivas });
   return out;
+}
+
+// Decisión 12: la suma de las activas no pasa el tope del cliente. Para tener más de una campaña
+// activa, el tope tiene que estar cargado. Sólo mira si el cambio activa la campaña o le cambia el
+// volumen estando activa.
+export function controlarTope(actual, cambios, { tope = null, otrasActivas = 0 } = {}) {
+  const estado = cambios.estado ?? actual?.estado ?? 'borrador';
+  if (estado !== 'activa' || !('cuentas_por_dia' in cambios || 'estado' in cambios)) return;
+  const cuentas = cambios.cuentas_por_dia ?? actual?.cuentas_por_dia ?? 0;
+  if (tope == null && otrasActivas > 0) {
+    throw invalido('Para tener más de una campaña activa, Biguá tiene que cargar el tope de cuentas por día del cliente.');
+  }
+  if (tope != null && otrasActivas + cuentas > tope) {
+    throw invalido(`Las campañas activas sumarían ${otrasActivas + cuentas} cuentas por día; el tope del cliente es ${tope}.`);
+  }
 }
 
 // pg devuelve las columnas date como Date a la medianoche local.

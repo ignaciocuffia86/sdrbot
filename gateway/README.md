@@ -110,7 +110,26 @@ Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/
 
 ### Campañas (etapa C1, en construcción)
 
-Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Los campos de Empresa y de campaña, con sus permisos, los estados, el tope y la herencia, están en `src/sdr/ajustes.mjs`. Por ahora ni el panel, ni las herramientas, ni las reglas usan las campañas: siguen con el formulario de hoy, que el mismo módulo conserva. Lo prueban `test/campanas.test.mjs` (la base) y `test/ajustes.test.mjs` (los ajustes).
+Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Los campos de Empresa y de campaña, con sus permisos, los estados, el tope y la herencia, están en `src/sdr/ajustes.mjs`.
+
+La API del panel (`src/sdr/campanas.mjs`) es la misma para los dos roles; qué puede tocar cada uno lo decide el modo del cliente (`docs/21` §6.2, decisión 13):
+
+| Ruta | Qué hace |
+|---|---|
+| `GET /clients/:id/sdr/campanas` | Las campañas con estado, buzones, volumen, personas, respuestas y pendientes para activar; el modo, el tope y cuántas cuentas por día suman las activas |
+| `POST /clients/:id/sdr/campanas` | Crea una campaña en borrador (`nombre`, `tipo`, columnas y `ajustes`). Los dos roles, en los dos modos |
+| `GET /clients/:id/sdr/campanas/:campana` | La campaña, sus campos y columnas con `editable`, lo que hereda de Empresa, los ajustes efectivos, lo que falta para activarla, los buzones del cliente y el historial |
+| `PUT /clients/:id/sdr/campanas/:campana` | Cambia columnas y `ajustes` (y `nota`). Activar exige que no falte nada y que la suma de las activas no pase el tope. Una campaña activa no puede quedar con pendientes nuevos. Una terminada no se edita |
+| `POST /clients/:id/sdr/campanas/:campana/duplicar` | Copia en borrador: ajustes, buzones, tipo y volumen. No copia las fechas ni la campaña de Dripify |
+
+Cada cambio queda en `sdr.ajustes_historial` (con `campana_id`) y en la auditoría. Si lo hizo el cliente, el orquestador recibe un pedido para contárselo al operador.
+
+Por ahora ni la pestaña del panel, ni las herramientas, ni las reglas usan las campañas: siguen con el formulario de hoy, que `ajustes.mjs` conserva. Por eso pausar o terminar una campaña todavía no frena a los bots.
+
+Lo prueban:
+- `test/campanas.test.mjs`: la base.
+- `test/ajustes.test.mjs`: los ajustes.
+- `test/campanas_panel.test.mjs`: la API.
 
 ### SDR: ajustes del cliente
 

@@ -496,10 +496,11 @@ export async function pedir(clientId, a, meta) {
     const escalado = idas > TOPE_IDAS;
     const para = escalado ? 'orquestador' : a.para_bot;
     const { rows } = await c.query(
-      `insert into sdr.pedido (client_id, de_bot, para_bot, prospecto_id, que, por_que, para_cuando, relacionado_con, idas, escalado)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning *`,
+      `insert into sdr.pedido (client_id, de_bot, para_bot, prospecto_id, que, por_que, para_cuando, relacionado_con, idas, escalado,
+                               campana_id)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
       [clientId, meta.bot, para, a.prospecto_id ?? null, a.que, a.por_que ?? null, a.para_cuando ?? null,
-        a.relacionado_con ?? null, idas, escalado]);
+        a.relacionado_con ?? null, idas, escalado, a.campana_id ?? null]);
     if (a.prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'pedido', prospecto_id: a.prospecto_id,
         datos: { pedido: rows[0].id, de: meta.bot, para, que: a.que, escalado } }, { ...meta, version: await versionActual(c, clientId) });
