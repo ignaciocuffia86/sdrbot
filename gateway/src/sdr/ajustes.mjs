@@ -299,9 +299,11 @@ function aplicar(campos, actuales, cambios, permiso, contexto = {}) {
       throw prohibido(`«${c.titulo}» lo cambia Biguá.`);
     }
     const limpio = limpiarValor(c, v, contexto);
-    if (k === 'cuentas_por_dia' && !permiso.esBigua && permiso.tope != null && limpio !== undefined && limpio > permiso.tope
-        && limpio !== nuevo[k]) {
-      throw invalido(`«${c.titulo}» va hasta ${permiso.tope}: es el tope que fijó Biguá para este cliente.`);
+    if (k === 'cuentas_por_dia' && !permiso.esBigua && permiso.tope != null && limpio !== nuevo[k]) {
+      // Vacío, el orquestador usa su valor por defecto (10, playbooks/orquestador/diaria.md), que
+      // puede pasar el tope: el cliente no lo puede dejar vacío.
+      if (limpio === undefined) throw invalido(`«${c.titulo}» no puede quedar vacío: va de 0 a ${permiso.tope}, el tope que fijó Biguá para este cliente.`);
+      if (limpio > permiso.tope) throw invalido(`«${c.titulo}» va hasta ${permiso.tope}: es el tope que fijó Biguá para este cliente.`);
     }
     if (limpio === undefined) delete nuevo[k];
     else nuevo[k] = limpio;
@@ -350,6 +352,9 @@ export function aplicarColumnasCampana(actual, cambios, permiso, { tope = null, 
     }
     const limpio = limpiarValor(c, v);
     if (k === 'nombre' && limpio === undefined) throw invalido('La campaña necesita un nombre.');
+    if ((k === 'cuentas_por_dia' || k === 'calibracion_mails' || k === 'tipo') && limpio === undefined) {
+      throw invalido(`«${c.titulo}» no puede quedar vacío.`);
+    }
     if (!igual(limpio ?? null, antes ?? null)) out[k] = limpio ?? null;
   }
   if (!actual && !out.nombre) throw invalido('La campaña necesita un nombre.');

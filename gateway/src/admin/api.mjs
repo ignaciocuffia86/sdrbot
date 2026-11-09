@@ -534,14 +534,19 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
     const cfg = (await c.query(`select ajustes, modo, tope_cuentas_dia from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
     const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
-    const nuevo = restaurado ? { ...cambios } : aplicarCambios(cfg.ajustes, cambios, permiso);
+    let nuevo;
     if (restaurado && !isBigua(user)) {
-      // Volver atrás tampoco puede tocar lo que el cliente no edita.
-      for (const k of diferencias(cfg.ajustes, nuevo)) {
+      // Volver atrás no puede tocar lo que el cliente no edita, y lo que sí edita pasa por las
+      // mismas validaciones que un cambio a mano (el tope de cuentas por día, entre otras): una
+      // versión vieja puede tener un valor que hoy ya no vale.
+      const vuelta = {};
+      for (const k of diferencias(cfg.ajustes, cambios)) {
         const campo = CAMPOS.find((x) => x.clave === k);
-        if (!campo || !editable(campo, permiso)) nuevo[k] = cfg.ajustes[k];
-        if (nuevo[k] === undefined) delete nuevo[k];
+        if (campo && editable(campo, permiso)) vuelta[k] = cambios[k] ?? null;
       }
+      nuevo = aplicarCambios(cfg.ajustes, vuelta, permiso);
+    } else {
+      nuevo = restaurado ? { ...cambios } : aplicarCambios(cfg.ajustes, cambios, permiso);
     }
     const cambiados = diferencias(cfg.ajustes, nuevo);
     if (!cambiados.length) return { cambios: [] };

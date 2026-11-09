@@ -115,6 +115,8 @@ test('ajustes: el volumen de las activas no pasa el tope del cliente (decisión 
   assert.throws(() => aplicarColumnasCampana(borrador, { estado: 'activa' }, BIGUA, { tope: 12, otrasActivas: 5 }), /sumarían 13/);
   const activa = { ...borrador, estado: 'activa' };
   assert.throws(() => aplicarColumnasCampana(activa, { cuentas_por_dia: 9 }, AUTO, { tope: 13, otrasActivas: 5 }), /sumarían 14/);
+  // Vaciar el volumen no deja la campaña sin valor (la columna no admite vacío).
+  assert.throws(() => aplicarColumnasCampana(activa, { cuentas_por_dia: '' }, BIGUA), /no puede quedar vacío/);
   // Un borrador puede tener cualquier volumen: se controla al activarlo.
   assert.deepEqual(aplicarColumnasCampana(borrador, { cuentas_por_dia: 50 }, AUTO, { tope: 13, otrasActivas: 5 }), { cuentas_por_dia: 50 });
 });
