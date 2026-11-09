@@ -162,12 +162,15 @@ export async function turno(clientId, a, meta, { azar = Math.random } = {}) {
       if (necesita && aprobacion.tipo !== necesita) {
         throw errorsSdr.aprobacionRequerida(`La aprobación es de tipo ${aprobacion.tipo} y este mensaje necesita una de tipo ${necesita}.`);
       }
+      if (!['respuesta_positivo', 'whatsapp_primero'].includes(aprobacion.tipo)) {
+        throw errorsSdr.aprobacionRequerida(`La aprobación es de tipo ${aprobacion.tipo}: no habilita un WhatsApp.`);
+      }
       if (aprobacion.estado !== 'aprobada') throw errorsSdr.aprobacionRequerida(`La aprobación está ${aprobacion.estado}: no se puede usar.`);
       const final = aprobacion.decision_contenido ?? aprobacion.contenido;
       const dif = [];
       if (final.canal !== 'whatsapp') dif.push(`el canal (la aprobación es para ${final.canal ?? 'mail'})`);
       if (normTexto(final.texto) !== normTexto(a.texto)) dif.push('el texto');
-      if (aprobacion.prospecto_id && aprobacion.prospecto_id !== p.id) dif.push('el prospecto');
+      if (aprobacion.prospecto_id !== p.id) dif.push('el prospecto');
       if (dif.length) {
         throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${dif.join(', ')}. Mandá exactamente lo aprobado ` +
           '(si el operador lo editó, la versión editada está en decision_contenido).');

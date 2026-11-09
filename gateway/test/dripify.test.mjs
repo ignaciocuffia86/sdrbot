@@ -344,6 +344,25 @@ test('dripify_conversacion y dripify_responder: lee de Dripify, contesta y a un 
   });
   assert.equal(sinAp.status, 409);
   assert.equal(sinAp.error.code, 'aprobacion_requerida');
+  // Una aprobación de otra cosa no sirve: de otro tipo, para mail, o sin prospecto.
+  const texto = 'Te paso el link de la agenda.';
+  const aprobada = async (pedido) => {
+    const x = (await ok(tok.c, 'registro_pedir_aprobacion', { ...pedido, bot: 'seguimiento' })).aprobacion;
+    await ok(tok.c, 'registro_aprobar', { id: x.id, decision: 'aprobada', operador: 'Ignacio', bot: 'orquestador' });
+    return x.id;
+  };
+  const conAp = (id, clave) => call(tok.c, 'dripify_responder', {
+    prospecto_id: P.ana.id, texto, aprobacion_id: id, idempotency_key: clave, bot: 'seguimiento', tarea: 'respuestas' });
+  const otra = await aprobada({ tipo: 'otro', prospecto_id: P.ana.id, contenido: { canal: 'linkedin', texto } });
+  assert.equal((await conAp(otra, 'resp-ana-otra')).error.code, 'aprobacion_requerida');
+  const deMail = await aprobada({ tipo: 'respuesta_positivo', prospecto_id: P.ana.id, contenido: { buzon: 'ventas@cliente.test', texto } });
+  assert.match((await conAp(deMail, 'resp-ana-mail')).error.message, /el canal/);
+  const sinPersona = await call(tok.c, 'registro_pedir_aprobacion', { tipo: 'respuesta_positivo', contenido: { canal: 'linkedin', texto }, bot: 'seguimiento' });
+  assert.equal(sinPersona.status, 400, 'una respuesta a un positivo se pide para una persona');
+  const deOtro = await aprobada({ tipo: 'respuesta_positivo', prospecto_id: P.beto.id, contenido: { canal: 'linkedin', texto } });
+  assert.match((await conAp(deOtro, 'resp-ana-otro')).error.message, /el prospecto/);
+  assert.equal(mock.s.mensajesEnviados.length, 1, 'no salió nada');
+
   const ap = (await ok(tok.c, 'registro_pedir_aprobacion', {
     tipo: 'respuesta_positivo', prospecto_id: P.ana.id, contenido: { canal: 'linkedin', texto: 'Te paso el link de la agenda.' }, bot: 'seguimiento',
   })).aprobacion;

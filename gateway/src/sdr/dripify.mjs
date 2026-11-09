@@ -481,11 +481,16 @@ export async function responder(clientId, a, meta) {
       if (!ap) throw errorsSdr.noExiste(`la aprobación ${a.aprobacion_id}`);
       const reintento = ap.estado === 'usada' && ap.usada_clave === `dripify:${a.idempotency_key}`;
       if (ap.estado !== 'aprobada' && !reintento) throw errorsSdr.aprobacionRequerida(`La aprobación está ${ap.estado}: no se puede usar.`);
+      // Sólo una respuesta a un positivo, para LinkedIn y para esta persona: una calibración, una
+      // aprobación de mail o una sin prospecto no habilitan un mensaje por LinkedIn.
+      if (ap.tipo !== 'respuesta_positivo') {
+        throw errorsSdr.aprobacionRequerida(`La aprobación es de tipo ${ap.tipo}: un mensaje por LinkedIn necesita una respuesta_positivo.`);
+      }
       const final = ap.decision_contenido ?? ap.contenido;
       const dif = [];
-      if (final.canal && final.canal !== 'linkedin') dif.push('el canal');
+      if (final.canal !== 'linkedin') dif.push(`el canal (la aprobación es para ${final.canal ?? 'mail'})`);
       if (norm(final.texto) !== texto) dif.push('el texto');
-      if (ap.prospecto_id && ap.prospecto_id !== p.id) dif.push('el prospecto');
+      if (ap.prospecto_id !== p.id) dif.push('el prospecto');
       if (dif.length) throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${dif.join(', ')}. Mandá exactamente lo aprobado.`);
     }
     return { p, ap };

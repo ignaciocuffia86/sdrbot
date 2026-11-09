@@ -695,6 +695,10 @@ export async function controlarEnvio(clientId, args, kind) {
     else if (normTexto(final.texto) !== normTexto(args.text)) diferencias.push('el texto');
     if (final.canal && final.canal !== 'mail') diferencias.push(`el canal (la aprobación es para ${final.canal})`);
     if (ap.prospecto_id && args.prospecto_id && ap.prospecto_id !== args.prospecto_id) diferencias.push('el prospecto');
+    // La respuesta a un positivo es para esa persona: una aprobación sin prospecto no sirve.
+    if (ap.tipo === 'respuesta_positivo' && ap.prospecto_id !== args.prospecto_id) {
+      if (!diferencias.includes('el prospecto')) diferencias.push('el prospecto');
+    }
     if (diferencias.length) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +
         '(si el operador lo editó, la versión editada está en decision_contenido).');

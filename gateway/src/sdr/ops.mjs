@@ -213,6 +213,9 @@ export const SDR_OPS = [
         const conMail = ['buzon', 'destinatario', 'asunto', 'texto'].some((x) => k[x]) || !k.linkedin;
         if (conMail) exigir(['buzon', 'destinatario', 'asunto', 'texto'], 'un mail');
       }
+      if ((a.tipo === 'respuesta_positivo' || a.tipo === 'whatsapp_primero') && !a.prospecto_id) {
+        throw errors.invalid(`Una aprobación ${a.tipo} es para una persona: falta prospecto_id.`);
+      }
       if (a.tipo === 'whatsapp_primero') {
         if (k.canal !== 'whatsapp') throw errors.invalid('Una aprobación whatsapp_primero lleva contenido.canal "whatsapp".');
         exigir(['texto'], 'un WhatsApp');
