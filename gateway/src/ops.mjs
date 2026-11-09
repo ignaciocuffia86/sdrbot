@@ -275,10 +275,11 @@ const MAIL_OPS = [
     op: 'send', mcp: 'enviar', scope: 'send',
     description: 'Envía un mail nuevo desde el buzón por su SMTP y guarda la copia en Enviados. Respeta el cupo ' +
       'diario del buzón y la clave de idempotencia. Para seguir un hilo pasar in_reply_to y references; para ' +
-      'contestar un mensaje recibido usar responder. Con prospecto_id el envío queda en el registro y se controla la ' +
-      'campaña de la persona: tiene que estar activa, el buzón tiene que ser de la campaña y los links, de los permitidos ' +
-      '(campana_inactiva, buzon_fuera_de_campana, link_no_permitido). Si la campaña está en calibración, exige ' +
-      'aprobacion_id con una aprobación de exactamente este mail.',
+      'contestar un mensaje recibido usar responder. Con prospecto_id el envío queda en el registro, y el mail de esa ' +
+      'persona tiene que estar entre los destinatarios (destinatario_no_coincide). La campaña sale de los destinatarios ' +
+      'que son prospectos, que tienen que ser de una misma campaña: tiene que estar activa, el buzón tiene que ser de la ' +
+      'campaña y los links, de los permitidos (campana_inactiva, buzon_fuera_de_campana, link_no_permitido, ' +
+      'en_otra_campana). Si la campaña está en calibración, exige aprobacion_id con una aprobación de exactamente este mail.',
     schema: obj({
       mailbox, to: addressList, cc: addressList, bcc: addressList,
       subject: { type: 'string', maxLength: 500 }, text, html: text,

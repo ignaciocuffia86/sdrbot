@@ -302,7 +302,8 @@ test('calibración: el gateway no deja enviar sin una aprobación de exactamente
   assert.equal(original.error.code, 'aprobacion_no_coincide');
   assert.match(original.error.message, /el texto/);
   const otroDestino = await call(tok.a, 'send', MAIL({ to: 'otra@prospecto.test', text: textoFinal, idempotency_key: `${ids.laura}:mail-1`, aprobacion_id: ids.ap1 }));
-  assert.match(otroDestino.error.message, /el destinatario/);
+  // Con el prospecto_id de Laura, el mail tiene que ir a Laura (antes de mirar la aprobación).
+  assert.equal(otroDestino.error.code, 'destinatario_no_coincide');
 
   // Con espacios distintos, igual coincide.
   const antes = smtp.received.length;

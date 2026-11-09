@@ -683,15 +683,47 @@ const primerDestinatario = (to) => {
   return limpios.length === 1 ? limpios[0] : null;
 };
 
+// Todas las direcciones de un envío (to, cc y bcc), en minúscula.
+const direcciones = (args) => ['to', 'cc', 'bcc'].flatMap((k) => {
+  const v = args[k];
+  if (!v) return [];
+  return (Array.isArray(v) ? v : String(v).split(',')).map((x) => normMail(/<([^>]+)>/.exec(x)?.[1] ?? x)).filter(Boolean);
+});
+
+// La campaña de un mail nuevo sale de a quién va, no de lo que elige quien llama: si no, un
+// prospecto_id de una campaña ya calibrada (o ninguno) serviría para escribirle sin aprobación a
+// una persona de otra campaña. Los destinatarios que son prospectos tienen que ser todos de una
+// misma campaña, y si se pasa prospecto_id, su mail tiene que estar entre los destinatarios.
+async function campanaDelEnvio(c, clientId, args, p) {
+  const dirs = [...new Set(direcciones(args))];
+  if (p && (!p.email || !dirs.includes(p.email))) {
+    throw new GatewayError('destinatario_no_coincide',
+      `El mail no va a ${p.nombre ?? 'el prospecto'} (${p.email ?? 'sin mail en el registro'}): con prospecto_id, su mail tiene que estar entre los destinatarios.`, 422);
+  }
+  const { rows } = dirs.length
+    ? await c.query(`select id, nombre, email, campana_id from sdr.prospecto where client_id = $1 and email = any($2::text[])`, [clientId, dirs])
+    : { rows: [] };
+  const campanas = [...new Set([...rows.map((r) => r.campana_id), ...(p ? [p.campana_id] : [])])];
+  if (campanas.length > 1) {
+    throw enCampana.errorsCampana.otra('El mail va a personas de distintas campañas: cada campaña se escribe por separado.');
+  }
+  const conCampana = p ?? (rows.length ? { ...rows[0] } : null);
+  return { k: await enCampana.resolver(c, clientId, { prospecto: conCampana }), deCampana: Boolean(conCampana) };
+}
+
 // Calibración, aprobaciones y campaña que el gateway exige antes de enviar (docs/09 §5.4, docs/21
 // §4.3). Devuelve la aprobación a marcar como usada, o null si el envío no la necesita.
 export async function controlarEnvio(clientId, args, kind) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
     const p = args.prospecto_id ? await prospectoDe(c, clientId, args.prospecto_id) : null;
-    // Un cliente sin el SDR (sólo el gateway de correo) no tiene campañas ni calibración.
-    const k = cfg ? await enCampana.resolver(c, clientId, { prospecto: p }) : null;
-    if (p && k) {
+    // Un cliente sin el SDR (sólo el gateway de correo) no tiene campañas ni calibración. Un mail
+    // nuevo toma la campaña de sus destinatarios; una respuesta, la del prospecto que contesta.
+    let k = null;
+    let deCampana = Boolean(p);
+    if (cfg && kind === 'send') ({ k, deCampana } = await campanaDelEnvio(c, clientId, args, p));
+    else if (cfg) k = await enCampana.resolver(c, clientId, { prospecto: p });
+    if (deCampana && k) {
       // Un mail nuevo sale sólo si su campaña está activa y por un buzón de la campaña; las respuestas
       // salen del buzón que recibió, y siguen aunque la campaña esté en pausa.
       if (kind === 'send') {

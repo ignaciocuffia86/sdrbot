@@ -165,6 +165,33 @@ test('campañas MCP: al enviar, buzón de la campaña, links permitidos y calibr
   await ok('send', { mailbox: DARIO, to: 'juan@acme.test', subject: 'QA', text: 'Hola Juan', prospecto_id: ids.juan, idempotency_key: 'juan:mail-1', ...META });
 });
 
+test('campañas MCP: la campaña de un mail sale de sus destinatarios, no del prospecto_id que elige quien llama', async () => {
+  // Una persona nueva del webinar, que vuelve a calibrar su primer mail.
+  await q(`update sdr.campana set calibracion_mails = 2 where id = $1`, [k.webinar.id]);
+  const lia = (await ok('registro_guardar_prospecto', { cuenta_id: ids.beta, nombre: 'Lía', email: 'lia@beta.test', ...META })).prospecto;
+  assert.equal(lia.campana_id, k.webinar.id);
+  const base = { mailbox: BETO, subject: 'Webinar', text: 'Hola Lía', ...META };
+
+  // Con el prospecto_id de Juan («principal», sin calibración) no se le escribe a Lía.
+  const ajeno = await call('send', { ...base, to: 'lia@beta.test', prospecto_id: ids.juan, idempotency_key: 'lia:intento-1' });
+  assert.equal(ajeno.error?.code, 'destinatario_no_coincide', JSON.stringify(ajeno));
+  assert.equal(ajeno.status, 422);
+  // Ni sumándola en copia.
+  const copia = await call('send', { ...base, mailbox: DARIO, to: 'juan@acme.test', cc: 'lia@beta.test', prospecto_id: ids.juan, idempotency_key: 'lia:intento-2' });
+  assert.equal(copia.error.code, 'en_otra_campana');
+  // Sin prospecto_id, el destinatario igual trae su campaña: calibración, buzón y links.
+  const sinId = await call('send', { ...base, to: 'Lía <lia@beta.test>', idempotency_key: 'lia:intento-3' });
+  assert.equal(sinId.error.code, 'aprobacion_requerida');
+  assert.match(sinId.error.message, /Webinar/);
+  const sinIdBuzon = await call('send', { ...base, mailbox: DARIO, to: 'lia@beta.test', idempotency_key: 'lia:intento-4' });
+  assert.equal(sinIdBuzon.error.code, 'buzon_fuera_de_campana');
+  const sinIdLink = await call('send', { ...base, to: 'lia@beta.test', text: 'Mirá https://otro-sitio.test', idempotency_key: 'lia:intento-5' });
+  assert.equal(sinIdLink.error.code, 'link_no_permitido');
+  // A alguien que no es prospecto, como antes.
+  await ok('send', { ...base, mailbox: DARIO, to: 'alguien@fuera.test', text: 'Hola', idempotency_key: 'fuera:mail-1' });
+  await q(`update sdr.campana set calibracion_mails = 1 where id = $1`, [k.webinar.id]);
+});
+
 test('campañas MCP: una campaña en pausa no manda mails nuevos ni toma personas nuevas', async () => {
   await q(`update sdr.campana set estado = 'pausada' where id = $1`, [k.webinar.id]);
   const mail = await call('send', MAIL({ text: 'Hola Ana, un recordatorio', idempotency_key: 'ana:mail-3' }));
