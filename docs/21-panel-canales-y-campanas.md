@@ -1,6 +1,7 @@
 # Panel por cliente: canales, campañas y ajustes del SDR
 
-Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); C en adelante, diseño, con todas las
+Estado: **etapas A y B construidas** (06/11/2026, migración `010` del gateway); de C1, la base
+(migración `012`, 09/11/2026); el resto de C en adelante, diseño, con todas las
 definiciones cerradas (§6, decisiones 9 a 14, del 09/11/2026).
 Escrito el 05/11/2026. Propone cómo reorganizar
 la ficha de cada cliente en `https://sdrbot.bigua.lat/admin`: qué se configura, dónde, quién lo
@@ -309,30 +310,43 @@ el prospector toma la campaña del pedido (y la tarea de su tipo: `diaria` para 
 
 ### 4.6 Datos
 
+Construido en la migración `012_campanas` del gateway. Lo principal:
+
 ```sql
 create table sdr.campana (
-  id             uuid primary key default gen_random_uuid(),
-  client_id      text not null references mailgw.client on delete cascade,
-  clave          text not null,                    -- 'principal', 'webinar-2026-11'
-  nombre         text not null,
-  tipo           text not null check (tipo in ('prospeccion', 'evento', 'reactivacion')),
-  estado         text not null default 'borrador'
-                 check (estado in ('borrador', 'activa', 'pausada', 'terminada')),
-  ajustes        jsonb not null default '{}',      -- lo de §2, validado por tipo como hoy ajustes.mjs
-  buzones        uuid[] not null default '{}',     -- mailgw.mailbox
-  dripify_campana_id bigint,
-  cuentas_por_dia int not null default 0 check (cuentas_por_dia between 0 and 100),
-  calibracion_mails int not null default 5,
+  id, client_id, clave,               -- 'principal', 'webinar-2026-11'; único por cliente
+  nombre, tipo,                       -- prospeccion | evento | reactivacion
+  estado,                             -- borrador | activa | pausada | terminada
+  ajustes jsonb,                      -- lo de §6.2 «Campaña», validado por tipo como hoy ajustes.mjs
+  dripify_campana_id bigint,          -- C1: un perfil; en C2 pasa a una tabla por perfil
+  cuentas_por_dia int,                -- decisión 12, sin peso
+  calibracion_mails int default 5,    -- decisión 4
   inicio date, fin date,
-  creado_at timestamptz not null default now(), actualizado_at timestamptz not null default now(),
-  unique (client_id, clave), unique (id, client_id)
+  duplicada_de uuid, terminada_at,    -- decisión 13: una terminada no se reactiva, se duplica
+  creado_at, actualizado_at
 );
--- + campana_id en sdr.cuenta (la que la tomó), sdr.prospecto, sdr.evento, sdr.pedido,
---   sdr.aprobacion y sdr.dripify_carga; historial: sdr.ajustes_historial gana campana_id.
+create table sdr.campana_buzon (client_id, campana_id, account_id);  -- los buzones de cada campaña
+-- + campana_id (not null, clave foránea compuesta con client_id) en sdr.cuenta, sdr.prospecto,
+--   sdr.evento, sdr.pedido, sdr.aprobacion y sdr.dripify_carga; sdr.ajustes_historial gana
+--   campana_id (vacío = Empresa).
 ```
 
+Diferencias con el boceto anterior:
+
+- Los buzones van en una tabla y no en un `uuid[]`, para que la clave foránea compuesta impida
+  asignar un buzón de otro cliente y borrar un buzón lo saque de sus campañas.
+- En `sdr.dripify_carga`, `campana_id` ya era el id de la campaña de Dripify: pasa a llamarse
+  `dripify_campana_id`.
+- `sdr.campana_principal(cliente)` devuelve la «principal» y la crea si falta. La usan:
+  - un disparador en las seis tablas del registro, que completa `campana_id` cuando el código de
+    hoy no lo manda;
+  - el alta de `sdr.cliente_config`.
+
+  Es `security definer`, porque la aplicación sólo lee campañas, y rechaza un cliente distinto
+  del de la sesión.
+
 `sdr.cliente_config.ajustes` queda como los ajustes de **Empresa**. Las claves que pasan a la
-campaña (§6.2) se mueven a la campaña «principal» en la migración. Mismas políticas por cliente
+campaña (§6.2) se copian a la «principal» en la `012` y se borran de Empresa en la `013`. Mismas políticas por cliente
 que el resto de `sdr`.
 
 ## 5. WhatsApp
@@ -437,13 +451,20 @@ sólo lectura, con candado.
 Una campaña **terminada** no se reactiva. Para repetirla se usa **Duplicar**, que crea un borrador
 con la misma configuración. Así los números de cada campaña no se mezclan.
 
-**Migración de la «principal» (10).** Por cliente, en la migración de C:
+**Migración de la «principal» (10).** Va en dos migraciones, para que la base pueda cambiar
+antes que el código sin romper nada:
+
+- **`012` (hecha):** pasos 1, 2, 4 y 5. Las claves se **copian** y Empresa no cambia.
+- **`013`:** paso 3 y el borrado de Empresa de las claves que pasaron a la campaña. Se aplica
+  cuando el gateway, el panel y las reglas ya lean la campaña.
+
+Por cliente:
 
 1. Se crea `sdr.campana` con `clave = 'principal'`, `nombre = 'Principal'`, tipo prospección y
    estado `activa` si el cliente tiene bots activos (si no, `pausada`).
 2. Pasan a la campaña: `icp`, `roles_objetivo`, `senal_avisos`, `dias_aviso`, `llamado_accion`,
    `positivos`, `cuentas_por_dia`, `acepta_mails_extrapolados`, y `oferta` como `propuesta`. Los
-   buzones se cargan con todos los activos del cliente; el id de Dripify, con el que tiene hoy.
+   buzones se cargan con todos los del cliente (el estado de cada uno sigue mandando); el id de Dripify, con el que tiene hoy.
 3. En Empresa: `descripcion` arranca con una copia de `oferta` (y aparece «Revisar la descripción
    de la empresa» en Resumen hasta que alguien la guarde); `excluir`, `objeciones` y
    `prueba_social` quedan como están; `ajustes.buzones` se borra, y su texto queda en el historial.

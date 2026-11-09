@@ -108,6 +108,10 @@ Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`
 
 Las direcciones viejas (`#/c/<id>/sdr`, `/buzones`, `/dominios`, `/usuarios`, `/tokens`) llevan a su lugar nuevo.
 
+### Campañas (etapa C1, en construcción)
+
+Migración `012_campanas` (`docs/21` §4.6 y §6.2): `sdr.campana` y `sdr.campana_buzon`. Cada cliente tiene su campaña «principal», creada con sus ajustes de hoy. Todo el registro (`cuenta`, `prospecto`, `evento`, `pedido`, `aprobacion` y `dripify_carga`) lleva `campana_id`. Mientras el código no lo mande, un disparador lo completa con la «principal». Por ahora ni el panel, ni las herramientas, ni las reglas usan las campañas. Lo prueba `test/campanas.test.mjs`.
+
 ### SDR: ajustes del cliente
 
 La pestaña **Empresa** edita lo que los bots leen como «Ajustes de este cliente» (migraciones `007_ajustes_en_el_panel` y `010`):

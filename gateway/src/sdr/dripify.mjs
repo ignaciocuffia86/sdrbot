@@ -371,7 +371,7 @@ export async function cargar(clientId, a, meta) {
 
   const ids = a.prospectos.map((x) => x.prospecto_id);
   const { rows: carga } = await asClient(clientId, (c) => c.query(
-    `insert into sdr.dripify_carga (client_id, clave, campana_id, prospectos) values ($1, $2, $3, $4)
+    `insert into sdr.dripify_carga (client_id, clave, dripify_campana_id, prospectos) values ($1, $2, $3, $4)
      on conflict (client_id, clave) do update set estado = 'enviando', error = null, prospectos = excluded.prospectos, creado_at = now()
        where sdr.dripify_carga.estado = 'error'
      returning *`, [clientId, a.idempotency_key, cx.cuenta.campana_id, ids]));
@@ -438,7 +438,7 @@ export async function cargar(clientId, a, meta) {
 
 function resultadoCarga(r) {
   return {
-    carga: Number(r.id), campana_id: Number(r.campana_id), lead_list_id: r.lead_list_id === null ? null : Number(r.lead_list_id),
+    carga: Number(r.id), campana_id: Number(r.dripify_campana_id), lead_list_id: r.lead_list_id === null ? null : Number(r.lead_list_id),
     prospectos: r.prospectos.length, aceptados: r.aceptados, duplicados: r.duplicados,
     nota: 'Dripify procesa la lista en unos minutos y arranca la secuencia (invitación, mensaje 1 al aceptar, mensaje 2 después). ' +
       'Lo que pase vuelve solo al registro.',
