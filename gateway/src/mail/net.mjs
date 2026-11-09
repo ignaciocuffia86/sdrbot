@@ -137,7 +137,11 @@ export async function checkWebhookHost(raw) {
 }
 
 // POST con cuerpo JSON. Devuelve { ok, status } como fetch; una redirección cuenta como falla.
-export async function postWebhook(raw, { headers = {}, body = '', timeoutMs = 10_000 } = {}) {
+// timeoutMs es un plazo total (DNS, conexión, TLS y la respuesta): un servidor que manda la
+// respuesta de a poco no lo estira, como sí estiraría el timeout de inactividad del socket. Los
+// despertadores corren de a uno, así que uno lento no puede trabar a los de los demás clientes.
+// signal: además, el corte de quien llama.
+export async function postWebhook(raw, { headers = {}, body = '', timeoutMs = 10_000, signal } = {}) {
   const u = validateWebhookUrl(raw);
   const lookup = (hostname, opts, cb) => {
     publicAddresses(hostname.replace(/^\[|\]$/g, '')).then((addrs) => {
@@ -145,17 +149,30 @@ export async function postWebhook(raw, { headers = {}, body = '', timeoutMs = 10
       else cb(null, addrs[0].address, addrs[0].family);
     }, (e) => cb(e));
   };
+  if (signal?.aborted) throw new Error('cortado antes de empezar');
   return new Promise((resolve, reject) => {
+    let listo = false;
+    const terminar = (fn, v) => {
+      if (listo) return;
+      listo = true;
+      clearTimeout(reloj);
+      signal?.removeEventListener('abort', alCortar);
+      fn(v);
+    };
     const req = https.request(u, {
       method: 'POST', lookup, timeout: timeoutMs,
       headers: { ...headers, 'content-length': Buffer.byteLength(body) },
     }, (res) => {
       res.resume();
       const status = res.statusCode ?? 0;
-      resolve({ ok: status >= 200 && status < 300, status });
+      terminar(resolve, { ok: status >= 200 && status < 300, status });
     });
-    req.on('timeout', () => req.destroy(new Error(`sin respuesta en ${Math.round(timeoutMs / 1000)} s`)));
-    req.on('error', reject);
+    const cortar = (motivo) => { req.destroy(new Error(motivo)); };
+    const reloj = setTimeout(() => cortar(`sin respuesta completa en ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
+    const alCortar = () => cortar('cortado por quien llamó');
+    signal?.addEventListener('abort', alCortar, { once: true });
+    req.on('timeout', () => cortar(`sin respuesta en ${Math.round(timeoutMs / 1000)} s`));
+    req.on('error', (e) => terminar(reject, e));
     req.end(body);
   });
 }

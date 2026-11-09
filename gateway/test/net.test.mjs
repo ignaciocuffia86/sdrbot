@@ -59,6 +59,39 @@ test('webhooks salientes (despertador): sólo https al 443 de un dominio públic
   await assert.rejects(checkWebhookHost('https://10.1.2.3/x'), /interna/);
 });
 
+test('webhooks salientes: un servidor que manda la respuesta de a poco no estira el plazo total', async (t) => {
+  const dir = process.env.MAILGW_TEST_DIR;
+  if (!dir || !fs.existsSync(`${dir}/server.pem`)) { t.skip('sin el certificado de prueba de run.sh'); return; }
+  process.env.MAILGW_ALLOW_PRIVATE_HOSTS = '1';
+  const goteos = [];
+  // Responde las cabeceras de a un byte cada 100 ms, sin terminarlas nunca: el socket nunca queda
+  // inactivo, así que sólo un plazo total lo corta.
+  const srv = https.createServer({ cert: fs.readFileSync(`${dir}/server.pem`), key: fs.readFileSync(`${dir}/server.key`) }, (req) => {
+    const s = req.socket;
+    let i = 0;
+    const cab = 'HTTP/1.1 200 OK\r\nX-Lento: ' + 'a'.repeat(1000);
+    const t = setInterval(() => { if (s.destroyed || i >= cab.length) { clearInterval(t); return; } s.write(cab[i++]); }, 100);
+    goteos.push(t);
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  try {
+    const inicio = Date.now();
+    await assert.rejects(postWebhook(`https://127.0.0.1:${srv.address().port}/hook`, { body: '{}', timeoutMs: 800 }), /sin respuesta completa/);
+    assert.ok(Date.now() - inicio < 3000, `tardó ${Date.now() - inicio} ms`);
+
+    // La señal de quien llama también corta.
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    const inicio2 = Date.now();
+    await assert.rejects(postWebhook(`https://127.0.0.1:${srv.address().port}/hook`, { body: '{}', timeoutMs: 10_000, signal: ac.signal }), /cortado/);
+    assert.ok(Date.now() - inicio2 < 3000);
+  } finally {
+    for (const t of goteos) clearInterval(t);
+    srv.closeAllConnections?.();
+    await new Promise((r) => srv.close(r));
+  }
+});
+
 test('webhooks salientes: una redirección no se sigue', async (t) => {
   const dir = process.env.MAILGW_TEST_DIR;
   if (!dir || !fs.existsSync(`${dir}/server.pem`)) { t.skip('sin el certificado de prueba de run.sh'); return; }

@@ -474,7 +474,7 @@ export const BOTS_CON_AVISO = Object.keys(FUENTES);
 // una espera que crece (2, 4, 8… hasta 60 minutos).
 // fetchImpl: para las pruebas. En producción, postWebhook: controla la dirección al conectar y no
 // sigue redirecciones.
-const postDespertador = (url, init) => postWebhook(url, { headers: init.headers, body: init.body, timeoutMs: 10_000 });
+const postDespertador = (url, init) => postWebhook(url, { headers: init.headers, body: init.body, signal: init.signal, timeoutMs: 10_000 });
 
 export async function despertar(clientId, bot = 'seguimiento', { fetchImpl = postDespertador, ahora = new Date() } = {}) {
   const { rows } = await asOwner((c) => c.query(
