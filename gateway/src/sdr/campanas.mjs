@@ -20,6 +20,15 @@ const noExiste = (msg = 'No existe esa campaña.') => new GatewayError('not_foun
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Las columnas que el panel puede escribir. Los nombres que van armados en el SQL salen sólo de
+// esta lista: aunque ajustes.mjs ya rechaza cualquier otra clave, acá se controla otra vez.
+const ESCRIBIBLES = new Set(['nombre', 'tipo', 'estado', 'inicio', 'fin', 'cuentas_por_dia', 'dripify_campana_id', 'calibracion_mails']);
+const columnasSql = (obj) => {
+  const k = Object.keys(obj);
+  for (const x of k) if (!ESCRIBIBLES.has(x)) throw invalido(`No existe el campo «${x}».`);
+  return k;
+};
+
 const COLS = `id, client_id, clave, nombre, tipo, estado, ajustes, dripify_campana_id, cuentas_por_dia, calibracion_mails,
   to_char(inicio, 'YYYY-MM-DD') as inicio, to_char(fin, 'YYYY-MM-DD') as fin, duplicada_de, terminada_at,
   creado_at, actualizado_at`;
@@ -191,7 +200,7 @@ export async function crear(c, clientId, datos, { user, esBigua }) {
   const ajustes = aplicarCambiosCampana({}, cambiosAjustes, permiso, { empresa: cfg.ajustes });
   const { buzones, ...resto } = cols;
   const clave = await claveNueva(c, clientId, cols.nombre);
-  const nombres = Object.keys(resto);
+  const nombres = columnasSql(resto);
   const { rows } = await c.query(
     `insert into sdr.campana (client_id, clave, ajustes, ${nombres.join(', ')})
      values ($1, $2, $3, ${nombres.map((_, i) => `$${i + 4}`).join(', ')}) returning id`,
@@ -232,12 +241,13 @@ export async function guardar(c, clientId, id, datos, { user, esBigua }) {
   controlarTope(actual, cols, tope);
 
   const { buzones, ...resto } = cols;
-  const sets = Object.keys(resto).map((k, i) => `${k} = $${i + 4}`);
+  const nombresSet = columnasSql(resto);
+  const sets = nombresSet.map((k, i) => `${k} = $${i + 4}`);
   if (cols.estado === 'terminada') sets.push('terminada_at = now()');
   await c.query(
     `update sdr.campana set ajustes = $3, actualizado_at = now()${sets.length ? `, ${sets.join(', ')}` : ''}
       where client_id = $1 and id = $2`,
-    [clientId, id, JSON.stringify(ajustes), ...Object.values(resto)]);
+    [clientId, id, JSON.stringify(ajustes), ...nombresSet.map((k) => resto[k])]);
   if (buzones !== undefined) await ponerBuzones(c, clientId, id, buzones ?? []);
   await historial(c, clientId, id, ajustes, [...cambiosC, ...cambiosA], user, nota);
   return { cambios: [...cambiosC, ...cambiosA], estado_antes: actual.estado, estado: despues.estado, nombre: despues.nombre };
