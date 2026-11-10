@@ -1217,3 +1217,175 @@ export const aprobacionDecidir = async ({ user, params, body, via = 'panel' }) =
   }
   return r;
 };
+
+// ----- asistentes (docs/27): el alta de un cliente y el armado de cada campaña, con pausa
+//
+// Lo que se carga en cada paso va a donde ya iba. Acá sólo se calcula en qué quedó cada paso (de
+// los datos cuando se puede) y se guarda lo que los datos no dicen: un paso o un campo que espera
+// una definición, un paso que no aplica o uno que se hace fuera del panel (la cuenta de Grok).
+
+// Los pasos del alta, por etapa. campos/requeridos: ajustes de Empresa que se cargan en el paso;
+// manual: se marca hecho a mano (no hay un dato que lo compruebe).
+export const PASOS_ALTA = [
+  { etapa: 'Cuenta', clave: 'sdr', titulo: 'Activar el SDR' },
+  { etapa: 'Cuenta', clave: 'usuario', titulo: 'Usuario del cliente' },
+  { etapa: 'La empresa', clave: 'empresa', titulo: 'Quién es y cómo habla',
+    campos: ['nombre_comercial', 'descripcion', 'tono', 'idioma', 'firma'], requeridos: ['nombre_comercial', 'descripcion'] },
+  { etapa: 'La empresa', clave: 'casos', titulo: 'Casos y objeciones', campos: ['prueba_social', 'objeciones'], manual: true },
+  { etapa: 'La empresa', clave: 'interesados', titulo: 'Interesados y derivación',
+    campos: ['responsable_positivos', 'responsable_email', 'link_agenda'], requeridos: ['responsable_positivos', 'responsable_email'] },
+  { etapa: 'La empresa', clave: 'exclusiones', titulo: 'A quién no escribirle', campos: ['excluir', 'acepta_mails_extrapolados'], manual: true },
+  { etapa: 'Correo', clave: 'buzones', titulo: 'Buzones' },
+  { etapa: 'Correo', clave: 'dominios', titulo: 'Dominios: SPF, DKIM y DMARC' },
+  { etapa: 'Canales', clave: 'linkedin', titulo: 'LinkedIn · Dripify' },
+  { etapa: 'Canales', clave: 'whatsapp', titulo: 'WhatsApp' },
+  { etapa: 'Canales', clave: 'crm', titulo: 'CRM · HubSpot' },
+  { etapa: 'Bots', clave: 'asci', titulo: 'Usuario de ASCI', manual: true },
+  { etapa: 'Bots', clave: 'token', titulo: 'Token del gateway' },
+  { etapa: 'Bots', clave: 'grok', titulo: 'Cuenta de Grok Bot', manual: true },
+  { etapa: 'Bots', clave: 'routines', titulo: 'Routines', manual: true },
+  { etapa: 'Bots', clave: 'despertadores', titulo: 'Despertadores' },
+];
+
+const AMBITO = /^(alta|campana:[0-9a-f-]{36})$/;
+const PASO = /^(campo:)?[a-z][a-z0-9_]{1,60}$/;
+const vacio = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+
+V.asistentePaso = validator({ type: 'object', additionalProperties: false, required: ['estado'],
+  properties: {
+    estado: { enum: ['esperando', 'listo', 'no_aplica', null] },
+    que: { type: 'string', maxLength: 500 },
+    quien: { type: 'string', maxLength: 120 },
+  } });
+
+async function filasAsistente(c, clientId, ambito) {
+  return (await c.query(
+    `select paso, estado, que, quien, actualizado_por, actualizado_at from mailgw.asistente_paso
+      where client_id = $1 and ambito = $2 order by paso`, [clientId, ambito])).rows;
+}
+
+// Lo que dicen los datos de cada paso del alta: { hecho, falta } (falta: qué le falta, en una línea).
+async function datosDelAlta(c, user, clientId) {
+  const sdr = await leerSdr(c, user, clientId);
+  const cfg = sdr.activo ? sdr.ajustes : {};
+  const buzones = (await c.query(`select email, status, last_ok_at from mailgw.account where client_id = $1`, [clientId])).rows;
+  const dominios = (await c.query(`select domain, status from mailgw.domain_check where client_id = $1`, [clientId])).rows;
+  const usuarios = (await c.query(`select count(*)::int as n from mailgw.admin_user where client_id = $1`, [clientId])).rows[0].n;
+  const tokens = (await c.query(
+    `select count(*)::int as n from mailgw.token where client_id = $1 and revoked_at is null
+        and (expires_at is null or expires_at > now()) and 'sdr' = any(scopes)`, [clientId])).rows[0].n;
+  const crmCx = (await c.query(`select estado, token_enc is not null as token from sdr.crm_conexion where client_id = $1`, [clientId])).rows[0];
+  const titulos = Object.fromEntries(sdr.campos.map((x) => [x.clave, x.titulo]));
+  const faltanCampos = (claves) => claves.filter((k) => titulos[k] && vacio(cfg[k])).map((k) => titulos[k]);
+  const dominiosBuzones = [...new Set(buzones.map((b) => b.email.split('@')[1]))];
+  const out = {};
+  out.sdr = sdr.activo ? { hecho: true } : { hecho: false, falta: 'El SDR no está activado.' };
+  out.usuario = usuarios ? { hecho: true } : { hecho: false, falta: 'Todavía no tiene usuario en el panel.' };
+  for (const p of PASOS_ALTA.filter((x) => x.campos)) {
+    if (!sdr.activo) { out[p.clave] = { hecho: false, falta: 'Primero hay que activar el SDR.' }; continue; }
+    const f = faltanCampos(p.requeridos ?? []);
+    out[p.clave] = p.manual ? { hecho: false } : f.length ? { hecho: false, falta: `Falta: ${f.join(', ')}.` } : { hecho: true };
+  }
+  const probados = buzones.filter((b) => b.status === 'active' && b.last_ok_at);
+  out.buzones = probados.length ? { hecho: true }
+    : { hecho: false, falta: buzones.length ? 'Ningún buzón activo pasó la prueba de conexión.' : 'Todavía no hay buzones.' };
+  const sinVerificar = dominiosBuzones.filter((d) => !dominios.some((x) => x.domain === d && x.status));
+  const mal = dominios.filter((x) => dominiosBuzones.includes(x.domain) && x.status === 'error').map((x) => x.domain);
+  out.dominios = !dominiosBuzones.length ? { hecho: false, falta: 'Primero hay que cargar los buzones.' }
+    : mal.length ? { hecho: false, falta: `Con errores: ${mal.join(', ')}.` }
+    : sinVerificar.length ? { hecho: false, falta: `Sin verificar: ${sinVerificar.join(', ')}.` } : { hecho: true };
+  const d = sdr.dripify;
+  out.linkedin = d?.api_key && d?.ultimo_ok_at && !d?.ultimo_error ? { hecho: true }
+    : { hecho: false, falta: !d?.api_key ? 'Sin la API key de Dripify.' : d.ultimo_error ? `Error: ${d.ultimo_error}` : 'Falta probar la conexión.' };
+  out.whatsapp = sdr.whatsapp?.activo ? { hecho: true } : { hecho: false, falta: 'WhatsApp no está activado.' };
+  out.crm = crmCx?.token && crmCx.estado === 'activa' ? { hecho: true }
+    : { hecho: false, falta: !crmCx?.token ? 'HubSpot no está conectado.' : `La conexión está ${crmCx.estado}.` };
+  out.token = tokens ? { hecho: true } : { hecho: false, falta: 'No hay un token vigente con el permiso sdr.' };
+  const conAviso = (sdr.tecnico?.bots_activos ?? []).filter((b) => BOTS_CON_AVISO.includes(b));
+  const sinDespertador = conAviso.filter((b) => !sdr.despertadores?.[b]);
+  out.despertadores = !sdr.activo ? { hecho: false, falta: 'Primero hay que activar el SDR.' }
+    : sinDespertador.length ? { hecho: false, falta: `Falta el de ${sinDespertador.join(' y ')}.` } : { hecho: true };
+  for (const p of PASOS_ALTA.filter((x) => x.manual && !x.campos)) out[p.clave] = { hecho: false };
+  return { datos: out, titulos };
+}
+
+export const altaVer = async ({ user, params }) => {
+  requireBigua(user);
+  return asOwner(async (c) => {
+    await clienteExiste(c, params.client);
+    const { datos, titulos } = await datosDelAlta(c, user, params.client);
+    const filas = await filasAsistente(c, params.client, 'alta');
+    const fila = Object.fromEntries(filas.map((r) => [r.paso, r]));
+    const campos = filas.filter((r) => r.paso.startsWith('campo:'))
+      .map((r) => ({ ...r, clave: r.paso.slice(6), titulo: titulos[r.paso.slice(6)] ?? r.paso.slice(6) }));
+    const pasos = PASOS_ALTA.map((p) => {
+      const r = fila[p.clave];
+      const pendientes = campos.filter((x) => p.campos?.includes(x.clave));
+      const d = datos[p.clave];
+      let estado = 'por_hacer';
+      if (r?.estado === 'no_aplica') estado = 'no_aplica';
+      else if (r?.estado === 'esperando' || pendientes.length) estado = 'esperando';
+      else if (d.hecho || (p.manual && r?.estado === 'listo')) estado = 'listo';
+      return { clave: p.clave, etapa: p.etapa, titulo: p.titulo, campos: p.campos ?? [], manual: Boolean(p.manual),
+        estado, falta: d.falta ?? null, que: r?.estado === 'esperando' ? r.que : null, quien: r?.estado === 'esperando' ? r.quien : null,
+        campos_pendientes: pendientes.map(({ clave, titulo, que, quien }) => ({ clave, titulo, que, quien })),
+        actualizado_por: r?.actualizado_por ?? null, actualizado_at: r?.actualizado_at ?? null };
+    });
+    const cuenta = (e) => pasos.filter((p) => p.estado === e).length;
+    return { pasos, campos_pendientes: campos.map(({ clave, titulo, que, quien }) => ({ clave, titulo, que, quien })),
+      total: pasos.length, listos: cuenta('listo') + cuenta('no_aplica'), esperando: cuenta('esperando') };
+  });
+};
+
+// Los pasos y campos pausados de una campaña (el estado de cada sección sale de sus faltantes).
+export const asistenteVer = async ({ user, params }) => {
+  if (!AMBITO.test(params.ambito ?? '')) throw notFound('No existe ese asistente.');
+  if (params.ambito === 'alta') return altaVer({ user, params });
+  return scoped(user, params.client, async (c) => {
+    await campanaDelAsistente(c, params.client, params.ambito);
+    return { pasos: await filasAsistente(c, params.client, params.ambito) };
+  });
+};
+
+async function campanaDelAsistente(c, clientId, ambito) {
+  const { rowCount } = await c.query(`select 1 from sdr.campana where client_id = $1 and id = $2`, [clientId, ambito.slice(8)]);
+  if (!rowCount) throw notFound('No existe esa campaña.');
+}
+
+// Marca un paso o un campo: esperando (con qué falta y quién lo define), listo, no aplica, o null
+// para volver a «por hacer».
+export const asistentePasoGuardar = async ({ user, params, body }) => {
+  if (!AMBITO.test(params.ambito ?? '') || !PASO.test(params.paso ?? '')) throw notFound('No existe ese paso.');
+  const b = V.asistentePaso(body);
+  const alta = params.ambito === 'alta';
+  if (alta) {
+    requireBigua(user);
+    const p = PASOS_ALTA.find((x) => x.clave === params.paso);
+    if (!params.paso.startsWith('campo:') && !p) throw notFound('No existe ese paso.');
+    if (b.estado === 'listo' && !p?.manual) {
+      throw errors.invalid('Este paso queda listo solo, cuando los datos están completos: no se marca a mano.');
+    }
+  }
+  if (params.paso.startsWith('campo:') && b.estado !== null && b.estado !== 'esperando') {
+    throw errors.invalid('Un campo sólo puede quedar esperando una definición.');
+  }
+  if (b.estado === 'esperando' && !b.que?.trim()) throw errors.invalid('Contá qué falta definir.');
+  return scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    if (!alta) await campanaDelAsistente(c, params.client, params.ambito);
+    if (b.estado === null) {
+      await c.query(`delete from mailgw.asistente_paso where client_id = $1 and ambito = $2 and paso = $3`,
+        [params.client, params.ambito, params.paso]);
+    } else {
+      await c.query(
+        `insert into mailgw.asistente_paso (client_id, ambito, paso, estado, que, quien, actualizado_por)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         on conflict (client_id, ambito, paso) do update set estado = excluded.estado, que = excluded.que, quien = excluded.quien,
+           actualizado_por = excluded.actualizado_por, actualizado_at = now()`,
+        [params.client, params.ambito, params.paso, b.estado, b.estado === 'esperando' ? b.que.trim() : null,
+          b.estado === 'esperando' ? (b.quien?.trim() || null) : null, user.email]);
+    }
+    await audit(c, user, params.client, 'admin.asistente', { ambito: params.ambito, paso: params.paso, estado: b.estado });
+    return { ok: true };
+  });
+};
