@@ -15,7 +15,21 @@
      prospecto, según su `campana_id`), más los que devuelve `correo_sin_respuesta` y no tienen
      próximo paso;
    - si la calibración de esa campaña no terminó: que deje cada mail como aprobación, no que lo
-     envíe.
+     envíe;
+   - **cuántos publicantes puede revelar** (ver abajo).
+
+   **Si los buzones no dan para todo:** con `buzones()`, el cupo libre de hoy es
+   `daily_send_cap − sends_today` de los buzones activos de cada campaña. Contá unos dos mails
+   nuevos por cuenta más los seguimientos pedidos. Si a una campaña no le alcanza, bajale las
+   cuentas nuevas hasta que entren. Si varias campañas comparten buzones y entre todas no entran,
+   **recortá a todas en proporción** a lo que pedía cada una (por ejemplo, 6 y 4 cuentas con lugar
+   para 5: 3 y 2, redondeando para que la suma no pase) y anotalo en el resumen de la bitácora
+   (`bitacora_fin`): qué pedía cada campaña y qué le pediste.
+
+   **Publicantes de ASCI:** el tope del día son **3 publicantes revelados entre todas las
+   campañas** (cada uno cuesta un crédito). Repartilos en proporción a las cuentas nuevas de cada
+   pedido (con 3 y 1 cuentas: 2 y 1; con una sola campaña, los 3) y ponelo en el pedido («podés
+   revelar hasta N publicantes»).
 
    Una campaña pausada o terminada no lleva pedido de cuentas nuevas ni de mails nuevos. Si una
    campaña activa no tiene buzones, decíselo al operador y no la pidas.

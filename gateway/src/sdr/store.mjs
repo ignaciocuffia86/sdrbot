@@ -6,7 +6,7 @@
 
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
-import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, ordenar, tituloCampana, tituloDe } from './ajustes.mjs';
+import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, ordenar, tieneLegado, tituloCampana, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
 import * as enCampana from './en_campana.mjs';
 
@@ -997,6 +997,12 @@ export async function setConfig(clientId, cfg) {
       await c.query(
         `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_rol, nota) values ($1, $2, $3, 'cli', 'Cargado con la CLI')`,
         [clientId, JSON.stringify(rows[0].ajustes), Object.keys(cfg.ajustes)]);
+      // Un cliente con el formulario de Empresa sola no guarda en Empresa lo de la campaña: si la CLI
+      // lo trae (icp, oferta, cuentas por día…), pasa a la «principal» como en la migración 014.
+      if (rows[0].formulario === 'empresa' && tieneLegado(rows[0].ajustes)) {
+        await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
+        return (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0];
+      }
     }
     return rows[0];
   });

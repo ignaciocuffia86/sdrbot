@@ -641,7 +641,15 @@ Todo quedó nivelado como punto de partida:
 
 - ~~Un buzón dado de alta después de la `012` no entraba en ninguna campaña.~~ La migración `013`
   lo suma solo a la «principal»; de las demás campañas lo saca o lo suma el panel.
-- Volver una campaña a una versión anterior del historial, como en Empresa.
+- ~~Volver una campaña a una versión anterior del historial, como en Empresa.~~ Hecho: «Volver a
+  esta» en el historial de la campaña, con los permisos de un cambio a mano. Vuelven los ajustes;
+  el estado, el volumen y los buzones no.
+- ~~Los clientes nuevos arrancaban en el formulario de la transición.~~ La migración `015` los
+  pone en el de Empresa sola (y a los que no tenían claves de campaña en Empresa). Si la CLI carga
+  claves de campaña, `setConfig` las pasa a la «principal» con `sdr.migrar_empresa_014`.
+- ~~El recorte en proporción y el reparto de ASCI (decisión 12) no estaban en las reglas.~~ El
+  orquestador recorta todas las campañas en proporción si los buzones no dan y lo anota en la
+  bitácora, y reparte los 3 publicantes del día en proporción a las cuentas de cada pedido.
 
 **Después de C1:** C2, con varios perfiles de LinkedIn (§6.1), y D, con los tipos Evento y
 Reactivación y la cadencia configurable.
