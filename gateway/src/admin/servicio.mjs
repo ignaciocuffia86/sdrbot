@@ -19,6 +19,7 @@ import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { diferencias, editable, formularioEmpresa, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
+import * as carga from '../sdr/carga.mjs';
 import * as whatsapp from '../sdr/whatsapp.mjs';
 import * as monitor from '../sdr/monitor.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
@@ -116,6 +117,15 @@ const V = {
       tope_dia: { type: 'integer', minimum: 1, maximum: 500 },
       aprobar_primero: { type: 'boolean' },
       reanudar: { type: 'boolean' },
+    } }),
+  carga: validator({ type: 'object', required: ['archivo'], additionalProperties: false,
+    properties: {
+      archivo: { type: 'object', required: ['nombre', 'contenido_base64'], additionalProperties: false,
+        properties: { nombre: { type: 'string', minLength: 1, maxLength: 200 }, contenido_base64: { type: 'string', minLength: 1, maxLength: 900000 } } },
+      hoja: { type: 'string', maxLength: 120 },
+      mapeo: { type: 'object', maxProperties: 20, additionalProperties: { type: ['string', 'null'], maxLength: 200 } },
+      uso_defecto: { enum: ['no_contactar', 'semilla'], default: 'no_contactar' },
+      confirmar: { type: 'boolean' },
     } }),
   noContactarBaja: validator({ type: 'object', required: ['valores'], additionalProperties: false,
     properties: { valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 300 } } } }),
@@ -823,7 +833,7 @@ const OPS_PANEL = {
   'admin.mailbox.create': 'alta de buzón', 'admin.mailbox.update': 'buzón editado', 'admin.mailbox.password': 'contraseña de buzón cambiada',
   'admin.mailbox.check': 'prueba de buzón', 'admin.mailbox.pause': 'buzón pausado', 'admin.mailbox.activate': 'buzón reactivado',
   'admin.mailbox.delete': 'buzón eliminado', 'admin.sdr.ajustes': 'ajustes cambiados', 'admin.sdr.restaurar': 'ajustes vueltos atrás',
-  'admin.sdr.config': 'configuración del SDR', 'admin.sdr.no_contactar': 'alta en no contactar',
+  'admin.sdr.config': 'configuración del SDR', 'admin.sdr.no_contactar': 'alta en no contactar', 'admin.sdr.carga': 'carga de un archivo',
   'admin.sdr.no_contactar.quitar': 'baja de no contactar', 'admin.sdr.whatsapp': 'reglas de WhatsApp',
   'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado', 'admin.domain.check': 'dominio verificado',
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
@@ -917,6 +927,59 @@ export const noContactarQuitar = async ({ user, params, body }) => {
     return { quitados: rowCount, ...(await listaNoContactar(c, params.client)) };
   });
 };
+
+// ----- carga de cuentas por archivo (docs/26, etapa 1): la vista previa no escribe nada; con
+// confirmar, el mismo archivo se vuelve a leer y se aplica. Sólo Biguá carga semillas.
+
+async function leerCarga(user, body) {
+  const b = V.carga(body);
+  if (b.uso_defecto === 'semilla' && !isBigua(user)) throw forbidden();
+  const { hojas, hoja, filas } = carga.leerArchivo(b.archivo, { hoja: b.hoja });
+  const encabezados = (filas[0] ?? []).map((x) => String(x ?? '').trim());
+  if (!encabezados.some(Boolean)) throw errors.invalid('La primera fila tiene que traer los nombres de las columnas.');
+  if (new Set(encabezados.filter(Boolean)).size !== encabezados.filter(Boolean).length) {
+    throw errors.invalid('Hay dos columnas con el mismo nombre en la primera fila: cambiale el nombre a una.');
+  }
+  const mapeo = carga.proponerMapeo(encabezados, b.mapeo ?? {});
+  if (!mapeo.empresa && !mapeo.dominio && !mapeo.contacto_email) {
+    throw errors.invalid('No se encontró la columna de la empresa, del sitio web ni del mail: elegila en el mapeo.');
+  }
+  return { b, hojas, hoja, encabezados, mapeo, filas: carga.interpretar(filas, mapeo, b.uso_defecto) };
+}
+
+const camposCarga = (user) => Object.entries(carga.CAMPOS).map(([clave, d]) => ({ clave, titulo: d.titulo }))
+  .filter((x) => isBigua(user) || !['pais', 'vertical', 'tamano', 'rut', 'nota'].includes(x.clave));
+
+export const cargaPrevia = async ({ user, params, body }) => {
+  const l = await leerCarga(user, body);
+  return scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const plan = await carga.planificar(c, params.client, l.filas, { esBigua: isBigua(user) });
+    return { hojas: l.hojas, hoja: l.hoja, columnas: l.encabezados, campos: camposCarga(user), mapeo: l.mapeo,
+      filas: l.filas.length, resumen: carga.resumen(plan), muestra: carga.muestra(plan) };
+  });
+};
+
+export const cargaAplicar = async ({ user, params, body }) => {
+  const l = await leerCarga(user, body);
+  if (l.b.confirmar !== true) throw errors.invalid('Falta confirmar la carga (confirmar: true), después de ver la vista previa.');
+  return scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const plan = await carga.planificar(c, params.client, l.filas, { esBigua: isBigua(user) });
+    const r = await carga.aplicar(c, params.client, plan,
+      { archivo: l.b.archivo.nombre, usoDefecto: l.b.uso_defecto, mapeo: l.mapeo, porEmail: user.email });
+    await audit(c, user, params.client, 'admin.sdr.carga', { lote: r.lote_id, ...r.resumen, agregadas: r.agregadas, semillas: r.semillas });
+    return { ...r, muestra: carga.muestra(plan), ...(await listaNoContactar(c, params.client)) };
+  });
+};
+
+export const cargasListar = async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  const { rows } = await c.query(
+    `select id, archivo, uso_defecto, resumen, por_email, creado_at from sdr.lote_carga where client_id = $1 order by creado_at desc limit 50`,
+    [params.client]);
+  return { cargas: rows };
+});
 
 // ----- resumen: lo que necesita atención, para la primera pantalla del cliente
 

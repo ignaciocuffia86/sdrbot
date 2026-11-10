@@ -321,10 +321,7 @@ async function controlarCarga(c, clientId, items, notaMax) {
       const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);
       if (rowCount) { e('está en la supresión del cliente (baja o rebote)'); continue; }
     }
-    const dominio = p.cuenta_id
-      ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
-      : null;
-    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    const nc = await noContactar.deProspecto(c, clientId, p);
     if (nc.length) { e(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}`); continue; }
     const textos = { nota: it.nota, mensaje1: it.mensaje1, mensaje2: it.mensaje2 };
     if (norm(it.nota).length > notaMax) { e(`la nota tiene ${norm(it.nota).length} caracteres y el tope es ${notaMax}`); continue; }
@@ -592,10 +589,7 @@ export async function reanudar(clientId, prospectoId, meta) {
       const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);
       if (rowCount) throw no('está en la supresión del cliente (baja o rebote).');
     }
-    const dominio = p.cuenta_id
-      ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
-      : null;
-    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    const nc = await noContactar.deProspecto(c, clientId, p);
     if (nc.length) throw no(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}.`);
     return p;
   });
@@ -619,7 +613,8 @@ export const MOTIVO_NO_CONTACTAR = 'está en no contactar';
 // sola. Acá se le marca el freno, como a una baja; lo manda frenarPendientes. Se hace en cada
 // vuelta del reloj y no al agregar a la lista, así vale para cualquier forma de cargarla (panel, CSV,
 // carga por archivo, SQL) y el rol del panel no necesita tocar el registro. Un dominio de la lista
-// cubre sus subdominios, como en noContactar.coincidencias.
+// cubre sus subdominios y una empresa cargada por nombre se compara con el de la cuenta, como en
+// noContactar.coincidencias.
 export async function marcarNoContactar(c, clientId) {
   const { rows } = await c.query(
     `update sdr.prospecto p
@@ -631,6 +626,7 @@ export async function marcarNoContactar(c, clientId) {
                join sdr.no_contactar n on n.client_id = p2.client_id
               where p2.client_id = $1 and p2.dripify->>'estado' = 'cargado' and not (p2.dripify ? 'freno')
                 and ((n.tipo = 'email' and n.valor = p2.email)
+                  or (n.tipo = 'empresa' and n.valor = sdr.norm_empresa(k.nombre))
                   or (n.tipo = 'dominio' and exists (
                         select 1 from unnest(array[split_part(p2.email, '@', 2), k.dominio]) as d(v)
                          where d.v = n.valor or d.v like '%.' || n.valor)))) x

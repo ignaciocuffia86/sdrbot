@@ -490,9 +490,11 @@ async function empresaView({ clientId, bigua, base, reload }) {
     h('pre', { class: 'record preview' }, sdr.vista_previa ?? ''),
     otros.length ? h('p', { class: 'small muted' }, `Además hay ajustes cargados por Biguá fuera del formulario: ${otros.join(', ')}.`) : null);
   const nc = await noContactarCard(clientId);
+  const cargaArchivo = await cargaCard(clientId, bigua, reload);
   const out = h('div', { class: 'stack' },
     h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, vista)),
     nc,
+    cargaArchivo,
     h('section', {}, h('h2', {}, 'Historial de cambios'), historialTabla(clientId, sdr, reload)));
   if (location.hash.endsWith('#no-contactar')) setTimeout(() => nc.scrollIntoView(), 0);
   return out;
@@ -774,6 +776,8 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
 
 // ----- no contactar
 
+const TIPO_NC = { dominio: 'dominio y sus subdominios', email: 'mail', empresa: 'empresa, por su nombre' };
+
 async function noContactarCard(clientId) {
   const card = h('section', { class: 'card', id: 'no-contactar' });
   const path = `/clients/${enc(clientId)}/no-contactar`;
@@ -786,9 +790,9 @@ async function noContactarCard(clientId) {
     const vistas = (q ? lista.filter((x) => x.valor.includes(q) || (x.motivo ?? '').toLowerCase().includes(q)) : lista);
     const muestra = vistas.slice(0, 200);
     cuerpo.replaceChildren(!lista.length ? h('p', { class: 'muted small' }, 'La lista está vacía.') : h('div', {},
-      h('table', {}, h('thead', {}, h('tr', {}, ['Dominio o mail', 'Motivo', 'Cargado', ''].map((x) => h('th', {}, x)))),
+      h('table', {}, h('thead', {}, h('tr', {}, ['Dominio, mail o empresa', 'Motivo', 'Cargado', ''].map((x) => h('th', {}, x)))),
         h('tbody', {}, muestra.map((x) => h('tr', {},
-          h('td', {}, h('span', { class: 'mono' }, x.valor), h('div', { class: 'small muted' }, x.tipo === 'dominio' ? 'dominio y sus subdominios' : 'mail')),
+          h('td', {}, h('span', { class: 'mono' }, x.valor), h('div', { class: 'small muted' }, TIPO_NC[x.tipo] ?? x.tipo)),
           h('td', { class: 'small' }, x.motivo ?? '—'),
           h('td', { class: 'small' }, fmtDate(x.at), x.por_email ? h('div', { class: 'muted' }, x.por_email) : null),
           h('td', {}, h('button', { class: 'sm', type: 'button', onclick: async (ev) => {
@@ -801,7 +805,8 @@ async function noContactarCard(clientId) {
   const totales = h('span', { class: 'badge b-mute' });
   const pintar = (r) => {
     lista = r.no_contactar;
-    totales.textContent = `${plural(r.totales.dominios, 'dominio', 'dominios')} · ${plural(r.totales.emails, 'mail', 'mails')}`;
+    totales.textContent = `${plural(r.totales.dominios, 'dominio', 'dominios')} · ${plural(r.totales.emails, 'mail', 'mails')}` +
+      (r.totales.empresas ? ` · ${plural(r.totales.empresas, 'empresa', 'empresas')} por nombre` : '');
     filtro.hidden = lista.length < 15;
     pintarLista();
   };
@@ -848,6 +853,113 @@ async function noContactarCard(clientId) {
       h('span', { class: 'small muted' }, 'CSV: primera columna el dominio o el mail, segunda el motivo.')),
     salida, filtro, cuerpo);
   pintar(await api('GET', path));
+  return card;
+}
+
+// ----- carga de un archivo (docs/26, etapa 1)
+
+async function cargaCard(clientId, bigua, reload) {
+  const card = h('section', { class: 'card', id: 'carga' });
+  const path = `/clients/${enc(clientId)}/cargas`;
+  let archivo = null;
+  let mapeo = {};
+  let hoja;
+  const err = h('p', { class: 'err', role: 'alert' });
+  const previa = h('div', { role: 'status' });
+  const historial = h('div');
+  const usoSel = h('select', { id: 'carga-uso' },
+    h('option', { value: 'no_contactar' }, 'No contactar: referidos, clientes, competidores'),
+    bigua ? h('option', { value: 'semilla' }, 'Semillas del ICP: empresas modelo, no se les escribe') : null);
+  const input = h('input', { type: 'file', accept: '.xlsx,.csv,.txt,text/csv', id: 'carga-archivo', class: 'visually-hidden' });
+  const leer = (f) => new Promise((ok, mal) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).split(',')[1] ?? '');
+    r.onerror = () => mal(new Error('No se pudo leer el archivo.'));
+    r.readAsDataURL(f);
+  });
+  const cuerpo = (extra = {}) => ({ archivo, uso_defecto: usoSel.value, ...(hoja ? { hoja } : {}), mapeo, ...extra });
+  const pedirPrevia = async () => {
+    err.textContent = '';
+    try { pintarPrevia(await api('POST', `${path}/previa`, cuerpo())); } catch (e) { err.textContent = e.message; previa.replaceChildren(); }
+  };
+  input.addEventListener('change', async () => {
+    const f = input.files?.[0];
+    input.value = '';
+    if (!f) return;
+    if (f.size > 600 * 1024) { err.textContent = 'El archivo pasa los 600 KB: partilo en dos.'; return; }
+    try { archivo = { nombre: f.name, contenido_base64: await leer(f) }; } catch (e) { err.textContent = e.message; return; }
+    mapeo = {};
+    hoja = undefined;
+    await pedirPrevia();
+  });
+  usoSel.addEventListener('change', () => { if (archivo) pedirPrevia(); });
+
+  const lista = (titulo, filas) => (filas.length ? h('div', {}, h('h3', {}, titulo),
+    h('ul', { class: 'small' }, filas.slice(0, 10).map((x) => h('li', {}, `Renglón ${x.renglon}: ${x.motivo}`))),
+    filas.length > 10 ? h('p', { class: 'small muted' }, `…y ${filas.length - 10} más.`) : null) : null);
+  const tabla = (cols, filas) => h('table', {}, h('thead', {}, h('tr', {}, cols.map((x) => h('th', {}, x)))),
+    h('tbody', {}, filas.map((f) => h('tr', {}, f.map((x) => h('td', { class: 'small' }, x ?? '—'))))));
+  function pintarPrevia(r) {
+    mapeo = { ...r.mapeo };
+    for (const c of r.campos) if (!(c.clave in mapeo)) mapeo[c.clave] = null;
+    const s = r.resumen;
+    const hojaSel = r.hojas.length > 1 ? field('Hoja', h('select', { onchange: (ev) => { hoja = ev.target.value; mapeo = {}; pedirPrevia(); } },
+      r.hojas.map((x) => h('option', { value: x, selected: x === r.hoja }, x)))) : null;
+    const columnas = h('div', { class: 'carga-mapeo' }, r.campos.map((c) => field(c.titulo, h('select', {
+      onchange: (ev) => { mapeo[c.clave] = ev.target.value || null; pedirPrevia(); },
+    }, h('option', { value: '' }, '— no usar —'), r.columnas.filter(Boolean).map((x) => h('option', { value: x, selected: r.mapeo[c.clave] === x }, x))))));
+    const nada = !s.no_contactar.nuevas && !s.semillas.nuevas;
+    const cargar = h('button', { type: 'button', class: 'primary', disabled: nada, onclick: async (ev) => {
+      const res = await busy(ev.currentTarget, () => api('POST', path, cuerpo({ confirmar: true })), err);
+      if (!res) return;
+      toast(`Listo: ${plural(res.agregadas, 'valor nuevo', 'valores nuevos')} en no contactar` + (res.semillas ? ` y ${plural(res.semillas, 'semilla', 'semillas')}` : '') + '.');
+      archivo = null;
+      previa.replaceChildren();
+      reload();
+    } }, 'Cargar');
+    const ncMuestra = r.muestra.no_contactar;
+    const semMuestra = r.muestra.semillas;
+    previa.replaceChildren(...[
+      hojaSel,
+      h('h3', {}, 'Columnas'),
+      h('p', { class: 'small muted' }, 'Lo que el panel encontró en la primera fila. Si una columna no es la que corresponde, cambiala.'),
+      columnas,
+      h('h3', {}, 'Qué va a pasar'),
+      h('ul', {},
+        h('li', {}, `${plural(r.filas, 'fila', 'filas')} con datos.`),
+        h('li', {}, `No contactar: ${plural(s.no_contactar.nuevas, 'valor nuevo', 'valores nuevos')} (${plural(s.no_contactar.dominios, 'dominio', 'dominios')}, ` +
+          `${plural(s.no_contactar.empresas, 'empresa por nombre', 'empresas por nombre')}, ${plural(s.no_contactar.mails, 'mail', 'mails')})` +
+          (s.no_contactar.ya_estaban ? `; ${s.no_contactar.ya_estaban} ya estaban.` : '.')),
+        bigua ? h('li', {}, `Semillas: ${plural(s.semillas.nuevas, 'nueva', 'nuevas')}` + (s.semillas.ya_estaban ? `; ${s.semillas.ya_estaban} ya estaban en el registro (no se tocan).` : '.')) : null,
+        s.salteadas ? h('li', {}, `${plural(s.salteadas, 'fila no se carga', 'filas no se cargan')} (ver abajo).`) : null,
+        s.invalidas ? h('li', { class: 'err' }, `${plural(s.invalidas, 'fila tiene', 'filas tienen')} un error y no se carga${s.invalidas === 1 ? '' : 'n'}.`) : null),
+      lista('Con errores', r.muestra.invalidas),
+      lista('No se cargan', r.muestra.salteadas),
+      ncMuestra.length ? h('div', {}, h('h3', {}, 'No contactar'),
+        tabla(['Renglón', 'Valor', 'Cómo', 'Motivo', ''], ncMuestra.slice(0, 20).map((x) => [x.renglon, x.valor, TIPO_NC[x.tipo], x.motivo, x.ya_estaba ? 'ya estaba' : 'nuevo']))) : null,
+      semMuestra.length ? h('div', {}, h('h3', {}, 'Semillas'),
+        tabla(['Renglón', 'Empresa', 'Dominio', 'País', 'Rubro', ''], semMuestra.slice(0, 20).map((x) => [x.renglon, x.empresa, x.dominio, x.pais, x.vertical,
+          x.ya_estaba ? `ya está (${x.ya_estaba.estado})` : 'nueva']))) : null,
+      h('div', { class: 'row' }, cargar, h('button', { type: 'button', onclick: () => { archivo = null; previa.replaceChildren(); } }, 'Descartar')),
+    ].filter(Boolean));
+  }
+
+  const pintarHistorial = (r) => historial.replaceChildren(...(!r.cargas.length ? [] : [h('div', {}, h('h3', {}, 'Cargas anteriores'),
+    tabla(['Archivo', 'Uso por defecto', 'Resultado', 'Quién', 'Cuándo'], r.cargas.map((x) => [
+      x.archivo, x.uso_defecto === 'semilla' ? 'semillas' : 'no contactar',
+      `${x.resumen?.no_contactar?.nuevas ?? 0} a no contactar · ${plural(x.resumen?.semillas?.nuevas ?? 0, 'semilla', 'semillas')} · ${x.resumen?.invalidas ?? 0} con error`,
+      x.por_email, fmtDate(x.creado_at)])))]));
+
+  card.append(
+    h('h2', { class: 'first' }, 'Cargar un archivo'),
+    h('p', { class: 'small muted' }, 'Un Excel (.xlsx) o un CSV con una empresa por fila. Las filas de no contactar se suman a la lista de arriba: ' +
+      'por sitio web, por el nombre de la empresa cuando no tiene sitio, y por el mail del contacto. Si el archivo trae una columna «Uso», ' +
+      'cada fila puede decir lo suyo (no contactar' + (bigua ? ', semilla' : '') + ' o prospectar; prospectar llega más adelante). ' +
+      'Antes de cargar se ve qué va a pasar.'),
+    h('div', { class: 'row' }, field('Si la fila no dice otra cosa', usoSel),
+      h('label', { for: 'carga-archivo', class: 'btn' }, 'Elegir archivo'), input),
+    err, previa, historial);
+  try { pintarHistorial(await api('GET', path)); } catch { /* el historial no es imprescindible */ }
   return card;
 }
 

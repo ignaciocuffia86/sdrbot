@@ -141,9 +141,10 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
     }
   }
   const nc = extra.noContactar;
-  if (nc && nc.dominios + nc.emails > 0) {
+  if (nc && nc.dominios + nc.emails + (nc.empresas ?? 0) > 0) {
     lineas.push('', '### No contactar', '',
-      `El cliente tiene ${nc.dominios} dominio(s) y ${nc.emails} mail(s) a los que no se les escribe nunca. El gateway los hace cumplir: ` +
+      `El cliente tiene ${nc.dominios} dominio(s) y ${nc.emails} mail(s)${nc.empresas ? `, más ${nc.empresas} empresa(s) por nombre,` : ''} ` +
+      'a los que no se les escribe nunca. El gateway los hace cumplir: ' +
       'una cuenta de esa lista queda excluida al guardarla (registro_guardar_cuenta lo avisa con no_contactar), y una persona, ' +
       'un mail o una carga en Dripify se rechazan con el error no_contactar. No reveles a nadie de una empresa excluida.');
   }
@@ -470,9 +471,10 @@ export async function guardarCuenta(clientId, a, meta) {
     // la vuelva a investigar ni le revele contactos.
     let aviso = null;
     const dominio = a.dominio ?? actual?.dominio;
+    const nombre = a.nombre ?? actual?.nombre;
     const estadoFinal = a.estado ?? actual?.estado ?? 'en_investigacion';
-    if (dominio && !['excluida', 'descartada'].includes(estadoFinal)) {
-      const nc = await noContactar.coincidencias(c, clientId, [dominio]);
+    if ((dominio || nombre) && !['excluida', 'descartada'].includes(estadoFinal)) {
+      const nc = await noContactar.coincidencias(c, clientId, [dominio], [nombre]);
       if (nc.length) {
         a = { ...a, estado: 'excluida', estado_motivo: `No contactar: ${noContactar.describir(nc)}` };
         aviso = 'La empresa está en la lista de no contactar del cliente: quedó excluida. No busques ni reveles a nadie de ella.';
@@ -531,10 +533,15 @@ export async function guardarProspecto(clientId, a, meta) {
     // Nadie de la lista de no contactar entra al registro: ni un mail nuevo que choque con ella, ni
     // una persona nueva de una empresa de la lista.
     const aControlar = [];
+    const nombres = [];
     if (a.email && a.email !== actual?.email) aControlar.push(a.email);
     const cuentaId = a.cuenta_id ?? actual?.cuenta_id;
-    if (!actual && cuentaId) aControlar.push((await cuentaDe(c, clientId, cuentaId)).dominio);
-    const nc = await noContactar.coincidencias(c, clientId, aControlar);
+    if (!actual && cuentaId) {
+      const k = await cuentaDe(c, clientId, cuentaId);
+      aControlar.push(k.dominio);
+      nombres.push(k.nombre);
+    }
+    const nc = await noContactar.coincidencias(c, clientId, aControlar, nombres);
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);

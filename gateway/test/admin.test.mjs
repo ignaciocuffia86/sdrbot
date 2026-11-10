@@ -9,6 +9,7 @@ import * as store from '../src/store.mjs';
 import { startServer } from '../src/server.mjs';
 import { createUser } from '../src/admin/auth.mjs';
 import { startSmtp, gw, runCli, HOST, PORTS, USERS } from './helpers.mjs';
+import { xlsx } from './xlsx.mjs';
 
 let server, smtp, base;
 const ANA = 'ana@cliente.test';
@@ -655,7 +656,7 @@ test('no contactar: el cliente carga dominios y mails, el gateway la hace cumpli
   assert.equal(carga.body.data.ya_estaban, 1);
   assert.equal(carga.body.data.invalidas.length, 1);
   assert.equal(carga.body.data.invalidas[0].renglon, 4);
-  assert.deepEqual(carga.body.data.totales, { dominios: 2, emails: 1 });
+  assert.deepEqual(carga.body.data.totales, { dominios: 2, emails: 1, empresas: 0 });
 
   // Otro cliente no la ve, ni por el panel ni en la base.
   const otroCli = await usuarioDeOtroCliente();
@@ -749,4 +750,107 @@ test('monitor y WhatsApp en el panel: canales con su modo, lo de hoy y las regla
   const res = (await cli.call('GET', '/clients/adm-b/resumen')).body.data;
   assert.equal(res.whatsapp.activo, true);
   assert.equal(res.whatsapp.horario, 'de 9 a 21 h, todos los días');
+});
+
+test('carga por archivo: el cliente sube su Excel, ve qué va a pasar y lo carga en no contactar; el gateway lo hace cumplir por nombre', async () => {
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  const sdr = await import('../src/sdr/store.mjs');
+  const correo = await import('../src/sdr/correo.mjs');
+  const meta = { bot: 'prospector', tarea: 'diaria' };
+  // Una cuenta que el bot ya trabajaba, con su persona, antes de que el cliente la excluya por nombre.
+  const ortiz = (await sdr.guardarCuenta('adm-b', { nombre: 'Ortiz y Cía. Ltda.', dominio: 'ortiz-hermanos.test' }, meta)).cuenta;
+  await sdr.guardarProspecto('adm-b', { nombre: 'Olga', email: 'olga@ortiz-hermanos.test', cuenta_id: ortiz.id }, meta);
+  await correo.controlarDestinatarios('adm-b', ['olga@ortiz-hermanos.test'], 'send');
+
+  const archivo = { nombre: 'referidos.xlsx', contenido_base64: xlsx({ Referidos: [
+    ['Razón social', 'Sitio web', 'Uso', 'Observaciones', 'Correo'],
+    ['Agrosuper S.A.', 'https://www.agrosuper.test/', 'cliente', '', 'juan@gmail.test'],
+    ['ORTIZ', '', 'referido', 'Lo conoce Alberto', ''],
+    ['Modelo SpA', 'modelo.test', 'semilla', '', ''],
+    ['Para después', 'despues.test', 'prospectar', '', ''],
+    ['Rota', 'no es un sitio', '', '', ''],
+  ] }).toString('base64') };
+  const previa = await cli.call('POST', '/clients/adm-b/cargas/previa', { archivo });
+  assert.equal(previa.status, 200, JSON.stringify(previa.body));
+  const p = previa.body.data;
+  assert.deepEqual(p.mapeo, { empresa: 'Razón social', dominio: 'Sitio web', uso: 'Uso', motivo: 'Observaciones', contacto_email: 'Correo' });
+  assert.ok(!p.campos.some((c) => c.clave === 'rut'), 'el cliente no ve los campos de las semillas');
+  assert.deepEqual(p.resumen.no_contactar, { nuevas: 4, ya_estaban: 0, dominios: 1, empresas: 2, mails: 1 });
+  assert.equal(p.resumen.salteadas, 2);
+  assert.deepEqual(p.muestra.salteadas.map((x) => x.motivo), ['las semillas las carga Biguá', 'prospectar llega en la etapa 2: esta fila no se carga']);
+  assert.equal(p.resumen.invalidas, 1);
+  assert.equal(p.muestra.invalidas[0].renglon, 6);
+  const fila = (v) => p.muestra.no_contactar.find((x) => x.valor === v);
+  assert.equal(fila('agrosuper').tipo, 'empresa');
+  assert.equal(fila('agrosuper').motivo, 'cliente');
+  assert.equal(fila('ortiz').motivo, 'Lo conoce Alberto');
+  // La vista previa no escribe nada.
+  assert.equal((await store.asOwner((c) => c.query(`select count(*)::int as n from sdr.no_contactar where client_id = 'adm-b' and tipo = 'empresa'`))).rows[0].n, 0);
+
+  assert.equal((await cli.call('POST', '/clients/adm-b/cargas/previa', { archivo, uso_defecto: 'semilla' })).status, 403, 'semillas sólo Biguá');
+  assert.equal((await cli.call('POST', '/clients/adm-b/cargas', { archivo })).status, 400, 'sin confirmar no se carga');
+  const ok = await cli.call('POST', '/clients/adm-b/cargas', { archivo, confirmar: true });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(ok.body.data.agregadas, 4);
+  assert.equal(ok.body.data.semillas, 0);
+  assert.equal(ok.body.data.totales.empresas, 2);
+  const lote = (await cli.call('GET', '/clients/adm-b/cargas')).body.data.cargas[0];
+  assert.equal(lote.archivo, 'referidos.xlsx');
+  assert.equal(lote.por_email, 'ajustes@cliente-b.test');
+  assert.equal(lote.resumen.no_contactar.nuevas, 4);
+  const enLista = (await store.asOwner((c) => c.query(`select valor, tipo, lote_id from sdr.no_contactar where client_id = 'adm-b' and lote_id is not null order by valor`))).rows;
+  assert.deepEqual(enLista.map((x) => `${x.tipo}:${x.valor}`), ['empresa:agrosuper', 'dominio:agrosuper.test', 'email:juan@gmail.test', 'empresa:ortiz']);
+  assert.ok(enLista.every((x) => x.lote_id === lote.id));
+  // Otra vez el mismo archivo: ya estaban.
+  const otraVez = await cli.call('POST', '/clients/adm-b/cargas/previa', { archivo });
+  assert.deepEqual(otraVez.body.data.resumen.no_contactar, { nuevas: 0, ya_estaban: 4, dominios: 0, empresas: 0, mails: 0 });
+
+  // El gateway lo hace cumplir por nombre: una cuenta nueva, una persona nueva y el mail a quien ya estaba.
+  const nueva = await sdr.guardarCuenta('adm-b', { nombre: 'AGROSUPER', pais: 'Chile' }, meta);
+  assert.equal(nueva.cuenta.estado, 'excluida');
+  assert.match(nueva.cuenta.estado_motivo, /empresa «agrosuper»: cliente/);
+  await assert.rejects(sdr.guardarProspecto('adm-b', { nombre: 'Otra', email: 'otra@ortiz-hermanos.test', cuenta_id: ortiz.id }, meta), /no contactar/);
+  await assert.rejects(correo.controlarDestinatarios('adm-b', ['olga@ortiz-hermanos.test'], 'send'),
+    (e) => e.code === 'no_contactar' && /Lo conoce Alberto/.test(e.message));
+  const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.vista_previa;
+  assert.match(vista, /más 2 empresa\(s\) por nombre/);
+
+  // Otro cliente no ve las cargas.
+  const otroCli = await usuarioDeOtroCliente();
+  assert.equal((await otroCli.call('GET', '/clients/adm-b/cargas')).status, 404);
+  assert.equal((await otroCli.call('POST', '/clients/adm-b/cargas/previa', { archivo })).status, 404);
+  assert.equal((await store.asRole('mailgw_portal', 'adm-a', (c) => c.query(`select * from sdr.lote_carga`))).rows.length, 0);
+  const act = (await ctx.bigua.call('GET', '/clients/adm-b/activity')).body.data.activity;
+  assert.ok(act.some((a) => a.op === 'admin.sdr.carga'));
+});
+
+test('carga por archivo: Biguá carga semillas al registro, excluidas y con su perfil; un nombre que no alcanza no entra', async () => {
+  const csv = 'Empresa;Web;País;Rubro;Empleados;RUT;Notas;Región\nCopefruit S.A.;copefruit.test;Chile;agro;1500;76.123.456-7;exporta cerezas;Maule\n' +
+    'Copefruit;copefruit.test;Chile;agro;;;;\nS.A.;;;;;;;\nOrtiz;;Chile;alimentos;;;;\n';
+  const archivo = { nombre: 'semillas.csv', contenido_base64: Buffer.from(csv, 'utf8').toString('base64') };
+  const previa = await ctx.bigua.call('POST', '/clients/adm-b/cargas/previa', { archivo, uso_defecto: 'semilla' });
+  assert.equal(previa.status, 200, JSON.stringify(previa.body));
+  const p = previa.body.data;
+  assert.equal(p.mapeo.rut, 'RUT');
+  assert.equal(p.mapeo.nota, 'Notas');
+  assert.equal(p.resumen.semillas.nuevas, 1, 'la fila repetida cuenta una vez');
+  assert.equal(p.resumen.semillas.ya_estaban, 1, 'Ortiz ya está en el registro');
+  assert.deepEqual(p.muestra.invalidas, [{ renglon: 4, motivo: 'el nombre «S.A.» no alcanza para reconocer la empresa' }]);
+  const r = await ctx.bigua.call('POST', '/clients/adm-b/cargas', { archivo, uso_defecto: 'semilla', confirmar: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { rows } = await store.asOwner((c) => c.query(
+    `select nombre, dominio, pais, vertical, tamano, estado, origen, uso, datos_origen from sdr.cuenta where client_id = 'adm-b' and uso = 'semilla' order by nombre`));
+  const cope = rows.find((x) => x.dominio === 'copefruit.test');
+  assert.equal(cope.estado, 'excluida');
+  assert.equal(cope.origen, 'archivo');
+  assert.equal(cope.vertical, 'agro');
+  assert.equal(cope.tamano, '1500');
+  assert.deepEqual(cope.datos_origen, { rut: '76.123.456-7', nota: 'exporta cerezas', columnas: { 'Región': 'Maule' } });
+  assert.equal(rows.length, 1, 'ni «S.A.» ni la repetida entran');
+  assert.equal(r.body.data.semillas, 1);
+  // Si el bot la encuentra después, es la misma cuenta y sigue excluida: a una semilla no se le escribe.
+  const sdr = await import('../src/sdr/store.mjs');
+  const misma = await sdr.guardarCuenta('adm-b', { nombre: 'Copefruit', dominio: 'copefruit.test' }, { bot: 'prospector', tarea: 'diaria' });
+  assert.equal(misma.creada, false);
+  assert.equal(misma.cuenta.estado, 'excluida');
 });

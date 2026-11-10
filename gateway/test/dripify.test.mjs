@@ -547,3 +547,14 @@ test('no contactar: quien entra a la lista ya cargado en Dripify sale de la camp
   assert.equal(r.status, 409);
   assert.match(r.error.message, /no contactar/);
 });
+
+test('no contactar por nombre: una empresa cargada sin dominio también frena a su gente en Dripify', async () => {
+  const k = (await ok(tok.c, 'registro_guardar_cuenta', { nombre: 'Ivana Foods S.A.', dominio: 'ivanafoods.test', ...META })).cuenta;
+  const ivi = (await ok(tok.c, 'registro_guardar_prospecto', {
+    nombre: 'Ivi', email: 'ivi@ivanafoods.test', cuenta_id: k.id, linkedin_url: 'https://www.linkedin.com/in/ivi-ops/', ...META })).prospecto;
+  await ok(tok.c, 'dripify_cargar', { prospectos: [{ prospecto_id: ivi.id, ...textos('Ivi') }], idempotency_key: 'carga-ivi', ...META });
+  await sql(`insert into sdr.no_contactar (client_id, valor, tipo, motivo) values ($1, sdr.norm_empresa('IVANA FOODS'), 'empresa', 'referido')`, [C]);
+  const f = await dripify.frenarPendientes(C);
+  assert.deepEqual(f.filter((x) => x.frenado).map((x) => x.prospecto_id), [ivi.id]);
+  assert.ok(mock.s.blacklist.has(mock.s.leads.get('ivi-ops').id));
+});

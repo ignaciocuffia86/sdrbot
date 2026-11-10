@@ -340,7 +340,12 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
       throw new GatewayError('destinatario_suprimido',
         `No se le escribe más a ${sup.map((s) => `${s.email} (${s.motivo})`).join(', ')}: está en la supresión del cliente.`, 409);
     }
-    const nc = await noContactar.coincidencias(c, clientId, emails);
+    // Una empresa de la lista cargada por nombre (sin dominio) no se ve en la dirección: se mira la
+    // cuenta del prospecto del mail y la de quien tenga cada destinatario en el registro.
+    const { rows: cuentas } = await c.query(
+      `select distinct k.nombre from sdr.prospecto p join sdr.cuenta k on k.client_id = p.client_id and k.id = p.cuenta_id
+        where p.client_id = $1 and (p.id = $2 or p.email = any($3))`, [clientId, prospectoId ?? null, emails]);
+    const nc = await noContactar.coincidencias(c, clientId, emails, cuentas.map((k) => k.nombre));
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `El cliente pidió no escribirle a ${noContactar.describir(nc)}: está en su lista de no contactar.`, 409);

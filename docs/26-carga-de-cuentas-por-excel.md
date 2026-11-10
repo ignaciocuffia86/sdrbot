@@ -1,6 +1,6 @@
 # Carga de cuentas y contactos por Excel
 
-Estado: **diseño, 10/11/2026.** Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+Estado: **etapa 1 construida (10/11/2026)**; las etapas 2 y 3, diseño. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
@@ -248,9 +248,36 @@ días).
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla` | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
+| **1** · **hecha el 10/11** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla` | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
 | **2** | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
 | **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 
 La etapa 1 es lo que hace falta antes del kickoff con Alberto; la 2, antes de que salga su primer
 mail.
+
+### 9.1 Lo construido en la etapa 1 y en qué se aparta de lo de arriba
+
+- **Migración `017_carga_de_cuentas.sql`:** `sdr.norm_empresa` (minúsculas, sin acentos ni signos, sin la
+  forma societaria: «Agrosuper S.A.» = «AGROSUPER»), `sdr.lote_carga`, tipo `empresa` en
+  `sdr.no_contactar` (con `lote_id`) y en `sdr.cuenta` las columnas `origen`, `uso`, `lote_id` y
+  `datos_origen`. No hizo falta `nombre_norm` ni `prioridad` (esa llega con la etapa 2).
+- **La lista hace cumplir el nombre** en todos lados: guardar cuentas y personas, mails (por la cuenta
+  del prospecto y de cada destinatario), cargas y reanudación en Dripify, WhatsApp y el freno de Dripify
+  del reloj (§4.4).
+- **Una fila `no_contactar` suma todo lo que trae:** el dominio, el nombre de la empresa y el mail del
+  contacto si es de otro dominio (un referido con Gmail). Un nombre que normalizado queda en menos de
+  tres letras se rechaza por esa fila.
+- **Vista previa sin estado:** el panel manda el archivo dos veces (previa y «Cargar») y el gateway lo
+  vuelve a leer; no hay un id de previa que venza.
+- **Tope de 600 KB** (no 5 MB): el archivo viaja en base64 dentro del JSON del panel, cuyo tope es
+  1 MB. Alcanza para las 2.000 filas.
+- **Sin dependencia nueva para el Excel:** el `.xlsx` se lee con `zlib` de Node (tope de 40 MB
+  descomprimidos por parte, valores guardados de las celdas, nunca fórmulas). El `.xls` viejo se
+  rechaza con un mensaje para guardarlo como `.xlsx` o CSV.
+- **Semillas, sólo Biguá:** el rol del panel del cliente no escribe el registro. Al cliente las filas
+  semilla le aparecen como «las carga Biguá».
+- **Todavía no:** la resolución por `resolver_cuentas` de ASCI (§4.2.2; el gateway no habla con ASCI,
+  así que una empresa sin sitio entra por nombre), deshacer un lote e informe descargable (etapa 3), y
+  la carga de contactos de las filas `prospectar` (etapa 2).
+- **Pruebas:** `test/carga.test.mjs` (lectura de CSV y Excel, mapeo, filas) y dos pruebas de punta a
+  punta en `test/admin.test.mjs` (cliente y Biguá), más el freno por nombre en `test/dripify.test.mjs`.

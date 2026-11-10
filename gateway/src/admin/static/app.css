@@ -228,3 +228,5 @@ td.num { font-variant-numeric: tabular-nums; }
 .efectivos dt { font-size: .85rem; color: var(--muted); }
 .efectivos dd { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .m0 { margin: 0; }
+
+.carga-mapeo { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; }

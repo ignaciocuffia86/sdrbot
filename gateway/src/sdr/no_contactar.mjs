@@ -44,28 +44,45 @@ export function leerCsv(texto) {
   return { filas, invalidas };
 }
 
-// Qué valores (mails o dominios) chocan con la lista. Un dominio de la lista cubre también sus
-// subdominios: «empresa.com» frena a «ana@ventas.empresa.com».
-export async function coincidencias(c, clientId, valores) {
+// Qué valores (mails o dominios) y qué nombres de empresa chocan con la lista. Un dominio de la
+// lista cubre también sus subdominios: «empresa.com» frena a «ana@ventas.empresa.com». Una empresa
+// de la lista (tipo «empresa», cargada sin dominio) se compara por nombre normalizado
+// (sdr.norm_empresa): «Agrosuper S.A.» choca con «AGROSUPER».
+export async function coincidencias(c, clientId, valores, nombres = []) {
   const lista = [...new Set((valores ?? []).filter(Boolean).map((x) => String(x).trim().toLowerCase()))];
-  if (!lista.length) return [];
+  const noms = [...new Set((nombres ?? []).filter(Boolean).map((x) => String(x).trim()).filter(Boolean))];
+  if (!lista.length && !noms.length) return [];
   const { rows } = await c.query(
     `with x(v, d) as (
        select v, case when position('@' in v) > 0 then split_part(v, '@', 2) else v end from unnest($2::text[]) as v)
      select x.v as para, n.valor, n.tipo, n.motivo
        from x join sdr.no_contactar n on n.client_id = $1
         and ((n.tipo = 'email' and n.valor = x.v)
-          or (n.tipo = 'dominio' and (x.d = n.valor or x.d like '%.' || n.valor)))`,
-    [clientId, lista]);
+          or (n.tipo = 'dominio' and (x.d = n.valor or x.d like '%.' || n.valor)))
+     union all
+     select nom as para, n.valor, n.tipo, n.motivo
+       from unnest($3::text[]) as nom
+       join sdr.no_contactar n on n.client_id = $1 and n.tipo = 'empresa' and n.valor = sdr.norm_empresa(nom)`,
+    [clientId, lista, noms]);
   return rows;
 }
 
-export const describir = (rows) => [...new Set(rows.map((r) => `${r.para} (${r.tipo === 'dominio' ? `dominio ${r.valor}` : 'mail'}` +
+// Lo de una persona del registro: su mail, y el dominio y el nombre de su cuenta.
+export async function deProspecto(c, clientId, p) {
+  const k = p.cuenta_id
+    ? (await c.query(`select dominio, nombre from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]
+    : null;
+  return coincidencias(c, clientId, [p.email, k?.dominio], [k?.nombre]);
+}
+
+const COMO = { dominio: (v) => `dominio ${v}`, email: () => 'mail', empresa: (v) => `empresa «${v}»` };
+export const describir = (rows) => [...new Set(rows.map((r) => `${r.para} (${(COMO[r.tipo] ?? COMO.email)(r.valor)}` +
   `${r.motivo ? `: ${r.motivo}` : ''})`))].join(', ');
 
 export async function contar(c, clientId) {
   const { rows } = await c.query(
     `select count(*) filter (where tipo = 'dominio')::int as dominios, count(*) filter (where tipo = 'email')::int as emails
-       from sdr.no_contactar where client_id = $1`, [clientId]);
-  return rows[0];
+       from sdr.no_contactar where client_id = $1 and tipo <> 'empresa'`, [clientId]);
+  const { rows: e } = await c.query(`select count(*)::int as n from sdr.no_contactar where client_id = $1 and tipo = 'empresa'`, [clientId]);
+  return { ...rows[0], empresas: e[0].n };
 }
