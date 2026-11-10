@@ -79,6 +79,7 @@ route('POST', '/clients', S.clienteCrear);
 route('GET', '/clients/:client', S.clienteVer);
 route('GET', '/clients/:client/activity', S.actividad);
 route('POST', '/clients/:client/mailboxes', S.buzonCrear);
+route('POST', '/clients/:client/mailboxes/conector', S.buzonConectorCrear);
 route('PATCH', '/clients/:client/mailboxes/:email', S.buzonEditar);
 route('POST', '/clients/:client/mailboxes/:email/password', S.buzonContrasena);
 route('POST', '/clients/:client/mailboxes/:email/status', S.buzonEstado);

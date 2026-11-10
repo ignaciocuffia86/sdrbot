@@ -219,6 +219,16 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
+## Buzones por conector (Google y Microsoft, `docs/08` §7 y §13)
+
+Un buzón de Google Workspace o Microsoft 365 sin contraseña de aplicación va por el conector de Gmail u Outlook de la cuenta de Grok del cliente (migración `017_buzon_por_conector`). No tiene credencial ni servidores: el bot manda y lee por el conector, y el gateway sigue decidiendo.
+
+- **Alta:** sólo Biguá, en Canales → Correo → «Buzón por conector» (`POST /admin/api/clients/:client/mailboxes/conector`): proveedor, cupo de 1 a 40 (10 por defecto), mails a calibrar (5) y modo (`borradores`, por defecto, o `envio`).
+- **Mandar:** `correo_conector_reservar` (los mismos controles que `send`; para responder, `correo` con el id de `correo_revisar`) → el bot manda por el conector exactamente lo reservado → `correo_conector_confirmar` con el permiso y el `Message-ID`. En modo borradores no confirma: lo confirma la conciliación.
+- **Leer:** el bot pasa lo que leyó por el conector a `correo_conector_recibido`; queda en la memoria del correo y sale en `correo_revisar`.
+- **Conciliar:** `correo_conector_conciliar` una vez por día con lo enviado: confirma, libera lo que no salió y **pausa el buzón** si salió algo sin reserva.
+- `send`, `reply`, «Probar» y la contraseña rechazan estos buzones (`buzon_por_conector`), y el reloj no los lee.
+
 ## Conectar Claude (MCP del panel)
 
 Para personas, no para los bots (`docs/24`): en claude.ai, Configuración → Conectores → agregar un conector con `https://sdrbot.bigua.lat/mcp/panel`, y Conectar. Se abre una página del gateway donde la persona entra con su usuario y su contraseña del panel y autoriza. En Claude Code: `claude mcp add --transport http sdrbot https://sdrbot.bigua.lat/mcp/panel`. Un usuario de un cliente ve sólo su cliente; un operador de Biguá, todos. Las conexiones se ven y se desconectan en el panel, en «Conexiones».

@@ -6,6 +6,8 @@
 2. Para cada una, mandá **exactamente** `decision_contenido` con `responder`: `mailbox` =
    `buzon`, `folder` y `uid` de `datos` (`carpeta` y `uid`), `text` = `texto`, `aprobacion_id`,
    `prospecto_id`, `bot`, `tarea`, `corrida` e `idempotency_key` = `<id del prospecto>:respuesta-<n>`.
+   Si el `buzon` va por conector: `correo_conector_reservar` con `correo` (el id del correo de
+   `datos`), `text` y los mismos datos; después el envío por el conector y la confirmación.
    Si `canal` es `linkedin`: `dripify_responder` con `prospecto_id`, `texto`, `aprobacion_id` e
    `idempotency_key` = `<id del prospecto>:linkedin-<n>`.
 3. Dejá el próximo paso (por ejemplo `proximo_paso: "esperar confirmación de la reunión"`,
@@ -16,17 +18,25 @@
 
 > correo_revisar, y la historia de cada persona antes de decidir.
 
-1. `correo_revisar()`: lee los buzones y te da lo que espera, primero las respuestas.
-2. `linkedin_revisar()`: las respuestas por LinkedIn. Para cada una, `dripify_conversacion` para
+1. **Buzones por conector** (`via: "conector"` en `buzones`): por el conector, los mails que
+   llegaron a cada uno en las últimas 24 horas, y pasalos todos a `correo_conector_recibido`
+   (con su id del conector, remitente, asunto, texto, fecha y, si los muestra, `Message-ID`,
+   `In-Reply-To` y `References`; marcá los fuera de oficina con `automatica` y los rebotes con
+   `rebote`). No filtres vos: el gateway guarda sólo lo que es del SDR y no repite lo que ya tiene.
+   Si no hay buzones por conector, salteá este paso.
+2. `correo_revisar()`: lee los buzones y te da lo que espera, primero las respuestas.
+3. `linkedin_revisar()`: las respuestas por LinkedIn. Para cada una, `dripify_conversacion` para
    leer la conversación entera antes de decidir.
-3. Para cada ítem con prospecto, `registro_historia(prospecto_id)`: qué le mandamos, qué pasó
+4. Para cada ítem con prospecto, `registro_historia(prospecto_id)`: qué le mandamos, qué pasó
    antes. Si no tiene prospecto (tipo `de_cuenta`), mirá la cuenta y buscá a la persona con
    `registro_buscar(email)`.
    Leé la sección de **su campaña** (`campana-<clave>`, según el `campana_id` del prospecto, con
    la clave de «Campañas de este cliente»): de ahí salen qué es positivo, la propuesta, las
    objeciones, quién toma a los interesados y el link de agenda. Una respuesta se contesta aunque
    la campaña esté pausada o terminada, desde el buzón que la recibió.
-4. Si quedan más que los que trae (`total`), hacé esta tanda y dejá el resto para la próxima.
+5. Si quedan más que los que trae (`total`), hacé esta tanda y dejá el resto para la próxima.
+6. Un ítem de un buzón por conector se contesta con la reserva (sección común «Buzones por
+   conector»), pasando `correo` con su id, no con `responder`.
 
 ## Decidir qué sigue
 

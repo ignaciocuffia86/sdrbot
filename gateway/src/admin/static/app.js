@@ -1302,24 +1302,31 @@ async function adminView({ clientId, data, base, reload }, sub) {
 
 function mailboxesView(data, reload) {
   const cid = data.client.id;
-  const add = h('button', { class: 'primary', onclick: () => mailboxDialog(cid, null, reload) }, 'Agregar buzón');
+  const add = h('div', { class: 'actions' },
+    h('button', { class: 'primary', onclick: () => mailboxDialog(cid, null, reload) }, 'Agregar buzón'),
+    data.can_manage_access ? h('button', { onclick: () => conectorDialog(cid, null, reload) }, 'Buzón por conector (Google / Microsoft)') : null);
   if (!data.mailboxes.length) {
     return h('div', {}, h('div', { class: 'card empty' }, h('p', {}, 'Este cliente todavía no tiene buzones.'), add));
   }
+  const PROV = { google: 'Google Workspace', microsoft: 'Microsoft 365' };
   const rows = data.mailboxes.map((m) => h('tr', {},
     h('td', {}, h('strong', {}, m.email), m.display_name ? h('div', { class: 'small muted' }, m.display_name) : null,
       h('div', { class: 'small muted' }, m.firma ? 'Firma propia' : 'Firma por defecto (Empresa)')),
-    h('td', { class: 'small' },
-      h('div', {}, `IMAP ${m.imap_host}:${m.imap_port} (${m.imap_security})`),
-      h('div', {}, `SMTP ${m.smtp_host}:${m.smtp_port} (${m.smtp_security})`)),
+    m.auth === 'conector'
+      ? h('td', { class: 'small' }, h('div', {}, h('span', { class: 'badge b-warn' }, 'por conector'), ` ${PROV[m.provider] ?? m.provider}`,
+          m.conector_modo === 'borradores' ? h('span', { class: 'muted' }, ' · sólo borradores') : null),
+        h('div', { class: 'muted' }, 'Lo maneja el conector de Grok: se manda con reserva y se concilia cada día.'))
+      : h('td', { class: 'small' },
+        h('div', {}, `IMAP ${m.imap_host}:${m.imap_port} (${m.imap_security})`),
+        h('div', {}, `SMTP ${m.smtp_host}:${m.smtp_port} (${m.smtp_security})`)),
     h('td', {}, statusBadge(m.status),
       m.last_error ? h('div', { class: 'small err' }, m.last_error) : null,
       h('div', { class: 'small muted' }, `último OK: ${fmtDate(m.last_ok_at)}`)),
     h('td', { class: 'small' }, `${m.sends_today} / ${m.daily_send_cap}`),
     h('td', {}, h('div', { class: 'actions' },
-      h('button', { class: 'sm', onclick: (ev) => checkMailbox(ev.currentTarget, cid, m, reload) }, 'Probar'),
-      h('button', { class: 'sm', onclick: () => mailboxDialog(cid, m, reload) }, 'Editar'),
-      h('button', { class: 'sm', onclick: () => passwordDialog(cid, m, reload) }, 'Contraseña'),
+      m.auth === 'conector' ? null : h('button', { class: 'sm', onclick: (ev) => checkMailbox(ev.currentTarget, cid, m, reload) }, 'Probar'),
+      h('button', { class: 'sm', onclick: () => (m.auth === 'conector' ? conectorDialog(cid, m, reload) : mailboxDialog(cid, m, reload)) }, 'Editar'),
+      m.auth === 'conector' ? null : h('button', { class: 'sm', onclick: () => passwordDialog(cid, m, reload) }, 'Contraseña'),
       m.status === 'paused' || m.status === 'auth_error'
         ? (m.status === 'paused' ? h('button', { class: 'sm', onclick: (ev) => setStatus(ev.currentTarget, cid, m, 'active', reload) }, 'Reactivar') : null)
         : h('button', { class: 'sm', onclick: (ev) => setStatus(ev.currentTarget, cid, m, 'paused', reload) }, 'Pausar'),
@@ -1393,6 +1400,62 @@ function mailboxDialog(clientId, m, reload) {
         toast(`Buzón ${payload.email} agregado. Probá la conexión.`);
       } else {
         if (!payload.username) delete payload.username;
+        await api('PATCH', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}`, payload);
+        toast('Cambios guardados.');
+      }
+      reload();
+      return true;
+    },
+  });
+}
+
+// Un buzón de Google o Microsoft conectado en la cuenta de Grok del cliente (docs/08 §7): sin
+// contraseña ni servidores. El bot reserva cada envío acá y lo manda por el conector.
+function conectorDialog(clientId, m, reload) {
+  const isNew = !m;
+  const v = m ?? { provider: 'google', timezone: 'America/Argentina/Buenos_Aires', daily_send_cap: 10, conector_modo: 'borradores' };
+  const body = h('div', {},
+    h('p', { class: 'muted small' }, 'Antes, conectá el buzón en la cuenta de Grok del cliente (conector de Gmail u Outlook). ',
+      'El gateway no ve la contraseña ni manda: cuenta cada envío, lo autoriza y, al final del día, concilia lo que salió; ',
+      'si salió algo sin autorizar, pausa el buzón.'),
+    h('div', { class: 'cols2' },
+      field('Email del buzón', h('input', { name: 'email', type: 'email', required: isNew, disabled: !isNew, value: v.email ?? '' })),
+      field('Proveedor', h('select', { name: 'provider', disabled: !isNew },
+        h('option', { value: 'google', selected: v.provider === 'google' }, 'Google Workspace'),
+        h('option', { value: 'microsoft', selected: v.provider === 'microsoft' }, 'Microsoft 365')))),
+    h('div', { class: 'cols2' },
+      field('Nombre que ve el destinatario', h('input', { name: 'display_name', value: v.display_name ?? '', placeholder: 'Ana Pérez' })),
+      field('Zona horaria', h('input', { name: 'timezone', required: true, value: v.timezone }))),
+    field('Modo', h('select', { name: 'conector_modo' },
+      h('option', { value: 'borradores', selected: v.conector_modo === 'borradores' }, 'Sólo borradores: el bot deja el borrador y lo manda una persona del cliente'),
+      h('option', { value: 'envio', selected: v.conector_modo === 'envio' }, 'Envío: el bot manda con reserva')),
+      'Conviene arrancar en borradores el primer día.'),
+    h('div', { class: 'cols2' },
+      field('Tope de envíos por día', h('input', { name: 'daily_send_cap', type: 'number', min: 1, max: 40, required: true, value: v.daily_send_cap }),
+        'Entre 1 y 40. Conviene arrancar bajo.'),
+      field('Mails a calibrar', h('input', { name: 'calibracion', type: 'number', min: 0, max: 50, required: true, value: v.calibracion ?? 5 }),
+        'Los primeros mails nuevos de este buzón salen con aprobación, aunque la campaña ya haya calibrado.')),
+    field('Firma', h('textarea', { name: 'firma', rows: 3, maxlength: 600 }, v.firma ?? ''),
+      'Vacía: la firma por defecto de Empresa.'));
+  openDialog(isNew ? 'Buzón por conector' : `Editar ${m.email}`, body, {
+    submitLabel: isNew ? 'Agregar' : 'Guardar',
+    submit: async (fd) => {
+      const payload = {
+        display_name: fd.get('display_name').trim() || undefined,
+        timezone: fd.get('timezone').trim(),
+        daily_send_cap: Number(fd.get('daily_send_cap')),
+        calibracion: Number(fd.get('calibracion')),
+        conector_modo: fd.get('conector_modo'),
+        firma: String(fd.get('firma') ?? '').trim() || (isNew ? undefined : null),
+      };
+      if (isNew) {
+        payload.email = fd.get('email').trim();
+        payload.provider = fd.get('provider');
+        for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
+        await api('POST', `/clients/${enc(clientId)}/mailboxes/conector`, payload);
+        toast(`Buzón ${payload.email} agregado: va por el conector de Grok.`);
+      } else {
+        if (payload.display_name === undefined) payload.display_name = null;
         await api('PATCH', `/clients/${enc(clientId)}/mailboxes/${enc(m.email)}`, payload);
         toast('Cambios guardados.');
       }

@@ -85,6 +85,16 @@ Lo que revisa Biguá en la pestaña **Canales** → **Correo**:
 
 Un buzón **bloqueado por contraseña** (tres fallas seguidas) se reactiva cargando la correcta.
 
+**Buzones de Google Workspace o Microsoft 365 sin contraseña de aplicación** (`08` §6 y §7): van
+por el conector de Grok. Los da de alta Biguá en **Canales** → **Correo** → «Buzón por conector»
+(email, proveedor, cupo de 1 a 40, mails a calibrar y modo). Después:
+
+- el dueño del buzón lo conecta en la cuenta de Grok del cliente (conector de Gmail u Outlook);
+- arranca en **sólo borradores**: el bot deja cada mail como borrador y una persona del cliente lo
+  manda. Con unos días de conciliación sin sorpresas, Biguá lo pasa a **envío**;
+- si la conciliación del resumen encuentra un mail sin reserva, el buzón queda en pausa con el
+  motivo en el panel: se revisa con el cliente antes de reactivarlo.
+
 ## 4. Dominio: SPF, DKIM y DMARC
 
 Pestaña **Canales**, debajo de los buzones → **Verificar**. Cada aviso trae «Cómo arreglarlo» con el registro listo para

@@ -15,6 +15,7 @@ import { sendRaw, verifySmtp } from './mail/smtp.mjs';
 import { SDR_OPS } from './sdr/ops.mjs';
 import * as sdr from './sdr/store.mjs';
 import { controlarDestinatarios } from './sdr/correo.mjs';
+import * as conector from './sdr/conector.mjs';
 
 // ---------------------------------------------------------------- esquemas comunes
 
@@ -51,10 +52,16 @@ const dayIn = (tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'nu
 const publicAccount = (a, sendsToday) => ({
   email: a.email,
   display_name: a.display_name,
+  // gateway: se manda con enviar y se lee con correo_revisar. conector: por el conector de Grok,
+  // con correo_conector_reservar y correo_conector_confirmar (docs/08 §7).
+  via: a.auth === 'conector' ? 'conector' : 'gateway',
+  proveedor: a.provider ?? 'imap',
+  // envio: el bot manda y confirma; borradores: deja el borrador y lo manda una persona.
+  ...(a.auth === 'conector' ? { modo: a.conector_modo ?? 'borradores' } : {}),
   firma: a.firma ?? null,
   status: a.status,
-  imap: `${a.imap_host}:${a.imap_port} (${a.imap_security})`,
-  smtp: `${a.smtp_host}:${a.smtp_port} (${a.smtp_security})`,
+  imap: a.imap_host ? `${a.imap_host}:${a.imap_port} (${a.imap_security})` : null,
+  smtp: a.smtp_host ? `${a.smtp_host}:${a.smtp_port} (${a.smtp_security})` : null,
   timezone: a.timezone,
   daily_send_cap: a.daily_send_cap,
   sends_today: sendsToday,
@@ -65,6 +72,8 @@ const publicAccount = (a, sendsToday) => ({
 async function loadAccount(ctx, email) {
   const account = await store.getAccount(ctx.clientId, email);
   if (!account) throw errors.mailboxNotFound(email);
+  // Un buzón por conector de Grok no tiene IMAP ni SMTP en el gateway (docs/08 §7).
+  if (account.auth === 'conector') throw conector.errorsConector.esConector(account.email);
   if (account.status === 'auth_error') throw errors.mailboxBlocked(account.email);
   if (account.status === 'paused') throw errors.mailboxPaused(account.email);
   const password = decryptSecret(account.secret_enc, aadFor(account.client_id, account.email));
@@ -371,6 +380,84 @@ const MAIL_OPS = [
     schema: obj({ mailbox, path: { type: 'string', minLength: 1, maxLength: 200 } }, ['mailbox', 'path']),
     handler: (ctx, a) => onMailbox(ctx, a.mailbox, (account, password) =>
       withImap(account, password, (c) => createFolder(c, a.path))),
+  },
+  // ---------------------------------------------------------- buzones por conector (docs/08 §7)
+  {
+    op: 'correo_conector_reservar', mcp: 'correo_conector_reservar', scope: 'send',
+    description: 'Antes de mandar un mail por el conector de Grok (Gmail u Outlook) desde un buzón «conector» de «buzones». ' +
+      'Corre los mismos controles que enviar (cupo, idempotencia, campaña y buzón de la campaña, calibración y aprobación, ' +
+      'supresiones, no contactar, links permitidos, prospecto que ya respondió) y, si pasa, devuelve un permiso con el mail ' +
+      'exacto que se puede mandar. Para responder un correo leído por el conector, pasá correo (su id en correo_revisar). ' +
+      'Sin permiso no se manda nada por el conector.',
+    schema: obj({
+      mailbox, to: addressList, cc: addressList, bcc: addressList,
+      subject: { type: 'string', maxLength: 500 }, text,
+      correo: { type: 'integer', minimum: 1, description: 'El id del correo (de correo_revisar) al que se responde.' },
+      idempotency_key: idem, ...sdrSend,
+    }, ['mailbox', 'text', 'idempotency_key']),
+    handler: (ctx, a) => conector.reservar(ctx, a),
+    summary: (r) => ({ permiso: r.permiso ?? null, duplicate: r.duplicate ?? false }),
+  },
+  {
+    op: 'correo_conector_confirmar', mcp: 'correo_conector_confirmar', scope: 'send',
+    description: 'Después de mandar por el conector lo que reservó correo_conector_reservar: el permiso y el Message-ID del mail ' +
+      'enviado (o el id que da el conector). Cierra la reserva y lo registra como cualquier envío (línea de tiempo, aprobación usada).',
+    schema: obj({
+      permiso: { type: 'string', pattern: '^\\d{1,18}$' },
+      message_id: { type: 'string', maxLength: 500 },
+      conector_id: { type: 'string', maxLength: 300 },
+    }, ['permiso']),
+    handler: (ctx, a) => conector.confirmar(ctx, a),
+  },
+  {
+    op: 'correo_conector_recibido', mcp: 'correo_conector_recibido', scope: 'sdr',
+    description: 'Lo que llegó a un buzón «conector» y leíste por el conector de Grok: entra a la memoria del correo como lo que ' +
+      'el gateway lee por IMAP (respuestas, automáticas, rebotes y bajas, atados al prospecto). Después atendelo con correo_revisar.',
+    schema: obj({
+      mailbox,
+      mensajes: {
+        type: 'array', minItems: 1, maxItems: 50,
+        items: obj({
+          conector_id: { type: 'string', minLength: 1, maxLength: 300 },
+          message_id: { type: 'string', maxLength: 500 },
+          de: { type: 'string', minLength: 3, maxLength: 320 },
+          de_nombre: { type: 'string', maxLength: 200 },
+          asunto: { type: 'string', maxLength: 1000 },
+          texto: { type: 'string', maxLength: 100_000 },
+          fecha: { type: 'string', maxLength: 40 },
+          in_reply_to: { type: 'string', maxLength: 500 },
+          references: { type: 'array', items: { type: 'string', maxLength: 500 }, maxItems: 50 },
+          automatica: { type: 'boolean' },
+          rebote: obj({
+            destinatarios: { type: 'array', items: { type: 'string', maxLength: 320 }, maxItems: 20 },
+            permanente: { type: 'boolean' },
+          }),
+        }, ['conector_id', 'de']),
+      },
+    }, ['mailbox', 'mensajes']),
+    handler: (ctx, a) => conector.recibido(ctx, a),
+    summary: (r) => ({ recibidos: r.recibidos, guardados: r.guardados }),
+  },
+  {
+    op: 'correo_conector_conciliar', mcp: 'correo_conector_conciliar', scope: 'send',
+    description: 'Una vez por día, por cada buzón «conector»: lo que salió por el conector ese día (de Enviados). El gateway lo ' +
+      'compara con las reservas: confirma las que quedaron sin confirmar, libera las que no salieron (días pasados) y, si algo ' +
+      'salió sin reserva o a otros destinatarios, pausa el buzón y le avisa al orquestador.',
+    schema: obj({
+      mailbox, dia: day,
+      enviados: {
+        type: 'array', maxItems: 500,
+        items: obj({
+          message_id: { type: 'string', maxLength: 500 },
+          conector_id: { type: 'string', maxLength: 300 },
+          para: { type: 'array', items: { type: 'string', maxLength: 320 }, minItems: 1, maxItems: 50 },
+          asunto: { type: 'string', maxLength: 1000 },
+          texto: { type: 'string', maxLength: 100_000 },
+        }, ['para']),
+      },
+    }, ['mailbox', 'dia', 'enviados']),
+    handler: (ctx, a) => conector.conciliar(ctx, a),
+    summary: (r) => ({ conciliados: r.conciliados, sin_reserva: r.sin_reserva.length, pausado: r.pausado }),
   },
 ];
 

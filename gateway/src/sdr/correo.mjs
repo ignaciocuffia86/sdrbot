@@ -70,6 +70,8 @@ async function procesar(c, clientId, account, uidvalidity, m) {
     });
   }
   if (m.too_large) datos.demasiado_grande = true;
+  // Un mail leído por el conector de Grok (docs/08 §7): su id en el conector, para responderlo.
+  if (m.conector_id) datos.conector_id = m.conector_id;
 
   // 1. Por el hilo: In-Reply-To / References (o el Message-ID del original que rebotó) contra lo
   //    que mandó el gateway.
@@ -182,6 +184,13 @@ async function procesar(c, clientId, account, uidvalidity, m) {
   return fila;
 }
 
+// Lo que `seguimiento` leyó por el conector de Grok entra por acá (docs/08 §7.2) y sigue el mismo
+// camino que lo que lee el reloj por IMAP. uidvalidity 'conector' y un uid derivado del id del
+// conector: la clave única de sdr.correo evita que un mensaje entre dos veces.
+export async function guardarDelConector(clientId, account, m) {
+  return asClient(clientId, (c) => procesar(c, clientId, account, 'conector', m));
+}
+
 // ---------------------------------------------------------------- un buzón
 
 async function tomarCursor(clientId, account) {
@@ -210,6 +219,8 @@ async function guardarCursor(clientId, accountId, cursor, error) {
 export async function revisarBuzon(clientId, email, { hasta } = {}) {
   const account = await store.getAccount(clientId, email);
   if (!account || account.status !== 'active') return { buzon: email, leidos: 0, guardados: 0, salteado: account?.status ?? 'no existe' };
+  // Un buzón por conector no tiene IMAP: lo lee `seguimiento` por el conector de Grok.
+  if (account.auth === 'conector') return { buzon: account.email, leidos: 0, guardados: 0, salteado: 'por conector' };
   const cur = await tomarCursor(clientId, account);
   if (!cur) return { buzon: account.email, leidos: 0, guardados: 0, salteado: 'otra lectura en curso' };
   let cursor = cur.uidvalidity ? { uidvalidity: cur.uidvalidity, last_uid: Number(cur.last_uid) } : null;
@@ -253,7 +264,7 @@ export async function revisarBuzon(clientId, email, { hasta } = {}) {
 export async function revisarCliente(clientId, { hasta } = {}) {
   const out = [];
   for (const a of await store.listAccounts(clientId)) {
-    if (a.status !== 'active') continue;
+    if (a.status !== 'active' || a.auth === 'conector') continue;
     if (hasta && Date.now() > hasta) { out.push({ buzon: a.email, leidos: 0, guardados: 0, salteado: 'sin tiempo: queda para la próxima' }); continue; }
     out.push(await revisarBuzon(clientId, a.email, { hasta }));
   }

@@ -13,6 +13,9 @@
    - `enviar` con `mailbox` = `buzon`, `to` = `destinatario`, `subject` = `asunto`,
      `text` = `texto`, `aprobacion_id`, `prospecto_id`, `bot`, `tarea`, `corrida` e
      `idempotency_key` = `<id del prospecto>:mail-1` (o el paso que corresponda);
+   - si el `buzon` va **por conector**, en lugar de `enviar`: `correo_conector_reservar` con esos
+     mismos datos, el envío por el conector y `correo_conector_confirmar` (sección común
+     «Buzones por conector»);
    - si el gateway responde `aprobacion_no_coincide`, revisá qué cambió y volvé a mandar lo
      aprobado; no pidas otra aprobación por eso;
    - dejá el próximo paso (seguimiento a 4 días hábiles);
