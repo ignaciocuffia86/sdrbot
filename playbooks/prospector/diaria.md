@@ -2,34 +2,39 @@
 
 > Qué te pidió el orquestador, y lo aprobado primero.
 
-1. En `registro_pendientes` está el pedido del orquestador (cuántas cuentas nuevas y qué
-   seguimientos). Marcalo `en_curso`.
+1. En `registro_pendientes` están los pedidos del orquestador, **uno por campaña** (su
+   `campana_id`): cuántas cuentas nuevas y qué seguimientos. Hacelos de a uno; marcá cada uno
+   `en_curso` al empezarlo. Para cada pedido, leé la sección de su campaña
+   (`reglas_manual(…, seccion: "campana-<clave>")`): de ahí salen el ICP, los cargos, la señal,
+   la ventana, la propuesta y el llamado a la acción.
 2. Si hay **aprobaciones decididas**, primero ejecutalas: seguí la tarea `ejecutar_aprobados`
    (pedí `reglas_manual(prospector, ejecutar_aprobados)`).
-3. Si no hay pedido del orquestador, hacé la tanda por defecto de «Ajustes de este cliente».
+3. Si no hay pedido del orquestador, no prospectes: avisale al orquestador.
 
 ## Buscar cuentas
 
 > Empresas que publicaron en los últimos días un aviso de lo que vende el cliente, que no estemos trabajando.
 
-La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; si no dice, **14 días**.
+Todo lo de esta sección sale de la campaña del pedido. La ventana es su «Antigüedad máxima del
+aviso»; si no dice, **14 días**.
 
 1. **Candidatas:** `avisos_recientes` con `pais` (del ICP), `dias` (la ventana), `limite` 60 y la
-   señal como dice «Señal en los avisos» de los ajustes del cliente. Si no dice, armala con la
-   oferta: quien vende capacidad por un rol (QA, datos, soporte) va con `texto` («qa | tester |
+   señal como dice «Señal en los avisos» de la campaña. Si no dice, armala con la
+   propuesta: quien vende capacidad por un rol (QA, datos, soporte) va con `texto` («qa | tester |
    testing») y `solo_titulo: true`; para una marca, `fabricante`; tecnología, `categorias`;
    modernización, `ciclos_vida: ["legado", "eol"]`. Trae empresas **con o sin cuenta resuelta**,
    ordenadas por el aviso más nuevo, sin consultoras ni staffing.
 2. **Fuera lo que ya trabajamos:** para cada candidata, `registro_buscar` por `dominio` (o por
    `nombre` si no hay dominio). Salteá las que están en contacto, excluidas o descartadas, y las en
    pausa cuya fecha no llegó.
-3. **Fuera lo que no encaja:** lo que excluyen los ajustes, y el ruido de la búsqueda por texto
+3. **Fuera lo que no encaja:** lo que excluye la campaña (sus exclusiones ya suman las de Empresa), y el ruido de la búsqueda por texto
    (un aviso que no es del rol aunque lo nombre). `industrias` y `tamano` sólo filtran a las
    empresas con cuenta resuelta (`cuenta_resuelta: true`): a las demás mirá el nombre, el aviso y,
    si hace falta, su LinkedIn.
 4. **Orden:** como viene (lo más nuevo primero). A igual fecha, las reposteadas (`reposteado`: un
    puesto que no se llena) y las que tienen más `avisos_en_ventana`.
-5. Hasta la cantidad pedida: `registro_guardar_cuenta` con nombre, dominio si lo hay, país,
+5. Hasta la cantidad pedida: `registro_guardar_cuenta` con `campana` (la clave de la campaña del
+   pedido), nombre, dominio si lo hay, país,
    vertical, tamaño, `asci_id` = `account_id` si está resuelta, **señales** con el aviso más nuevo
    (tipo `aviso`, fecha = `publicado_en`, evidencia = su `url`, resumen = su `titulo`, y si es
    reposteo) y la **tesis** en una o dos líneas: por qué ese aviso importa hoy.
@@ -59,7 +64,7 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
    Revelala (`revelar_lote`) **aunque después no traiga mail**: la URL de LinkedIn vuelve casi
    siempre, y con eso va a la campaña de LinkedIn.
 3. Guardalas como dice «A quién escribirle»: email y su calidad (`verificado` o `extrapolado`),
-   URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dicen los ajustes), a ese
+   URL de LinkedIn, cargo. Si el cliente no acepta mails extrapolados (lo dice la campaña), a ese
    no le va mail (sí LinkedIn).
 4. Sin mail, no hay mail: guardalo igual. Si tiene LinkedIn, va sólo por LinkedIn (sección
    «Escribir los textos de LinkedIn»).
@@ -68,8 +73,8 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
 
 > Corto, con el aviso como señal y la tesis, como dice «Cómo escribimos».
 
-1. Leé de nuevo la sección «Cómo escribimos» de las reglas comunes y los ajustes del cliente
-   (tono, oferta, objeciones, qué le pedimos al prospecto, casos que se pueden citar) y la firma del
+1. Leé de nuevo la sección «Cómo escribimos» de las reglas comunes y los ajustes de la campaña
+   (tono, propuesta, objeciones, qué le pedimos al prospecto, casos que se pueden citar) y la firma del
    buzón que vas a usar («Buzones y firmas»).
 2. **El aviso va nombrado** en la primera o segunda línea, con su fecha («vi que el 3/11 publicaron
    una búsqueda de QA Automation»). Nada de «vi que están creciendo».
@@ -79,7 +84,7 @@ La ventana es la «Antigüedad máxima del aviso» de los ajustes del cliente; s
    - a **quien decide**: lo que gana el equipo (la tesis), sin repetir el mail del otro.
 4. Si en la cuenta van dos personas, el de quien decide sale **un día hábil después** que el de
    quien publicó (`proximo_fecha`), para no llegar los dos el mismo día.
-5. Elegí el buzón del cliente que corresponda (lo dicen los ajustes; si hay varios, repartí).
+5. Elegí un buzón de la campaña (los de «Campañas de este cliente»; si hay varios, repartí).
 
 ## Escribir los textos de LinkedIn
 
@@ -106,7 +111,11 @@ persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
 
 > Durante la calibración se aprueba antes; después sale directo.
 
-**Si el cliente está en calibración** (lo dice «Ajustes de este cliente»):
+Cada mail sale por un buzón **de la campaña** de la persona (los de «Campañas de este cliente»;
+el gateway rechaza otro con `buzon_fuera_de_campana`), y sólo con los links que permite la campaña
+(`link_no_permitido`).
+
+**Si la campaña está en calibración** (lo dice «Campañas de este cliente»):
 
 1. `registro_pedir_aprobacion` tipo `calibracion_mail`, con `prospecto_id` y en `contenido`
    exactamente `buzon`, `destinatario`, `asunto` y `texto`, más el `contexto` (señal y tesis). Si
@@ -121,9 +130,11 @@ persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
    `idempotency_key` = `<id del prospecto>:mail-1`.
 2. Dejá el próximo paso: `proximo_paso: "seguimiento mail 2"`, `proximo_canal: "mail"`,
    `proximo_fecha` a 4 días hábiles.
-3. **LinkedIn, una carga por tanda:** al final, todas las personas del día con LinkedIn en un solo
-   `dripify_cargar` (hasta 100), cada una con `prospecto_id`, `nota`, `mensaje1` y `mensaje2`, e
-   `idempotency_key` = `linkedin-<AAAA-MM-DD>-<n>` (n: la tanda del día, desde 1). Si el gateway
+3. **LinkedIn, una carga por tanda y por campaña:** al final, todas las personas del día con
+   LinkedIn **de una misma campaña** en un solo `dripify_cargar` (hasta 100; el gateway no mezcla
+   campañas en una carga), cada una con `prospecto_id`, `nota`, `mensaje1` y `mensaje2`, e
+   `idempotency_key` = `linkedin-<AAAA-MM-DD>-<clave de la campaña>-<n>` (n: la tanda del día,
+   desde 1). Si el gateway
    rechaza la carga (`dripify_carga_rechazada`), trae en `errores` quién y por qué: sacá o corregí
    a esos y volvé a cargar con la **misma** clave (la carga rechazada no llegó a Dripify).
 4. Los decisores que van un día hábil después que el publicante, se cargan ese día, en la tanda de

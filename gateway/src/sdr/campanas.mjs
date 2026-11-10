@@ -10,8 +10,9 @@
 
 import { GatewayError } from '../errors.mjs';
 import { asRole } from '../store.mjs';
+import * as enCampana from './en_campana.mjs';
 import {
-  BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA, TIPOS, ajustesEfectivos, aplicarCambiosCampana,
+  BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA, TIPOS, aplicarCambiosCampana,
   aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tituloCampana, tituloDe,
 } from './ajustes.mjs';
 
@@ -137,7 +138,9 @@ export async function ver(c, clientId, id, { esBigua }) {
     tipos: Object.entries(TIPOS).map(([clave, t]) => ({ clave, titulo: t.titulo, llamado_accion: t.llamado_accion })),
     // Lo que la campaña hereda de Empresa, para mostrarlo atenuado («De Empresa: …»).
     empresa: cfg.ajustes ?? {},
-    efectivos: conTitulos(ajustesEfectivos(cfg.ajustes, k.ajustes, k.tipo)),
+    // Los mismos que leen los bots y hace cumplir el gateway (la «principal», con lo que todavía
+    // está en Empresa).
+    efectivos: conTitulos(enCampana.efectivos(cfg, k)),
     faltantes: k.estado === 'terminada' ? [] : faltantesParaActivar(k, cfg.ajustes),
     buzones_disponibles: await buzonesDelCliente(c, clientId),
     modo: cfg.modo,

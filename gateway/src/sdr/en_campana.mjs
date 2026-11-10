@@ -57,6 +57,31 @@ export async function resolver(c, clientId, { clave, prospecto } = {}) {
   return principal(c, clientId);
 }
 
+// ---------------------------------------------------------------- los ajustes de una campaña
+
+// Las claves de la campaña que, hasta la migración 014, también siguen en Empresa: el formulario de
+// Empresa del panel las edita ahí. Mientras estén, la «principal» las toma de Empresa (lo que el
+// cliente ve y edita hoy); cuando la 014 las saque, vale lo de la campaña sin tocar este código.
+// «oferta» de Empresa es la «propuesta» de la principal.
+const LEGADO_EMPRESA = ['icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion', 'links_permitidos', 'positivos'];
+
+function deLaCampana(cfg, k) {
+  if (k.clave !== 'principal') return k.ajustes ?? {};
+  const e = cfg?.ajustes ?? {};
+  const legado = Object.fromEntries(LEGADO_EMPRESA.filter((x) => e[x] !== undefined).map((x) => [x, e[x]]));
+  if (e.oferta !== undefined) legado.propuesta = e.oferta;
+  return { ...(k.ajustes ?? {}), ...legado };
+}
+
+// Los ajustes con los que trabaja la campaña: los mismos para las reglas que leen los bots y para
+// lo que hace cumplir el gateway.
+export const efectivos = (cfg, k) => ajustesEfectivos(cfg?.ajustes ?? {}, deLaCampana(cfg, k), k.tipo);
+
+// Las cuentas nuevas por día de la campaña. La «principal», mientras Empresa tenga
+// cuentas_por_dia (hasta la 014), usa ése: es el que edita el formulario de Empresa.
+export const cuentasPorDia = (cfg, k) => (k.clave === 'principal' && Number.isInteger(cfg?.ajustes?.cuentas_por_dia)
+  ? cfg.ajustes.cuentas_por_dia : k.cuentas_por_dia);
+
 export function exigirActiva(k, que) {
   if (k.estado !== 'activa') throw errorsCampana.inactiva(k, que);
 }
@@ -106,7 +131,7 @@ export function linksDe(texto) {
 export async function linksNoPermitidos(c, clientId, k, cfg, { textos, buzon }) {
   const encontrados = textos.flatMap(linksDe);
   if (!encontrados.length) return [];
-  const { valores } = ajustesEfectivos(cfg?.ajustes ?? {}, k.ajustes ?? {}, k.tipo);
+  const { valores } = efectivos(cfg, k);
   const permitidos = [...(valores.links_permitidos ?? []), ...(valores.link_agenda ? [valores.link_agenda] : [])]
     .map(normalizar).filter(Boolean);
   const { rows } = await c.query(`select firma from mailgw.account where client_id = $1 and email = lower($2)`, [clientId, buzon ?? '']);
