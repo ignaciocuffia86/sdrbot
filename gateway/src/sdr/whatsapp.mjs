@@ -110,7 +110,7 @@ export async function turno(clientId, a, meta, { azar = Math.random } = {}) {
     const dominio = p.cuenta_id
       ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
       : null;
-    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio], { cuentas: [p.cuenta_id] });
     if (nc.length) throw err('no_contactar', `El cliente pidió no escribirle a ${noContactar.describir(nc)}.`);
     if (p.email) {
       const { rowCount } = await c.query(`select 1 from sdr.supresion where client_id = $1 and email = $2`, [clientId, p.email]);

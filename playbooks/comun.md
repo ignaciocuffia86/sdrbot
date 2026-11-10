@@ -139,7 +139,9 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `send_in_progress` | Un envío con esa clave quedó a medias | No reintentes con otra clave: avisá al orquestador |
 | `recipients_rejected` | El servidor rechazó el destinatario | Registrá `mail.rebotado` y no insistas |
 | `destinatario_suprimido` | Rebotó o pidió la baja antes | No le escribas más por mail |
-| `no_contactar` | La persona o su empresa está en la lista de no contactar del cliente | No le escribas por ningún canal ni reveles a nadie de esa empresa; pasá a la siguiente. Una cuenta de la lista queda `excluida` sola al guardarla (`registro_guardar_cuenta` devuelve `no_contactar: true`) |
+| `no_contactar` | La persona o su empresa está en la lista de no contactar del cliente | No le escribas por ningún canal ni reveles a nadie de esa empresa; pasá a la siguiente. Una cuenta de la lista queda `excluida` sola al guardarla (`registro_guardar_cuenta` devuelve `no_contactar: true`). La lista también tiene empresas por nombre: valen con cualquier forma societaria y aunque la cuenta tenga otro dominio |
+| `campana_no_es_lista` | Pediste las cuentas de la lista de una campaña que no es de tipo lista | Sus cuentas salen de la búsqueda de siempre (tarea `diaria`) |
+| `cuenta_semilla` | La cuenta es una semilla del ICP que el cliente cargó en una campaña: un modelo de lo que se busca | No la reabras ni la muevas de campaña, y no le escribas a nadie de ella: el gateway rechaza personas, mails, respuestas, Dripify y WhatsApp de una semilla con `no_contactar` («semilla del ICP»). Sí podés leerla y anotarle datos; usala para entender qué empresas busca el cliente |
 | `prospecto_respondio` | La persona ya respondió (o dijo que no, o es positivo) | No va otro mail de la secuencia: lo que sigue es de `seguimiento` |
 | `respuesta_sin_atender` | Tiene una respuesta que `seguimiento` no leyó | Esperá: la lee `seguimiento` |
 | `dripify_carga_rechazada` | Alguien de la carga no pasa los controles (`errores` dice quién y por qué) | Sacá o corregí a esos y volvé a cargar con la misma clave |

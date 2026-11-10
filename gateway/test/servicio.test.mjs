@@ -41,7 +41,7 @@ test('lo que es sólo de Biguá se niega al cliente', async () => {
 });
 
 test('las validaciones son las de la ruta', async () => {
-  await assert.rejects(S.noContactarAgregar({ user: deA, params: { client: A }, body: { valor: 'no es nada' } }),
+  await assert.rejects(S.noContactarAgregar({ user: deA, params: { client: A }, body: { valor: 'no.es.nada.c' } }),
     (e) => e.code === 'invalid_request');
   const r = await S.noContactarAgregar({ user: deA, params: { client: A }, body: { valor: 'competidor.test', motivo: 'competencia' } });
   assert.equal(r.agregados, 1);

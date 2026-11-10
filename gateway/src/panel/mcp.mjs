@@ -134,6 +134,18 @@ const TOOLS = [
     run: async (user, a) => S.campanasListar(await ctxDe(user, a)),
   },
   {
+    name: 'cargas_listar',
+    description: 'Las cargas de archivos (Excel o CSV) de un cliente, las más nuevas primero: a qué fueron (la lista de no contactar o '
+      + 'una campaña), cuándo, quién, qué entró y si se deshicieron. Subir, deshacer o bajar el informe se hace en el panel: un archivo '
+      + 'no pasa por el chat.',
+    inputSchema: obj({ cliente: CLIENTE }),
+    run: async (user, a) => {
+      const r = await S.cargasListar(await ctxDe(user, a));
+      // El nombre del archivo y la hoja los eligió el cliente.
+      return { dias_informe: r.dias_informe, ...externo({ cargas: r.cargas.map(({ tiene_informe, ...x }) => ({ ...x, informe_en_el_panel: tiene_informe })) }) };
+    },
+  },
+  {
     name: 'campana_ver',
     description: 'Una campaña completa: lo que dice (propuesta, ICP, cargos, positivos…), qué campos puede editar cada uno, sus buzones y su historial.',
     inputSchema: obj({ cliente: CLIENTE, campana: texto(60, 'El id o la clave de la campaña («principal»).') }, ['campana']),

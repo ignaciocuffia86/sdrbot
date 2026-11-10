@@ -237,6 +237,7 @@ test('herramientas: el cliente ve sólo su cliente; Biguá, todos', async () => 
   const listaA = (await mcp(ta, 'tools/list')).body.result.tools;
   const nombres = listaA.map((t) => t.name);
   assert.ok(nombres.includes('resumen') && nombres.includes('aprobaciones_listar') && nombres.includes('campanas_listar'));
+  assert.ok(nombres.includes('cargas_listar'), 'las cargas de archivos, de lectura');
   assert.ok(!nombres.includes('clientes_listar'));
   // Todas de lectura, salvo decidir una aprobación (M2), que es destructiveHint.
   assert.ok(listaA.every((t) => t.annotations.readOnlyHint === (t.name !== 'aprobacion_decidir')));

@@ -324,7 +324,7 @@ async function controlarCarga(c, clientId, items, notaMax) {
     const dominio = p.cuenta_id
       ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
       : null;
-    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio], { cuentas: [p.cuenta_id] });
     if (nc.length) { e(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}`); continue; }
     const textos = { nota: it.nota, mensaje1: it.mensaje1, mensaje2: it.mensaje2 };
     if (norm(it.nota).length > notaMax) { e(`la nota tiene ${norm(it.nota).length} caracteres y el tope es ${notaMax}`); continue; }
@@ -595,7 +595,7 @@ export async function reanudar(clientId, prospectoId, meta) {
     const dominio = p.cuenta_id
       ? (await c.query(`select dominio from sdr.cuenta where client_id = $1 and id = $2`, [clientId, p.cuenta_id])).rows[0]?.dominio
       : null;
-    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio]);
+    const nc = await noContactar.coincidencias(c, clientId, [p.email, dominio], { cuentas: [p.cuenta_id] });
     if (nc.length) throw no(`está en la lista de no contactar del cliente: ${noContactar.describir(nc)}.`);
     return p;
   });

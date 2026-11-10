@@ -67,6 +67,8 @@ const DEF = {
     ayuda: 'Por ejemplo: «ventas@ para Argentina, info@ para Chile».' },
   acepta_mails_extrapolados: { titulo: 'Acepta mails extrapolados', tipo: 'si_no', autogestion: true,
     ayuda: 'Si se le escribe a un mail deducido del patrón de la empresa y no verificado.' },
+  acepta_mails_del_cliente: { titulo: 'Acepta los mails del archivo', tipo: 'si_no', autogestion: true,
+    ayuda: 'En una campaña «Lista del cliente»: si el primer mail puede ir al mail que trae el archivo, sin verificarlo. Si no dice nada, sí.' },
 };
 
 const armar = (lista) => lista.map(([clave, bloque, extra = {}]) => ({ clave, bloque, ...DEF[clave], ...extra }));
@@ -137,6 +139,7 @@ export const CAMPOS_CAMPANA = armar([
   ['responsable_email', 'respuestas'],
   ['link_agenda', 'respuestas'],
   ['acepta_mails_extrapolados', 'ritmo'],
+  ['acepta_mails_del_cliente', 'ritmo'],
 ]).map((c) => (HEREDABLES.includes(c.clave) ? { ...c, hereda: true } : c));
 
 // Los tipos (docs/21 §4.2): el valor de «Qué le pedimos al prospecto» cuando la campaña no dice
@@ -145,6 +148,8 @@ export const TIPOS = {
   prospeccion: { titulo: 'Prospección por señal', llamado_accion: 'Una charla corta para ver si tiene sentido.' },
   evento: { titulo: 'Invitación a evento', llamado_accion: 'Inscribirse con el link.', fechas: true, links: true },
   reactivacion: { titulo: 'Reactivación', llamado_accion: '¿Sigue vigente el tema?', sinSenal: true },
+  // docs/27 §5.1: no busca cuentas por avisos; trabaja las que el cliente cargó desde un archivo.
+  lista: { titulo: 'Lista del cliente', llamado_accion: 'Una charla corta para ver si tiene sentido.', sinSenal: true, lista: true },
 };
 
 // Las columnas de sdr.campana que se editan en el panel, con el mismo esquema de permisos
@@ -442,6 +447,12 @@ export function faltantesParaActivar(campana, empresa = {}) {
     if (!a.icp) falta('audiencia', 'icp', 'Falta a quién le venden.');
     if (!a.roles_objetivo?.length) falta('audiencia', 'roles_objetivo', 'Faltan los cargos a los que se escribe.');
   }
+  // Una lista: los cargos, para buscar a quien decide cuando la fila no trae contacto, y al menos
+  // una cuenta cargada (campana.cuentas_de_lista la cuenta quien llama; sin el dato, no se exige).
+  if (tipo.lista) {
+    if (!a.roles_objetivo?.length) falta('audiencia', 'roles_objetivo', 'Faltan los cargos a los que se escribe cuando la fila no trae contacto.');
+    if (campana.cuentas_de_lista === 0) falta('lista', 'lista', 'Falta cargar la lista de cuentas (Subir Excel o CSV, abajo).');
+  }
   if (!(campana.buzones ?? []).length) falta('ritmo', 'buzones', 'Falta elegir al menos un buzón.');
   if (!campana.cuentas_por_dia) falta('ritmo', 'cuentas_por_dia', 'Faltan las cuentas nuevas por día.');
   if (tipo.fechas && (!campana.inicio || !campana.fin)) falta('objetivo', 'fin', 'Una campaña de evento necesita inicio y fin.');
@@ -463,7 +474,7 @@ export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion
   const poner = (k, v, o) => { if (v !== undefined) { valores[k] = v; origen[k] = o; } };
 
   for (const k of ['nombre_comercial', 'descripcion', 'firma']) poner(k, e[k], 'empresa');
-  for (const k of ['propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'links_permitidos', 'positivos']) {
+  for (const k of ['propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'links_permitidos', 'positivos', 'acepta_mails_del_cliente']) {
     poner(k, c[k], 'campana');
   }
   for (const k of HEREDABLES) poner(k, c[k] ?? e[k], c[k] !== undefined ? 'campana' : 'empresa');
