@@ -4,7 +4,9 @@
 //   GET  /health            sin token: vivo y versión
 //   GET  /v1/mailboxes      atajo de POST /v1/mailboxes
 //   POST /v1/<op>           una operación (ver src/ops.mjs), cuerpo JSON
-//   POST /mcp               MCP (streamable HTTP, sin sesión)
+//   POST /mcp               MCP de los bots (streamable HTTP, sin sesión), con token mgw_
+//   POST /mcp/panel         MCP del panel, para personas, con token OAuth (src/panel/mcp.mjs)
+//   /.well-known/oauth-*, /oauth/*   el OAuth del MCP del panel (src/panel/oauth.mjs)
 //   POST /cron/correo       el reloj (pg_cron en Supabase): lee los buzones y despierta a seguimiento
 //   POST /hook/dripify/<cliente>/<secreto>[?e=tipo]  webhook de la campaña de LinkedIn del cliente
 //   GET  /admin             panel web (src/admin/static) · /admin/api/* su API (src/admin/api.mjs)
@@ -17,6 +19,8 @@ import { limits, VERSION } from './config.mjs';
 import { opByName, runOp } from './ops.mjs';
 import { handleMcp } from './mcp.mjs';
 import { handleAdminApi } from './admin/api.mjs';
+import { handleOauth } from './panel/oauth.mjs';
+import { handleMcpPanel } from './panel/mcp.mjs';
 import { readFile } from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { hashToken } from './crypto.mjs';
@@ -124,6 +128,13 @@ export async function handle(req, res) {
       if (STATIC[path]) return await serveStatic(res, STATIC[path]);
       throw errors.notFound();
     }
+
+    // El OAuth y el MCP del panel responden en su propio formato (OAuth y JSON-RPC), no en el de la API.
+    if (path.startsWith('/.well-known/') || path.startsWith('/oauth/')) {
+      if (await handleOauth(req, res, path)) return;
+      throw errors.notFound();
+    }
+    if (path === '/mcp/panel') return await handleMcpPanel(req, res, readBody);
 
     if (path === '/mcp') {
       if (req.method !== 'POST') {
