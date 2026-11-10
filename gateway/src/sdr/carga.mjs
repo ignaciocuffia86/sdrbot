@@ -614,7 +614,7 @@ export async function planCampana(c, clientId, campana, filas) {
   for (const k of existentes) if (k.nombre_clave && !porClave.has(k.nombre_clave)) porClave.set(k.nombre_clave, k);
   const nc = await noContactar.coincidencias(c, clientId, validas.map((f) => f.dominio).filter(Boolean),
     { nombres: validas.map((f) => f.empresa) });
-  const enLista = new Set(nc.map((r) => r.para));
+  const enLista = new Set(nc.filter((r) => r.tipo !== 'semilla').map((r) => r.para));
 
   // Las personas: las que ya están en el registro (mismo mail o LinkedIn), en la supresión o en no contactar.
   const personas = validas.filter((f) => f.persona && f.uso === 'prospectar').map((f) => f.persona);

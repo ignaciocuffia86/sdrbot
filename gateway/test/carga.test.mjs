@@ -388,6 +388,28 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   const anotada = await sdr.guardarCuenta(A, { dominio: 'hortifrut.test', vertical: 'Berries y cerezas' }, meta);
   assert.equal(anotada.cuenta.estado, 'excluida');
 
+  // Y nadie le escribe por otro camino (Vercel 01M73616907NW21T3B4WY6VAD3): ni una persona nueva en la
+  // semilla (por su cuenta o por un mail de su dominio), ni pasar a alguien que ya estaba a esa cuenta,
+  // ni un mail o una respuesta a su dominio.
+  const semilla = anotada.cuenta;
+  const esSemilla = (e) => e.code === 'no_contactar' && /semilla del ICP «Hortifrut S\.A\.»/.test(e.message);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Gerente', cuenta_id: semilla.id }, meta), esSemilla);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Gerente', email: 'gerente@hortifrut.test' }, meta), esSemilla);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Otra', email: 'otra@ventas.hortifrut.test' }, meta), esSemilla);
+  const suelta = (await sdr.guardarProspecto(A, { nombre: 'Suelta', email: 'suelta@libre-semilla.test' }, meta)).prospecto;
+  await assert.rejects(sdr.guardarProspecto(A, { id: suelta.id, cuenta_id: semilla.id }, meta), esSemilla);
+  await assert.rejects(correo.controlarDestinatarios(A, ['Jefe@Hortifrut.test'], 'send'), esSemilla);
+  await assert.rejects(correo.controlarDestinatarios(A, ['jefe@hortifrut.test'], 'reply'), esSemilla);
+  await correo.controlarDestinatarios(A, ['suelta@libre-semilla.test'], 'send');
+  // Una persona que se coló por SQL en la semilla tampoco sale por mail ni por Dripify/WhatsApp
+  // (los tres preguntan por su cuenta).
+  const { rows: [colada] } = await q(`insert into sdr.prospecto (client_id, cuenta_id, nombre, email) values ($1, $2, 'Colada', 'colada@otro-dominio.test')
+                                       returning id`, [A, semilla.id]);
+  await assert.rejects(correo.controlarDestinatarios(A, ['colada@otro-dominio.test'], 'send'), esSemilla);
+  const nc = await store.asRole('mailgw_app', A, (c) => import('../src/sdr/no_contactar.mjs').then((m) => m.coincidencias(c, A, [], { cuentas: [semilla.id] })));
+  assert.equal(nc[0].tipo, 'semilla');
+  await q(`delete from sdr.prospecto where id = $1`, [colada.id]);
+
   // El bot ve lo del archivo aparte, marcado como dato del cliente, y nunca la columna cruda.
   const vista = (await sdr.buscar(A, { dominio: 'hortifrut.test' })).cuentas[0];
   assert.equal(vista.datos_origen, undefined);

@@ -672,8 +672,11 @@ export async function guardarProspecto(clientId, a, meta) {
     const aControlar = [];
     if (a.email && a.email !== actual?.email) aControlar.push(a.email);
     const cuentaId = a.cuenta_id ?? actual?.cuenta_id;
-    if (!actual && cuentaId) aControlar.push((await cuentaDe(c, clientId, cuentaId)).dominio);
-    const nc = await noContactar.coincidencias(c, clientId, aControlar, { cuentas: !actual && cuentaId ? [cuentaId] : [] });
+    // La cuenta de una persona nueva, o la nueva cuenta de una que ya estaba (pasarla a una semilla
+    // o a una empresa de la lista tampoco vale).
+    const cuentaNueva = cuentaId && (!actual || (a.cuenta_id && a.cuenta_id !== actual.cuenta_id)) ? cuentaId : null;
+    if (cuentaNueva) aControlar.push((await cuentaDe(c, clientId, cuentaNueva)).dominio);
+    const nc = await noContactar.coincidencias(c, clientId, aControlar, { cuentas: cuentaNueva ? [cuentaNueva] : [] });
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);

@@ -62,7 +62,11 @@ export function leerCsv(texto) {
   return { filas, invalidas };
 }
 
-// Qué chocan con la lista. valores: mails o dominios; un dominio de la lista cubre también sus
+// Qué chocan con la lista, o con una semilla del ICP (docs/27 §2: una cuenta modelo que cargó el
+// cliente y a la que no se le escribe; Vercel 01M73616907NW21T3B4WY6VAD3). Así el alta de personas,
+// el envío y la respuesta de mails, Dripify y WhatsApp, que ya preguntan acá, frenan también a las
+// semillas: por su cuenta, por su dominio (y subdominios) o por el mail de una persona de ella.
+// valores: mails o dominios; un dominio de la lista cubre también sus
 // subdominios («empresa.com» frena a «ana@ventas.empresa.com»). Las empresas por nombre se comparan
 // con las cuentas: las de `cuentas` (ids), las que tienen uno de esos dominios y las de las personas
 // con uno de esos mails; y con los `nombres` sueltos (una cuenta que todavía no se guardó).
@@ -89,14 +93,22 @@ export async function coincidencias(c, clientId, valores, { cuentas = [], nombre
        from k join sdr.no_contactar n on n.client_id = $1 and n.tipo = 'empresa' and n.valor = k.nombre_clave
      union all
      select s.nombre, n.valor, n.tipo, n.motivo, n.nombre
-       from s join sdr.no_contactar n on n.client_id = $1 and n.tipo = 'empresa' and n.valor = s.clave`,
+       from s join sdr.no_contactar n on n.client_id = $1 and n.tipo = 'empresa' and n.valor = s.clave
+     union all
+     select coalesce(q.dominio, q.nombre), coalesce(q.dominio, q.nombre_clave, q.nombre), 'semilla', null, q.nombre
+       from sdr.cuenta q
+      where q.client_id = $1 and q.uso = 'semilla'
+        and (q.id = any($3::uuid[])
+          or (q.dominio is not null and exists (select 1 from x where x.d = q.dominio or x.d like '%.' || q.dominio))
+          or q.id in (select p.cuenta_id from sdr.prospecto p where p.client_id = $1 and p.email in (select v from x where position('@' in v) > 0)))`,
     [clientId, lista, ids, sueltos]);
   return rows;
 }
 
 // El nombre y el motivo los escribió el cliente: van citados, para que el bot los lea como datos
 // (llegan a errores, a estado_motivo y a los avisos).
-const TIPO = { dominio: (r) => `dominio ${r.valor}`, email: () => 'mail', empresa: (r) => `empresa ${citaNombre(r.nombre ?? r.valor)}` };
+const TIPO = { dominio: (r) => `dominio ${r.valor}`, email: () => 'mail', empresa: (r) => `empresa ${citaNombre(r.nombre ?? r.valor)}`,
+  semilla: (r) => `semilla del ICP ${citaNombre(r.nombre)}: es una cuenta modelo del cliente, no se le escribe` };
 export const describirUna = (r) => `${(TIPO[r.tipo] ?? TIPO.email)(r)}${r.motivo ? `: ${citaNombre(r.motivo)}` : ''}`;
 export const describir = (rows) => [...new Set(rows.map((r) => `${r.tipo === 'empresa' ? citaNombre(r.para) : r.para} (${describirUna(r)})`))].join(', ');
 
