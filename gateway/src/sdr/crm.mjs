@@ -354,12 +354,13 @@ export function armar(d, cx, { ahora = new Date() } = {}) {
   const empresaTxt = d.cuenta?.nombre ? ` (${d.cuenta.nombre})` : '';
   const tarea = {
     hs_task_subject: recortar(`Responder a ${d.p.nombre}${empresaTxt}: positivo del SDR`, 250),
+    // HubSpot trata el cuerpo de la tarea como HTML: todo lo que viene del prospecto va escapado.
     hs_task_body: [
       `${d.p.nombre}${d.p.cargo ? `, ${d.p.cargo}` : ''}${empresaTxt} respondió por ${canal}.`,
       que ? `Qué pide: ${que}` : null,
       d.respuesta?.texto ? `Lo que escribió: «${recortar(d.respuesta.texto.replace(/\s+/g, ' '), 500)}»` : null,
       aprobada ? 'La respuesta aprobada está en la nota del contacto.' : null,
-    ].filter(Boolean).join('\n'),
+    ].filter(Boolean).map((x) => `<p>${esc(x)}</p>`).join(''),
     hs_task_status: 'NOT_STARTED', hs_task_priority: 'HIGH', hs_task_type: 'TODO',
     hs_timestamp: vencimientoTarea(ahora).toISOString(),
   };

@@ -286,6 +286,9 @@ test('positivo aprobado: entra a la cola al aprobar y el worker carga contacto, 
   assert.equal(tarea.properties.hubspot_owner_id, '101');
   assert.match(tarea.properties.hs_task_subject, /Responder a Laura Gómez Paz \(Empresa uno\)/);
   assert.equal(tarea.properties.hs_task_status, 'NOT_STARTED');
+  // El cuerpo de la tarea es HTML en HubSpot: lo que escribió el prospecto va escapado.
+  assert.match(tarea.properties.hs_task_body, /sí &lt;nos interesa&gt;/);
+  assert.ok(!tarea.properties.hs_task_body.includes('<nos interesa>'));
 
   const despues = await carga(x.p.id);
   assert.equal(despues.estado, 'hecha');

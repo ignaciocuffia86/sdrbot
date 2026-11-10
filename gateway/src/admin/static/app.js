@@ -966,10 +966,11 @@ function crmConexionCard(clientId, bigua, cx, reload) {
 
 function crmVistaPrevia(v) {
   const filas = (o) => h('table', {}, h('tbody', {}, Object.entries(o).map(([k, x]) => h('tr', {}, h('td', { class: 'mono small' }, k), h('td', {}, String(x))))));
+  // La nota y la tarea van a HubSpot como HTML; acá se muestran como texto, sin interpretarlas.
+  const comoTexto = (html) => html.replace(/<br>/g, '\n').replace(/<\/(p|blockquote)>/g, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&').trim();
   const nota = h('pre', { class: 'nota' });
-  // La nota va a HubSpot como HTML; acá se muestra como texto, sin interpretarlo.
-  nota.textContent = v.nota.hs_note_body.replace(/<br>/g, '\n').replace(/<\/(p|blockquote)>/g, '\n').replace(/<[^>]+>/g, '')
-    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  nota.textContent = comoTexto(v.nota.hs_note_body);
   return h('div', { class: 'stack small' },
     h('p', {}, v.ejemplo ? 'Con un positivo de ejemplo (todavía no hay uno real):' : `Con el último positivo: ${v.nombre}.`,
       ' Nada de esto se escribió en HubSpot.'),
@@ -977,7 +978,7 @@ function crmVistaPrevia(v) {
     h('strong', {}, 'Contacto'), filas(v.contacto),
     v.empresa ? [h('strong', {}, 'Empresa (por dominio)'), filas(v.empresa)] : h('p', { class: 'muted' }, 'Sin dominio: no se asocia empresa.'),
     h('strong', {}, 'Nota'), nota,
-    h('strong', {}, 'Tarea'), filas({ asunto: v.tarea.hs_task_subject, vence: fmtDate(v.tarea.hs_timestamp), detalle: v.tarea.hs_task_body }));
+    h('strong', {}, 'Tarea'), filas({ asunto: v.tarea.hs_task_subject, vence: fmtDate(v.tarea.hs_timestamp), detalle: comoTexto(v.tarea.hs_task_body) }));
 }
 
 function crmCargasCards(clientId, d, pintar) {
