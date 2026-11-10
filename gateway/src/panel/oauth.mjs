@@ -16,7 +16,7 @@
 
 import crypto from 'node:crypto';
 import { getPool } from '../store.mjs';
-import { verificarCredenciales } from '../admin/auth.mjs';
+import { tomarUsuario, verificarCredenciales, versionClave } from '../admin/auth.mjs';
 import {
   clienteCimd, clienteRegistrado, credencialesBasic, emisor, escapar, esClienteCimd, firmar, nombreLimpio,
   pkceCoincide, redirectDeclarado, redirectPermitido, secretoCliente, sha256, verificar,
@@ -305,7 +305,7 @@ async function entrar(req, res) {
     const alcance = user.role === 'bigua_admin'
       ? 'todos los clientes'
       : (await q(`select name from mailgw.client where id = $1`, [user.client_id])).rows[0]?.name ?? user.client_id;
-    const login = firmar({ t: 'login', uid: user.id, ph, exp: ahora() + VIDA_LOGIN_S });
+    const login = firmar({ t: 'login', uid: user.id, pv: user.pv, ph, exp: ahora() + VIDA_LOGIN_S });
     log('ingreso', { cliente: datos.n, rol: user.role });
     return paginaConsentimiento(res, { ...ctx, login, user, alcance });
   }
@@ -314,12 +314,21 @@ async function entrar(req, res) {
     const l = verificar(f.get('login') ?? '', 'login');
     if (!l || l.ph !== ph) return paginaIngreso(res, { ...ctx, error: 'Pasaron más de 10 minutos. Ingresá de nuevo.' });
     const code = crypto.randomBytes(32).toString('base64url');
-    const { rowCount } = await q(
-      `insert into mailgw.oauth_code (code_hash, client_id, cliente_nombre, user_id, redirect_uri, code_challenge, expires_at)
-       select $1, $2, $3, u.id, $5, $6, now() + make_interval(secs => $7)
-         from mailgw.admin_user u where u.id = $4 and u.active`,
-      [sha256(code), datos.cid, datos.n, l.uid, datos.ru, datos.cc, VIDA_CODIGO_S]);
-    if (!rowCount) return paginaIngreso(res, { ...ctx, error: 'El usuario ya no está activo.' });
+    // El ingreso vale para la contraseña con la que se hizo: después de un reset hay que volver a
+    // ingresar. El registro del usuario queda tomado hasta que el código está guardado, así un reset
+    // que corre a la vez espera y después lo invalida.
+    const r = await transaccion(async (c) => {
+      const { rows } = await c.query(`select active, password_hash from mailgw.admin_user where id = $1 for share`, [l.uid]);
+      if (!rows[0]?.active) return 'inactivo';
+      if (!l.pv || versionClave(rows[0].password_hash) !== l.pv) return 'clave';
+      await c.query(
+        `insert into mailgw.oauth_code (code_hash, client_id, cliente_nombre, user_id, redirect_uri, code_challenge, expires_at)
+         values ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))`,
+        [sha256(code), datos.cid, datos.n, l.uid, datos.ru, datos.cc, VIDA_CODIGO_S]);
+      return 'ok';
+    });
+    if (r === 'inactivo') return paginaIngreso(res, { ...ctx, error: 'El usuario ya no está activo.' });
+    if (r === 'clave') return paginaIngreso(res, { ...ctx, error: 'La contraseña cambió desde que ingresaste. Ingresá de nuevo.' });
     log('autorizado', { cliente: datos.n });
     return redirigir(res, datos.ru, { code, state: datos.st, iss });
   }
@@ -398,6 +407,7 @@ async function canjear(req, res) {
       const verifier = f.get('code_verifier');
       if (!code || !verifier) return errorOauth(res, 400, 'invalid_request', 'Faltan code o code_verifier.');
       const r = await transaccion(async (c) => {
+        await tomarUsuario(c, `select user_id from mailgw.oauth_code where code_hash = $1`, [sha256(code)]);
         // Uso único: el update marca el código, y un segundo canje no encuentra la fila.
         const { rows } = await c.query(
           `update mailgw.oauth_code o set used_at = now()
@@ -418,6 +428,9 @@ async function canjear(req, res) {
     const rt = f.get('refresh_token');
     if (!rt) return errorOauth(res, 400, 'invalid_request', 'Falta refresh_token.');
     const r = await transaccion(async (c) => {
+      // Exclusivo: si la renovación detecta un reuso, revoca la familia, y no puede correr a la vez
+      // que otra renovación de la misma conexión.
+      await tomarUsuario(c, `select user_id from mailgw.oauth_token where token_hash = $1 and tipo = 'renovacion'`, [sha256(rt)], 'no key update');
       const { rows } = await c.query(
         `select t.*, u.active from mailgw.oauth_token t join mailgw.admin_user u on u.id = t.user_id
           where t.token_hash = $1 and t.tipo = 'renovacion' for update of t`, [sha256(rt)]);
@@ -454,8 +467,11 @@ async function revocar(req, res) {
   const token = f.get('token');
   if (!token) return errorOauth(res, 400, 'invalid_request', 'Falta token.');
   try {
-    await q(`update mailgw.oauth_token set revoked_at = now()
-              where familia = (select familia from mailgw.oauth_token where token_hash = $1) and revoked_at is null`, [sha256(token)]);
+    await transaccion(async (c) => {
+      await tomarUsuario(c, `select user_id from mailgw.oauth_token where token_hash = $1`, [sha256(token)], 'no key update');
+      await c.query(`update mailgw.oauth_token set revoked_at = now()
+                where familia = (select familia from mailgw.oauth_token where token_hash = $1) and revoked_at is null`, [sha256(token)]);
+    });
   } catch (e) {
     console.error('[oauth]', e.message);
     return errorOauth(res, 503, 'server_error', 'Servicio no disponible.');

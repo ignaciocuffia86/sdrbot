@@ -74,17 +74,34 @@ export async function resetSetup(userId) {
 export async function activate(token, password) {
   validatePassword(password);
   const hash = await hashPassword(password);
-  const { rows } = await q(
-    `update mailgw.admin_user
-        set password_hash = $2, setup_token_hash = null, setup_expires_at = null,
-            failed_logins = 0, locked_until = null
-      where setup_token_hash = $1 and setup_expires_at > now() and active
-      returning id, email`, [sha256(String(token ?? '')), hash]);
-  if (!rows.length) throw authError('El enlace de activación no es válido o ya venció. Pedí uno nuevo.');
-  await q(`delete from mailgw.admin_session where user_id = $1`, [rows[0].id]);
-  await revocarConexiones(rows[0].id);
-  return rows[0];
+  // Todo en una transacción: el update deja tomado el registro del usuario hasta que las sesiones,
+  // los códigos y los tokens de antes quedan sin efecto. Una renovación o un canje de OAuth que
+  // corre a la vez espera (toman el mismo registro) y después ve la conexión revocada.
+  const c = await getPool().connect();
+  try {
+    await c.query('begin');
+    const { rows } = await c.query(
+      `update mailgw.admin_user
+          set password_hash = $2, setup_token_hash = null, setup_expires_at = null,
+              failed_logins = 0, locked_until = null
+        where setup_token_hash = $1 and setup_expires_at > now() and active
+        returning id, email`, [sha256(String(token ?? '')), hash]);
+    if (!rows.length) throw authError('El enlace de activación no es válido o ya venció. Pedí uno nuevo.');
+    await c.query(`delete from mailgw.admin_session where user_id = $1`, [rows[0].id]);
+    await revocarConexiones(rows[0].id, c);
+    await c.query('commit');
+    return rows[0];
+  } catch (e) {
+    await c.query('rollback').catch(() => {});
+    throw e;
+  } finally {
+    c.release();
+  }
 }
+
+// La versión de la contraseña de un usuario: cambia cada vez que la cambia (activar o resetear).
+// El ingreso firmado del OAuth del MCP del panel la lleva, y uno de antes de un reset no sirve.
+export const versionClave = (passwordHash) => sha256(`clave:${passwordHash ?? ''}`).slice(0, 32);
 
 // ---------------------------------------------------------------- login y sesiones
 
@@ -112,7 +129,7 @@ export async function verificarCredenciales(email, password) {
     throw authError();
   }
   await q(`update mailgw.admin_user set failed_logins = 0, locked_until = null, last_login_at = now() where id = $1`, [u.id]);
-  return { id: u.id, email: u.email, name: u.name, role: u.role, client_id: u.client_id };
+  return { id: u.id, email: u.email, name: u.name, role: u.role, client_id: u.client_id, pv: versionClave(u.password_hash) };
 }
 
 export async function login(email, password, meta) {
@@ -124,10 +141,24 @@ export async function login(email, password, meta) {
   return token;
 }
 
+// Las conexiones de un usuario se ordenan por su registro en admin_user. Autorizar y canjear un
+// código lo toman compartido; renovar y revocar (desconectar, /oauth/revoke, desactivar, resetear la
+// contraseña) lo toman exclusivo. Así una revocación espera a la renovación que está en curso y,
+// como cada sentencia ve lo confirmado hasta ese momento, también revoca el par recién emitido; y
+// una renovación que espera a una revocación, al seguir, ve el token revocado. Va primero en la
+// transacción, antes de tomar tokens o códigos, para que el orden sea siempre el mismo.
+export async function tomarUsuario(c, subconsulta, params, modo = 'share') {
+  await c.query(`select 1 from mailgw.admin_user where id in (${subconsulta}) for ${modo === 'share' ? 'share' : 'no key update'}`, params);
+}
+
 // Las conexiones de Claude (MCP del panel) de un usuario quedan revocadas cuando se lo desactiva o
-// se le resetea la contraseña: un token copiado no sobrevive a eso.
+// se le resetea la contraseña: un token copiado no sobrevive a eso, ni un código todavía sin canjear.
+// Quien llama con `c` tiene que haber tomado antes el registro del usuario (un update o un
+// «for no key update») en esa transacción: así no se escapa un token que se esté emitiendo.
 export async function revocarConexiones(userId, c = null) {
-  await (c ?? getPool()).query(`update mailgw.oauth_token set revoked_at = now() where user_id = $1 and revoked_at is null`, [userId]);
+  const db = c ?? getPool();
+  await db.query(`update mailgw.oauth_code set used_at = now() where user_id = $1 and used_at is null`, [userId]);
+  await db.query(`update mailgw.oauth_token set revoked_at = now() where user_id = $1 and revoked_at is null`, [userId]);
 }
 
 export async function logout(token) {
