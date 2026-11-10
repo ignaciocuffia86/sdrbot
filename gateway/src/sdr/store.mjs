@@ -141,9 +141,10 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
     }
   }
   const nc = extra.noContactar;
-  if (nc && nc.dominios + nc.emails > 0) {
+  if (nc && nc.dominios + nc.emails + (nc.empresas ?? 0) > 0) {
     lineas.push('', '### No contactar', '',
-      `El cliente tiene ${nc.dominios} dominio(s) y ${nc.emails} mail(s) a los que no se les escribe nunca. El gateway los hace cumplir: ` +
+      `El cliente tiene ${nc.dominios} dominio(s), ${nc.emails} mail(s) y ${nc.empresas ?? 0} empresa(s) por nombre a los que no se les escribe nunca. ` +
+      'Una empresa por nombre vale aunque la cuenta tenga otro dominio o la escribas con otra forma societaria. El gateway los hace cumplir: ' +
       'una cuenta de esa lista queda excluida al guardarla (registro_guardar_cuenta lo avisa con no_contactar), y una persona, ' +
       'un mail o una carga en Dripify se rechazan con el error no_contactar. No reveles a nadie de una empresa excluida.');
   }
@@ -470,9 +471,10 @@ export async function guardarCuenta(clientId, a, meta) {
     // la vuelva a investigar ni le revele contactos.
     let aviso = null;
     const dominio = a.dominio ?? actual?.dominio;
+    const nombre = a.nombre ?? actual?.nombre;
     const estadoFinal = a.estado ?? actual?.estado ?? 'en_investigacion';
-    if (dominio && !['excluida', 'descartada'].includes(estadoFinal)) {
-      const nc = await noContactar.coincidencias(c, clientId, [dominio]);
+    if ((dominio || nombre) && !['excluida', 'descartada'].includes(estadoFinal)) {
+      const nc = await noContactar.coincidencias(c, clientId, [dominio], { nombres: [nombre] });
       if (nc.length) {
         a = { ...a, estado: 'excluida', estado_motivo: `No contactar: ${noContactar.describir(nc)}` };
         aviso = 'La empresa está en la lista de no contactar del cliente: quedó excluida. No busques ni reveles a nadie de ella.';
@@ -511,6 +513,56 @@ export async function guardarCuenta(clientId, a, meta) {
   });
 }
 
+// Lo que pasa en el registro cuando la lista de no contactar suma filas (docs/26 §4.3 y §4.4), por
+// cualquier camino: a mano, CSV pegado o archivo. filas: [{ valor, tipo }] ya guardadas.
+//   - Una cuenta en investigación de esa empresa queda excluida, como si el bot la guardara ahora.
+//   - Lo que ya está en marcha en Dripify se frena: la próxima vuelta del reloj (frenarPendientes)
+//     pone en la lista negra de Dripify a cada persona de esas empresas, o con ese mail, que esté
+//     cargada. Lo nuevo (mails, personas, cargas) ya lo frenan los controles de siempre.
+// Corre con el rol de la aplicación y el cliente fijado.
+export async function aplicarNoContactar(clientId, filas, meta = { bot: 'panel', tarea: 'no_contactar' }) {
+  const valores = (t) => [...new Set(filas.filter((f) => f.tipo === t).map((f) => f.valor))];
+  const dominios = valores('dominio');
+  const empresas = valores('empresa');
+  const emails = valores('email');
+  if (!dominios.length && !empresas.length && !emails.length) return { cuentas_excluidas: 0, cuentas_en_marcha: 0, frenos: 0 };
+  return asClient(clientId, async (c) => {
+    const version = await versionActual(c, clientId);
+    const { rows: cuentas } = await c.query(
+      `select k.id, k.nombre, k.estado,
+              (select string_agg(coalesce(n.nombre, n.valor) || coalesce(': ' || n.motivo, ''), '; ')
+                 from sdr.no_contactar n where n.client_id = k.client_id
+                  and ((n.tipo = 'dominio' and n.valor = any($2) and (k.dominio = n.valor or k.dominio like '%.' || n.valor))
+                    or (n.tipo = 'empresa' and n.valor = any($3) and n.valor = k.nombre_clave))) as por
+         from sdr.cuenta k
+        where k.client_id = $1
+          and ((k.dominio is not null and exists (select 1 from unnest($2::text[]) d where k.dominio = d or k.dominio like '%.' || d))
+            or k.nombre_clave = any($3))`,
+      [clientId, dominios, empresas]);
+    let excluidas = 0;
+    for (const k of cuentas.filter((x) => x.estado === 'en_investigacion')) {
+      const motivo = `No contactar: ${k.por}`.slice(0, 500);
+      await c.query(`update sdr.cuenta set estado = 'excluida', estado_motivo = $3, actualizado_at = now() where client_id = $1 and id = $2`,
+        [clientId, k.id, motivo]);
+      await insertarEvento(c, clientId, { tipo: 'cuenta.excluida', cuenta_id: k.id, datos: { motivo } }, { ...meta, version });
+      excluidas++;
+    }
+    const { rowCount: frenos } = await c.query(
+      `update sdr.prospecto
+          set dripify = dripify || jsonb_build_object('freno', jsonb_build_object('pendiente', true, 'motivo', 'está en la lista de no contactar del cliente', 'desde', now()))
+        where client_id = $1 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')
+          and (cuenta_id = any($2::uuid[]) or email = any($3)
+            or exists (select 1 from unnest($4::text[]) d where split_part(email, '@', 2) = d or split_part(email, '@', 2) like '%.' || d))`,
+      [clientId, cuentas.map((k) => k.id), emails, dominios]);
+    return {
+      cuentas_excluidas: excluidas,
+      // En contacto o en pausa: no cambian de estado, pero ya no sale nada nuevo para ellas.
+      cuentas_en_marcha: cuentas.filter((x) => ['en_contacto', 'en_pausa'].includes(x.estado)).length,
+      frenos,
+    };
+  });
+}
+
 const CAMPOS_PROSPECTO = ['cuenta_id', 'asci_id', 'apollo_id', 'nombre', 'cargo', 'area', 'seniority', 'email', 'email_calidad',
   'linkedin_url', 'whatsapp', 'eleccion', 'estado', 'canales', 'dripify', 'proximo_paso', 'proximo_canal', 'proximo_fecha',
   'campana_id'];
@@ -534,7 +586,7 @@ export async function guardarProspecto(clientId, a, meta) {
     if (a.email && a.email !== actual?.email) aControlar.push(a.email);
     const cuentaId = a.cuenta_id ?? actual?.cuenta_id;
     if (!actual && cuentaId) aControlar.push((await cuentaDe(c, clientId, cuentaId)).dominio);
-    const nc = await noContactar.coincidencias(c, clientId, aControlar);
+    const nc = await noContactar.coincidencias(c, clientId, aControlar, { cuentas: !actual && cuentaId ? [cuentaId] : [] });
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);

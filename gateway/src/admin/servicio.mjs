@@ -891,7 +891,9 @@ async function clienteExiste(c, clientId) {
 
 async function listaNoContactar(c, clientId) {
   const { rows } = await c.query(
-    `select valor, tipo, motivo, por_email, at from sdr.no_contactar where client_id = $1 order by at desc, valor limit $2`,
+    `select n.valor, n.tipo, n.nombre, n.motivo, n.por_email, n.at, n.lote_id, l.archivo as lote_archivo
+       from sdr.no_contactar n left join sdr.lote_carga l on l.id = n.lote_id and l.client_id = n.client_id
+      where n.client_id = $1 order by n.at desc, n.valor limit $2`,
     [clientId, noContactar.MAX_FILAS]);
   return { no_contactar: rows, totales: await noContactar.contar(c, clientId) };
 }
@@ -901,6 +903,35 @@ export const noContactarListar = async ({ user, params }) => scoped(user, params
   return listaNoContactar(c, params.client);
 });
 
+// Guarda filas en la lista (las que ya estaban no se tocan) y devuelve las nuevas. filas: { valor,
+// tipo, motivo, nombre? } con la clave ya puesta en las empresas (noContactar.conClaves).
+export async function insertarNoContactar(c, clientId, filas, porEmail, loteId = null) {
+  const { rows } = await c.query(
+    `insert into sdr.no_contactar (client_id, valor, tipo, motivo, nombre, por_email, lote_id)
+     select $1, f.valor, f.tipo, f.motivo, f.nombre, $6, $7
+       from unnest($2::text[], $3::text[], $4::text[], $5::text[]) as f(valor, tipo, motivo, nombre)
+     on conflict (client_id, valor) do nothing returning valor, tipo`,
+    [clientId, filas.map((f) => f.valor), filas.map((f) => f.tipo), filas.map((f) => f.motivo ?? null),
+      filas.map((f) => (f.tipo === 'empresa' ? f.nombre ?? null : null)), porEmail, loteId]);
+  return rows;
+}
+
+// Lo que la lista nueva cambia en el registro (cuentas excluidas, Dripify frenado), y el aviso al
+// orquestador si tocó algo en marcha.
+export async function despuesDeNoContactar(user, clientId, nuevas) {
+  const efecto = await registro.aplicarNoContactar(clientId, nuevas);
+  if (!isBigua(user) && (efecto.cuentas_en_marcha || efecto.frenos)) {
+    await pedirABot(clientId, {
+      para_bot: 'orquestador',
+      que: `El cliente sumó ${nuevas.length} fila(s) a su lista de no contactar desde el panel. ${efecto.cuentas_en_marcha} cuenta(s) ` +
+        `ya estaban en contacto o en pausa y ${efecto.frenos} persona(s) cargadas en Dripify se frenan en la próxima vuelta del reloj. ` +
+        'No les escribas más por ningún canal; si hay mails o mensajes aprobados para esas empresas, no salen. Contáselo al operador de Biguá en el chat.',
+      por_que: 'Altas en la lista de no contactar hechas por el cliente desde el panel.',
+    }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de no contactar', e.message));
+  }
+  return efecto;
+}
+
 // Una fila (valor y motivo) o un CSV entero. Lo que ya estaba no se toca.
 export const noContactarAgregar = async ({ user, params, body }) => {
   const b = V.noContactarAlta(body);
@@ -909,23 +940,25 @@ export const noContactarAgregar = async ({ user, params, body }) => {
   if (b.csv !== undefined) {
     ({ filas, invalidas } = noContactar.leerCsv(b.csv));
   } else {
-    const n = noContactar.normalizar(b.valor);
-    if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio ni un mail.`);
+    const n = noContactar.normalizar(b.valor, { empresa: true });
+    if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio, un mail ni el nombre de una empresa.`);
     filas = [{ ...n, motivo: b.motivo?.trim() || null }];
   }
-  if (!filas.length) throw errors.invalid(invalidas.length ? 'Ningún renglón tiene un dominio o un mail válido.' : 'La lista está vacía.');
-  return scoped(user, params.client, async (c) => {
+  const r = await scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
-    const { rows } = await c.query(
-      `insert into sdr.no_contactar (client_id, valor, tipo, motivo, por_email)
-       select $1, f.valor, f.tipo, f.motivo, $5
-         from unnest($2::text[], $3::text[], $4::text[]) as f(valor, tipo, motivo)
-       on conflict (client_id, valor) do nothing returning valor`,
-      [params.client, filas.map((f) => f.valor), filas.map((f) => f.tipo), filas.map((f) => f.motivo), user.email]);
+    ({ filas, invalidas } = await noContactar.conClaves(c, filas, invalidas));
+    if (!filas.length) {
+      throw errors.invalid(invalidas.length ? 'Ningún renglón tiene un dominio, un mail o un nombre de empresa válido.' : 'La lista está vacía.');
+    }
+    const nuevas = await insertarNoContactar(c, params.client, filas, user.email);
     const unicos = new Set(filas.map((f) => f.valor)).size;
-    await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.length });
-    return { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.slice(0, 50), ...(await listaNoContactar(c, params.client)) };
+    await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.length });
+    return { nuevas, agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.slice(0, 50) };
   });
+  // Con la conexión del panel ya devuelta: una conexión adentro de otra puede trabar el pool.
+  const efecto = await despuesDeNoContactar(user, params.client, r.nuevas);
+  const { nuevas, ...resto } = r;
+  return { ...resto, efecto, ...(await scoped(user, params.client, (c) => listaNoContactar(c, params.client))) };
 };
 
 export const noContactarQuitar = async ({ user, params, body }) => {

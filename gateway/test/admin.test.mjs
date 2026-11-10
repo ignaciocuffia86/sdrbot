@@ -646,16 +646,16 @@ test('no contactar: el cliente carga dominios y mails, el gateway la hace cumpli
   assert.equal(uno.body.data.agregados, 1);
   assert.equal(uno.body.data.no_contactar[0].valor, 'competidor.test');
   assert.equal(uno.body.data.no_contactar[0].por_email, 'ajustes@cliente-b.test');
-  assert.equal((await cli.call('POST', '/clients/adm-b/no-contactar', { valor: 'no es nada' })).status, 400);
+  assert.equal((await cli.call('POST', '/clients/adm-b/no-contactar', { valor: 'ana@' })).status, 400);
 
-  const csv = 'dominio,motivo\nactual.test,Cliente actual\n"juan@otra.test";Pidió que no\nbasura sin forma\n\nCOMPETIDOR.test,repetido\n';
+  const csv = 'dominio,motivo\nactual.test,Cliente actual\n"juan@otra.test";Pidió que no\nbasura.c\n\nCOMPETIDOR.test,repetido\n';
   const carga = await cli.call('POST', '/clients/adm-b/no-contactar', { csv });
   assert.equal(carga.status, 200, JSON.stringify(carga.body));
   assert.equal(carga.body.data.agregados, 2);
   assert.equal(carga.body.data.ya_estaban, 1);
   assert.equal(carga.body.data.invalidas.length, 1);
   assert.equal(carga.body.data.invalidas[0].renglon, 4);
-  assert.deepEqual(carga.body.data.totales, { dominios: 2, emails: 1 });
+  assert.deepEqual(carga.body.data.totales, { dominios: 2, emails: 1, empresas: 0 });
 
   // Otro cliente no la ve, ni por el panel ni en la base.
   const otroCli = await usuarioDeOtroCliente();
@@ -685,7 +685,7 @@ test('no contactar: el cliente carga dominios y mails, el gateway la hace cumpli
   await correo.controlarDestinatarios('adm-b', ['pedro@otra.test'], 'send');
 
   const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.vista_previa;
-  assert.match(vista, /### No contactar\n\nEl cliente tiene 2 dominio\(s\) y 1 mail\(s\)/);
+  assert.match(vista, /### No contactar\n\nEl cliente tiene 2 dominio\(s\), 1 mail\(s\) y 0 empresa\(s\) por nombre/);
 
   const quitar = await cli.call('POST', '/clients/adm-b/no-contactar/quitar', { valores: ['juan@otra.test'] });
   assert.equal(quitar.body.data.quitados, 1);
