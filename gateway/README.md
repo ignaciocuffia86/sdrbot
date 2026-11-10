@@ -159,7 +159,7 @@ La pestaña **Empresa** edita lo que los bots leen como «Ajustes de este client
 - Se valida al guardar (largo, renglones, campos que existen) y se ve cómo lo van a leer los bots.
 - Cada cambio queda en el historial con quién y cuándo, y se puede volver a una versión anterior.
 - En la base, el rol del portal sólo puede actualizar los ajustes de su cliente: ni la calibración ni nada del registro.
-- **LinkedIn · Dripify** (Administración → LinkedIn y WhatsApp, sólo Biguá): API key (cifrada, no vuelve), id de la campaña esqueleto, largo máximo de la nota, **Probar** (campaña activa, campos, números, cupo) y **Generar URL del webhook** (se muestra una vez).
+- **LinkedIn · Dripify** (Administración → LinkedIn y WhatsApp, sólo Biguá): API key (cifrada, no vuelve), campaña esqueleto por defecto (la usan las campañas del SDR sin una propia), largo máximo de la nota, **Probar** (campaña activa, también las propias de cada campaña del SDR, campos, números, cupo) y **Generar URL del webhook** (se muestra una vez).
 - **Despertadores** (Administración → Bots y despertadores, sólo Biguá): el de `seguimiento` (webhook de «SDR · respuestas», avisa el correo nuevo) y el del `orquestador` (webhook de «SDR · aprobaciones», avisa las aprobaciones pendientes, primero las de un positivo; migración `008`). Con URL, clave, horario, días y minutos entre avisos. La clave se guarda cifrada y no se vuelve a mostrar; vacía, se conserva la guardada. Es lo mismo que `sdr-despertador` de la CLI.
 
 ### Dominios: SPF, DKIM, DMARC y MX

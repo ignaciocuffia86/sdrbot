@@ -509,3 +509,22 @@ test('dripify_cargar por campaña: la campaña de Dripify de la campaña, una ca
   assert.equal(pausa.status, 409);
   assert.equal(pausa.error.code, 'campana_inactiva');
 });
+
+test('dripify_estado revisa también la campaña de Dripify propia de cada campaña del SDR', async () => {
+  // «LinkedIn dos» (de la prueba anterior) usa la 76, que existe y está activa.
+  const bien = await ok(tok.c, 'dripify_estado', META);
+  assert.equal(bien.listo, true, JSON.stringify(bien.problemas));
+  assert.deepEqual(bien.campanas.find((x) => x.nombre === 'LinkedIn dos'),
+    { nombre: 'LinkedIn dos', estado: 'pausada', dripify: 76, dripify_nombre: 'Otra', dripify_estado: 'ACTIVE' });
+
+  // Una campaña con una campaña de Dripify que no existe en la cuenta: «Probar» lo dice antes de cargar.
+  const k = (await sql(
+    `insert into sdr.campana (client_id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails, dripify_campana_id)
+     values ($1, 'li-mal', 'LinkedIn mal', 'prospeccion', 'borrador', 3, 0, 999) returning id`, [C])).rows[0];
+  const mal = await ok(tok.c, 'dripify_estado', META);
+  assert.equal(mal.listo, false);
+  assert.ok(mal.problemas.some((x) => /«LinkedIn mal».*999.*no existe/.test(x)), JSON.stringify(mal.problemas));
+  // Terminada, ya no cuenta.
+  await sql(`update sdr.campana set estado = 'terminada', terminada_at = now() where id = $1`, [k.id]);
+  assert.equal((await ok(tok.c, 'dripify_estado', META)).listo, true);
+});

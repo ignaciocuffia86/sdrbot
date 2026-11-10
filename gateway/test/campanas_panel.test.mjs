@@ -90,6 +90,13 @@ test('campañas: la lista arranca con la «principal» migrada', async () => {
   assert.equal(v.columnas.find((x) => x.clave === 'estado').editable, false);
   assert.equal(v.columnas.find((x) => x.clave === 'nombre').editable, true);
   assert.equal(v.buzones_disponibles.length, 2);
+  // La campaña de Dripify por defecto (la de la cuenta) la ve sólo Biguá: es quien la edita.
+  assert.equal(v.dripify_defecto, undefined);
+  await store.asOwner((c) => c.query(
+    `insert into sdr.dripify_cuenta (client_id, campana_id) values ($1, 4242) on conflict (client_id) do update set campana_id = 4242`, [A]));
+  assert.equal(ok(await u.bigua.call('GET', `/clients/${A}/sdr/campanas/${principal.id}`)).dripify_defecto, 4242);
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${principal.id}`)).dripify_defecto, undefined);
+  await store.asOwner((c) => c.query(`delete from sdr.dripify_cuenta where client_id = $1`, [A]));
 });
 
 test('campañas: el cliente operado crea un borrador; el volumen y la activación son de Biguá', async () => {

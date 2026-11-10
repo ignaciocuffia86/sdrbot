@@ -801,7 +801,14 @@ export const campanaCrear = async ({ user, params, body }) => {
 
 export const campanaVer = async ({ user, params }) => scoped(user, params.client, async (c) => {
   await clienteExiste(c, params.client);
-  return campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) });
+  const out = await campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) });
+  // La campaña de Dripify por defecto (la de la cuenta), para mostrar cuál usa la campaña si no elige
+  // una propia. Sólo Biguá: es la que la edita, y el portal no lee la cuenta de Dripify.
+  if (isBigua(user)) {
+    out.dripify_defecto = (await c.query(`select campana_id from sdr.dripify_cuenta where client_id = $1`, [params.client])).rows[0]?.campana_id ?? null;
+    if (out.dripify_defecto !== null) out.dripify_defecto = Number(out.dripify_defecto);
+  }
+  return out;
 });
 
 export const campanaGuardar = async ({ user, params, body }) => {

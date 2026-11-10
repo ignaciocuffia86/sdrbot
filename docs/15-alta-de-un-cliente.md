@@ -233,7 +233,7 @@ Si el cliente va también por LinkedIn. Lo que se arma en Dripify (plan con Open
 [`20`](20-etapa-3-linkedin-dripify.md) §2 y §3. En el panel:
 
 1. **⚙ Administración → LinkedIn y WhatsApp** → **LinkedIn · Dripify**: la API key (la pega Biguá ahí,
-   nunca por chat), el id de la campaña y el largo máximo de la nota (300 con LinkedIn Premium, 200 sin).
+   nunca por chat), la campaña por defecto (la que usan las campañas del SDR que no eligen una propia) y el largo máximo de la nota (300 con LinkedIn Premium, 200 sin).
    El cliente ve el estado en **Canales**.
 2. **Probar:** tiene que decir «listo».
 3. **Generar URL del webhook** y cargarla en la campaña de Dripify, una por disparador, con

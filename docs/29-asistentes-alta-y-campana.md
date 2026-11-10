@@ -58,7 +58,7 @@ campaña.
 | Qué ofrecemos | Propuesta y casos que se citan |
 | Mensaje y llamado a la acción | Qué se le pide al prospecto, links, tono e idioma |
 | Respuestas e interesados | Positivos, objeciones y quién toma a los interesados si no es el de Empresa |
-| Canales y ritmo | Buzones, cuentas por día, Dripify y calibración |
+| Canales y ritmo | Buzones, cuentas por día, la campaña de Dripify (vacía, la por defecto de la cuenta) y calibración |
 | Revisar y activar | Lo que falta para activarla, lo pendiente y cómo la leen los bots |
 
 Un paso queda listo al guardarlo sin que le falte nada de lo que exige la campaña para activarse. El de cuentas no tiene formulario: queda listo con «Listo, seguir», y en una lista sólo si ya hay cuentas cargadas.
