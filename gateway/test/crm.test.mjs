@@ -231,6 +231,11 @@ test('conectar: el token queda cifrado, el origen y el dueño se validan contra 
   assert.equal(a.contacto.email, 'ana@x.test');
   assert.equal(a.contacto.firstname, 'Ana');
   assert.equal(a.contacto.segmento, 'pyme');
+  // Un campo fijo (sólo Biguá) gana sobre el origen (lo puede elegir el cliente), aunque una
+  // configuración guardada los hiciera chocar.
+  const b = crm.armar({ cliente: 'X', p: { id: 'p', nombre: 'Ana', email: 'ana@x.test' }, cuenta: null },
+    { origen_campo: 'segmento', origen_valor: 'corp', campos_fijos: { segmento: 'pyme' } });
+  assert.equal(b.contacto.segmento, 'pyme');
   const ok1 = await crm.configurar(C, { origen_campo: 'origen_lead', origen_valor: 'sdr_bigua', dueno_defecto: '101' });
   assert.equal(ok1.portal_id, '4242');
 
@@ -505,6 +510,15 @@ test('panel: Biguá y el cliente conectan, ven las cargas y cargan a mano; el cl
   assert.ok(g.body.data.positivos_sin_cargar.some((p) => p.id === P.sin.p.id), 'el positivo de antes de conectar aparece');
 
   assert.equal((await cli.call('PUT', `/clients/${C}/crm`, { tope_dia: 900 })).status, 403);
+  // El cliente no puede pisar un campo fijo de Biguá eligiéndolo como origen.
+  assert.equal((await bigua.call('PUT', `/clients/${C}/crm`, { campos_fijos: { segmento: 'pyme' } })).status, 200);
+  const choque = await cli.call('PUT', `/clients/${C}/crm`, { origen_campo: 'segmento', origen_valor: 'corp' });
+  assert.equal(choque.status, 400);
+  assert.match(choque.body.error.message, /campo fijo que carga Biguá/);
+  const [fijo] = await sql(`select origen_campo, campos_fijos from sdr.crm_conexion where client_id = $1`, [C]);
+  assert.equal(fijo.origen_campo, 'origen_lead');
+  assert.deepEqual(fijo.campos_fijos, { segmento: 'pyme' });
+  assert.equal((await bigua.call('PUT', `/clients/${C}/crm`, { campos_fijos: {} })).status, 200);
   assert.equal((await cli.call('PUT', `/clients/${C}/crm`, { origen_valor: 'x', origen_campo: 'origen_lead' })).status, 400);
   const pausa = await cli.call('PUT', `/clients/${C}/crm`, { estado: 'pausada' });
   assert.equal(pausa.body.data.conexion.estado, 'pausada');

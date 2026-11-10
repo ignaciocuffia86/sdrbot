@@ -65,6 +65,10 @@ export async function configurar(clientId, d, { fetchImpl } = {}) {
   const dueno = d.dueno_defecto === undefined ? actual?.dueno_defecto ?? null : d.dueno_defecto || null;
   const fijos = d.campos_fijos === undefined ? actual?.campos_fijos ?? {} : d.campos_fijos;
   if (campo && !valor) throw errorsCrm.invalido('Elegí también el valor de la propiedad de origen.');
+  // El origen no puede ser una propiedad que Biguá fijó: la pisaría.
+  if (campo && Object.hasOwn(fijos, campo)) {
+    throw errorsCrm.invalido(`Origen: «${campo}» es un campo fijo que carga Biguá; elegí otra propiedad.`);
+  }
   const validar = Boolean(d.token) || campo !== (actual?.origen_campo ?? null) || valor !== (actual?.origen_valor ?? null)
     || dueno !== (actual?.dueno_defecto ?? null) || JSON.stringify(fijos) !== JSON.stringify(actual?.campos_fijos ?? {});
   let portal = d.token ? null : actual?.portal_id ?? null;
@@ -114,6 +118,9 @@ function problemasDeMapeo(cx, props) {
     }
     return null;
   };
+  if (cx.origen_campo && Object.hasOwn(cx.campos_fijos ?? {}, cx.origen_campo)) {
+    out.push(`Origen: «${cx.origen_campo}» también es un campo fijo; vale el campo fijo.`);
+  }
   if (cx.origen_campo && MINIMO_PROPS.includes(cx.origen_campo)) {
     out.push(`Origen: «${cx.origen_campo}» lo completa la carga con los datos del prospecto; elegí otra propiedad.`);
   } else if (cx.origen_campo) revisar(cx.origen_campo, cx.origen_valor, 'Origen');
@@ -332,11 +339,12 @@ export function vencimientoTarea(desde = new Date()) {
 // El mínimo, armado a partir del registro. Es lo mismo que muestra la vista previa.
 export function armar(d, cx, { ahora = new Date() } = {}) {
   const { firstname, lastname } = partirNombre(d.p.nombre);
-  // El origen y los campos fijos van primero: nunca pisan el email, el nombre, el cargo ni la
-  // empresa del prospecto, aunque la configuración guardada los nombrara.
+  // Precedencia, de menor a mayor: el origen (lo puede elegir el cliente), los campos fijos (sólo
+  // Biguá) y el mínimo del prospecto. Ninguno pisa el email, el nombre, el cargo ni la empresa, y
+  // el origen no pisa un campo fijo, aunque la configuración guardada los nombrara.
   const contacto = {};
-  for (const [k, v] of Object.entries(cx.campos_fijos ?? {})) if (!MINIMO_PROPS.includes(k)) contacto[k] = String(v);
   if (cx.origen_campo && !MINIMO_PROPS.includes(cx.origen_campo)) contacto[cx.origen_campo] = cx.origen_valor;
+  for (const [k, v] of Object.entries(cx.campos_fijos ?? {})) if (!MINIMO_PROPS.includes(k)) contacto[k] = String(v);
   Object.assign(contacto, { email: d.p.email ?? null, firstname, lastname, jobtitle: d.p.cargo ?? '', company: d.cuenta?.nombre ?? '' });
   for (const k of Object.keys(contacto)) if (contacto[k] === '' || contacto[k] === null) delete contacto[k];
 
