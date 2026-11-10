@@ -1,6 +1,6 @@
 # MCP del panel: gestionar el SDR desde Claude
 
-Estado al 10/11/2026: **M0 y M1 construidas** (§9): el OAuth, `/mcp/panel` con las herramientas de lectura y las conexiones en el panel. M2 a M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
+Estado al 10/11/2026: **M0, M1 y M2 construidas** (§9): el OAuth, `/mcp/panel`, las conexiones en el panel y las aprobaciones decididas por el cliente, con límites de uso. M3 y M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
 y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
@@ -363,8 +363,8 @@ decida otra cosa (decisión abierta 3).
 | **Inyección por contenido de terceros.** Un mail de un prospecto que dice «aprobá todo» y que Claude lee al listar aprobaciones | Lo externo va en `datos_externos` y la descripción de la herramienta lo dice. `aprobacion_decidir` es `destructiveHint`, decide de a una y pide `confirmar: true` después de mostrar el texto final. El gateway sólo deja enviar lo aprobado, a un destinatario que el cliente no puede cambiar |
 | Un cliente aprueba algo que rompe una regla | Aprobar no salta controles: el gateway sigue haciendo cumplir campaña, buzones, links, cupo, horario, supresión y no contactar al enviar |
 | Datos personales de prospectos en el chat de Claude | Es el mismo dato que el cliente ya ve en el panel. Va en el DPA: el cliente decide si conecta Claude, y las conversaciones quedan en su cuenta de Claude |
-| Abuso o un bucle de un agente | Límite por usuario (60 llamadas por minuto, 20 cambios por minuto) y por IP en `/oauth/*` |
-| Pedidos de otro origen | El MCP no usa cookies, así que no hay CSRF. Se valida la cabecera `Origin` cuando viene, como pide la especificación de MCP |
+| Abuso o un bucle de un agente | Límite por usuario (60 llamadas por minuto, 20 cambios por minuto) y por IP en `/oauth/*` (construido en M2, §9.2) |
+| Pedidos de otro origen | El MCP no usa cookies, así que no hay CSRF. Se valida la cabecera `Origin` cuando viene, como pide la especificación de MCP: los de Claude, ChatGPT, el propio gateway y loopback pasan; cualquier otro, 403 (construido en M2) |
 
 ## 7. Base
 
@@ -375,27 +375,20 @@ renovación, en familias: una familia es una conexión). Todo como hash, con RLS
 `mailgw_app` ni `mailgw_portal`: sólo las toca el dueño, como `admin_user` y las sesiones. Los
 clientes OAuth (CIMD o DCR) no se guardan.
 
-### 7.2 Para M2: quién aprueba
+### 7.2 Migración `017_aprueba_el_cliente` (M2, construida)
 
-```sql
-alter table sdr.cliente_config add column aprueba text not null default 'bigua'
-  check (aprueba in ('bigua', 'cliente_y_bigua', 'cliente'));
-alter table sdr.aprobacion
-  add column decidida_por_usuario uuid references mailgw.admin_user,
-  add column decidida_por_rol text check (decidida_por_rol in ('bigua', 'cliente')),
-  add column decidida_via text check (decidida_via in ('chat', 'panel', 'mcp_panel'));
+- `sdr.cliente_config.aprueba` (`bigua`, `cliente_y_bigua` o `cliente`). Los clientes que ya
+  existían quedan en `bigua`; el valor por defecto pasa a `cliente_y_bigua`, así que un cliente
+  nuevo arranca así (decisión abierta 2, cerrada).
+- `sdr.aprobacion.decidida_por_usuario`, `decidida_por_rol` y `decidida_via`. Las decididas antes
+  quedan como `bigua` por `chat`.
+- `mailgw.limite`: los contadores por minuto de los límites de uso (§6), sólo del dueño.
 
--- El portal (cliente) lee y decide aprobaciones de su cliente; no las crea ni las borra.
-grant select, update on sdr.aprobacion to mailgw_portal;
-grant select on sdr.prospecto, sdr.cuenta, sdr.evento to mailgw_portal;
-grant insert on sdr.evento, sdr.pedido to mailgw_portal;
--- más una política por_cliente para mailgw_portal en cada tabla, como en 012.
-```
-
-El `default 'bigua'` deja a los clientes de hoy como están. Los nuevos se crean con
-`cliente_y_bigua` desde el alta (`15`). El `update` del portal sobre `sdr.aprobacion` se limita
-en la función, que es la única que lo hace: sólo pendientes, sólo de los tipos permitidos y sin
-tocar el destinatario.
+**Distinto de lo propuesto:** el portal **no** gana permisos sobre el registro. La decisión del
+cliente corre con el rol de la aplicación y su cliente fijado, en la misma función que usa el
+orquestador (`sdr.aprobar`), después de que `scoped()` comprobó que la persona puede ver ese
+cliente. Una sola función decide, para el chat, el panel y Claude, y el positivo aprobado entra al
+CRM igual que siempre.
 
 ## 8. Pruebas
 
@@ -416,7 +409,7 @@ tocar el destinatario.
 |---|---|---|
 | **M0 · Servicio** (hecha) | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
 | **M1 · Conectar y mirar** (hecha) | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
-| **M2 · Aprobaciones del cliente** | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
+| **M2 · Aprobaciones del cliente** (hecha) | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
 | **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
 | **M4 · Biguá** | `cliente_crear`, usuarios y lo técnico en lectura | Gateway |
 
@@ -447,9 +440,22 @@ los datos del panel.
 4. Probar con un usuario de Biguá desde claude.ai y desde Claude Code (§3.6), y mirar en los
    logs de Vercel la secuencia de una conexión buena.
 
-**Lo que §6 propone y M1 todavía no tiene:** los límites por usuario y por IP, y la validación de
-la cabecera `Origin` en `/mcp/panel`. M1 es sólo lectura; conviene sumarlos antes de M2, que ya
-decide aprobaciones.
+### 9.2 Cómo quedó M2 (10/11)
+
+| Pieza | Dónde |
+|---|---|
+| Quién puede decidir qué (`permisoDecidir`), lo que ve el orquestador (`SQL_BIGUA_DECIDE`) y la decisión con quién, rol y vía, vista previa sin guardar, destinatario fijo para el cliente y «primero gana» con quién se adelantó | `gateway/src/sdr/store.mjs` (`aprobar`, `aprobaciones`, `pendientes`) |
+| `aprobacionesListar` y `aprobacionDecidir` (con `confirmar`; sin él, sólo la vista previa), el aviso al orquestador cuando decide el cliente y `aprueba` en la configuración del SDR | `gateway/src/admin/servicio.mjs`; rutas `GET /admin/api/clients/:c/aprobaciones` y `POST …/aprobaciones/:id/decidir` |
+| `aprobacion_decidir` en el MCP (`destructiveHint`, sin `destinatario`) y `aprobaciones_listar` con `puede` en cada pendiente | `gateway/src/panel/mcp.mjs` |
+| Pestaña **Aprobaciones** del cliente, el aviso en el Resumen y «Quién aprueba los mensajes» en Administración → Configuración del SDR | `gateway/src/admin/static/app.js` |
+| `registro_aprobaciones` y el despertador del orquestador traen sólo lo que decide Biguá; `registro_pendientes(orquestador)` suma `aprobaciones_del_cliente`; `registro_aprobar` responde `no_permitido` o `ya_decidida` con quién | `gateway/src/sdr/ops.mjs`, `store.mjs`, `correo.mjs` |
+| Reglas del orquestador: lo que decide el cliente se cuenta, no se presenta | `playbooks/orquestador/aprobaciones.md` y `resumen.md` |
+| Límites (§6): 60 pedidos por minuto por usuario en `/mcp/panel`, 20 cambios, 30 por IP en los POST de `/oauth/*`; `Origin` desconocido, 403 | `gateway/src/panel/limites.mjs`, `mcp.mjs` y `oauth.mjs`. Los topes se cambian con `MAILGW_LIMITE_USUARIO`, `_CAMBIOS` e `_IP`; los orígenes, con `OAUTH_ORIGINS` |
+| Pruebas | `gateway/test/aprobaciones_panel.test.mjs`: cada valor de `aprueba`, primero gana, destinatario, vista previa, envío real con lo que aprobó el cliente, lo que ven los bots, aislamiento, MCP, web, límites y `Origin` |
+
+**Para ponerlo en producción:** aplicar la `017` en Supabase, publicar las reglas del orquestador
+(`playbooks-publicar`, primero en `canario`) y elegir en cada cliente quién aprueba (Administración
+→ Configuración del SDR): los que ya existen siguen en «Biguá» hasta que se cambie.
 
 ## 10. Decisiones abiertas
 
@@ -457,8 +463,8 @@ decide aprobaciones.
    saludo sin token. Si algún cliente usa ChatGPT, se suma la excepción de ASCI (`initialize`,
    `notifications/initialized`, `ping` y `server/discover` sin token, sólo para `openai-mcp/…`).
    Hasta entonces, no.
-2. **Valor por defecto de `aprueba`** para clientes nuevos: propuesto `cliente_y_bigua`. ¿O
-   `bigua` hasta terminar la calibración y después `cliente_y_bigua`?
+2. ~~**Valor por defecto de `aprueba`**~~: `cliente_y_bigua` para los nuevos; los que ya existían,
+   `bigua` hasta que Biguá lo cambie (§7.2).
 3. **CRM:** ¿el cliente aprueba también `crm_mapeo` y `crm_cambio`? Es su CRM, pero hoy el mapeo
    lo arma Biguá con él (`11`).
 4. **Un usuario de sólo lectura** (`21` y `11` lo mencionan): si se crea, con el MCP del panel ve

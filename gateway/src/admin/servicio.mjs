@@ -18,6 +18,7 @@ import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import { diferencias, editable, formularioEmpresa, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
+import * as registro from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
 import * as whatsapp from '../sdr/whatsapp.mjs';
 import * as monitor from '../sdr/monitor.mjs';
@@ -96,6 +97,24 @@ const V = {
       zona_horaria: { type: 'string', maxLength: 64 },
       modo: { enum: ['operado', 'autogestionado'] },
       tope_cuentas_dia: { type: ['integer', 'null'], minimum: 0, maximum: 100 },
+      aprueba: { enum: ['bigua', 'cliente_y_bigua', 'cliente'] },
+    } }),
+  aprobacionesListar: validator({ type: 'object', additionalProperties: false,
+    properties: {
+      estado: { enum: ['pendiente', 'aprobada', 'rechazada', 'usada'], default: 'pendiente' },
+      limite: { type: 'integer', minimum: 1, maximum: 100, default: 30 },
+    } }),
+  aprobacionDecidir: validator({ type: 'object', required: ['decision'], additionalProperties: false,
+    properties: {
+      decision: { enum: ['aprobada', 'rechazada'] },
+      nota: { type: 'string', maxLength: 2000 },
+      asunto: { type: 'string', minLength: 1, maxLength: 500 },
+      texto: { type: 'string', minLength: 1, maxLength: 20000 },
+      destinatario: { type: 'string', maxLength: 320 },
+      linkedin: { type: 'object', required: ['nota', 'mensaje1', 'mensaje2'], additionalProperties: false,
+        properties: { nota: { type: 'string', maxLength: 300 }, mensaje1: { type: 'string', maxLength: 1000 },
+          mensaje2: { type: 'string', maxLength: 1000 } } },
+      confirmar: { type: 'boolean', default: false },
     } }),
   noContactarAlta: validator({ type: 'object', additionalProperties: false, minProperties: 1,
     properties: {
@@ -496,6 +515,7 @@ async function leerSdr(c, user, clientId) {
     out.tecnico = cfg ? {
       canal: cfg.canal, version_fija: cfg.version_fija, calibracion_mails: cfg.calibracion_mails, calibracion_usadas: usadas,
       bots_activos: cfg.bots_activos, zona_horaria: cfg.zona_horaria, modo: cfg.modo, tope_cuentas_dia: cfg.tope_cuentas_dia,
+      aprueba: cfg.aprueba ?? 'bigua',
     } : null;
     out.bots = BOTS;
     out.despertador = await verDespertador(c, clientId, 'seguimiento');
@@ -827,6 +847,7 @@ const OPS_PANEL = {
   'admin.sdr.no_contactar.quitar': 'baja de no contactar', 'admin.sdr.whatsapp': 'reglas de WhatsApp',
   'admin.sdr.whatsapp.reanudar': 'WhatsApp reanudado', 'admin.domain.check': 'dominio verificado',
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
+  'admin.sdr.aprobacion': 'aprobación decidida en el panel',
   'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida', 'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
@@ -972,6 +993,11 @@ export const resumenVer = async ({ user, params }) => {
       return {
         calibracion: { usados: Math.min(usadas, base.cfg.calibracion_mails), total: base.cfg.calibracion_mails },
         aprobaciones_pendientes: await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and estado = 'pendiente'`),
+        // Las que puede decidir el cliente, para el aviso «N mensajes esperan tu OK» (docs/24 §5).
+        aprobaciones_del_cliente: await n(`select count(*)::int as n from sdr.aprobacion a where client_id = $1 and estado = 'pendiente'
+            and a.tipo = any('{${registro.TIPOS_MENSAJE.join(',')}}'::text[])
+            and coalesce((select aprueba from sdr.cliente_config cc where cc.client_id = a.client_id), 'bigua') <> 'bigua'`),
+        aprueba: (await c.query(`select aprueba from sdr.cliente_config where client_id = $1`, [params.client])).rows[0]?.aprueba ?? 'bigua',
         correo_sin_atender: await n(`select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`),
         linkedin_sin_atender: await n(`select count(*)::int as n from sdr.linkedin_respuesta where client_id = $1 and estado = 'nuevo'`),
         semana: numeros(null),
@@ -1141,3 +1167,50 @@ export const conexionRevocar = async ({ user, params }) => asOwner(async (c) => 
   if (dueno?.client_id) await audit(c, user, dueno.client_id, 'admin.conexion.revocar', { cliente_oauth: rows[0].cliente_nombre });
   return { revocada: true };
 });
+
+// ----- aprobaciones (docs/24 §5): las ve el cliente y las decide si su configuración lo deja
+//
+// La decisión corre con el rol de la aplicación y el cliente fijado (sdr.aprobar, la misma función
+// que usa el orquestador), después de comprobar con scoped que la persona puede ver ese cliente. Quién
+// decidió sale de la sesión: el usuario, su rol y por dónde (panel o mcp_panel).
+
+const rolDe = (user) => (isBigua(user) ? 'bigua' : 'cliente');
+
+export const aprobacionesListar = async ({ user, params, body }) => {
+  const b = V.aprobacionesListar(body ?? {});
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  const r = await registro.aprobaciones(params.client, { estado: b.estado, limite: b.limite });
+  return {
+    aprueba: r.aprueba,
+    aprobaciones: r.aprobaciones.map((x) => ({
+      ...x, ...(x.estado === 'pendiente' ? { puede: registro.permisoDecidir(x, r.aprueba, rolDe(user)) } : {}),
+    })),
+  };
+};
+
+export const aprobacionDecidir = async ({ user, params, body, via = 'panel' }) => {
+  const b = V.aprobacionDecidir(body ?? {});
+  if (!/^[0-9a-f-]{36}$/i.test(String(params.id))) throw notFound('No existe esa aprobación.');
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  const { confirmar, decision, ...resto } = b;
+  const quien = { rol: rolDe(user), via, usuario: user.id ?? null, email: user.email };
+  const r = await registro.aprobar(params.client, { id: params.id, decision, ...resto, operador: user.email },
+    { bot: 'panel' }, { quien, simular: !confirmar });
+  if (!confirmar) {
+    return { ...r, confirmar: 'Así queda. Para decidir, repetí la llamada con confirmar: true.' };
+  }
+  await asOwner((c) => audit(c, user, params.client, 'admin.sdr.aprobacion', { aprobacion: params.id, decision, via,
+    editada: ['asunto', 'texto', 'linkedin'].some((k) => resto[k] !== undefined) }));
+  // El orquestador se lo cuenta al operador en el chat y deja de presentarla (docs/24 §5.3).
+  if (!isBigua(user)) {
+    const a = r.aprobacion;
+    const quienEs = a.contenido?.destinatario ? ` a ${citaCliente(a.contenido.destinatario, 120)}` : '';
+    await pedirABot(params.client, {
+      para_bot: 'orquestador',
+      que: `El cliente ${decision === 'aprobada' ? 'aprobó' : 'rechazó'} desde el panel la aprobación ${a.id} (${a.tipo}${quienEs})` +
+        `${b.nota ? `, con esta nota: ${citaCliente(b.nota, 300)}` : ''}. Contáselo al operador de Biguá en el chat; ya no hay que presentársela. ${AVISO_DATOS}`,
+      por_que: 'Aprobación decidida por el cliente.',
+    }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de aprobación', e.message));
+  }
+  return r;
+};

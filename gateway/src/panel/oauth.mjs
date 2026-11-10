@@ -17,6 +17,7 @@
 import crypto from 'node:crypto';
 import { getPool } from '../store.mjs';
 import { verificarCredenciales } from '../admin/auth.mjs';
+import { contar, ipDe, TOPES } from './limites.mjs';
 import {
   clienteCimd, clienteRegistrado, credencialesBasic, emisor, escapar, esClienteCimd, firmar, nombreLimpio,
   pkceCoincide, redirectDeclarado, redirectPermitido, secretoCliente, sha256, verificar,
@@ -505,6 +506,23 @@ export async function handleOauth(req, res, path) {
   const post = ['register', 'login', 'token', 'revoke'].includes(que);
   if (post && req.method !== 'POST') { errorOauth(res, 405, 'invalid_request', 'Sólo POST.', { Allow: 'POST' }); return true; }
   if (!post && req.method !== 'GET' && req.method !== 'HEAD') { errorOauth(res, 405, 'invalid_request', 'Sólo GET.', { Allow: 'GET' }); return true; }
+  // Tope por IP en lo que escribe o prueba contraseñas (docs/24 §6). La metadata y authorize no cuentan.
+  if (post) {
+    try {
+      await contar(`ip:${ipDe(req)}`, TOPES.ip);
+    } catch (e) {
+      if (e.code !== 'rate_limited') throw e;
+      log('tope por IP', { ruta: path });
+      const cab = { 'Retry-After': String(e.extra.reintentar_en) };
+      if (que === 'login') {
+        for (const [k, v] of Object.entries(cab)) res.setHeader(k, v);
+        pagina(res, 429, 'Demasiados intentos', `<p>${escapar(e.message)}</p>`);
+      } else {
+        errorOauth(res, 429, 'rate_limited', e.message, cab);
+      }
+      return true;
+    }
+  }
 
   const params = new URL(req.url ?? '/', 'http://local').searchParams;
   if (que === 'prm') json(res, 200, metadataRecurso(req));

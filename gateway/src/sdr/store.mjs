@@ -760,7 +760,12 @@ export async function pendientes(clientId, bot) {
     const out = { pedidos, aprobaciones_para_ejecutar: aprobadas, aprobaciones_rechazadas: rechazadas };
     if (bot === 'orquestador') {
       out.aprobaciones_por_decidir = (await c.query(
-        `select * from sdr.aprobacion where client_id = $1 and estado = 'pendiente' order by creado_at`, [clientId])).rows;
+        `select * from sdr.aprobacion a where client_id = $1 and estado = 'pendiente' and ${SQL_BIGUA_DECIDE} order by creado_at`,
+        [clientId])).rows;
+      // Las que esperan al cliente: el orquestador sólo las cuenta, no las presenta (docs/24 §5.4).
+      out.aprobaciones_del_cliente = (await c.query(
+        `select count(*)::int as n, min(creado_at) as desde from sdr.aprobacion a
+          where client_id = $1 and estado = 'pendiente' and not ${SQL_BIGUA_DECIDE}`, [clientId])).rows[0];
     }
     return out;
   });
@@ -794,32 +799,81 @@ export async function pedirAprobacion(clientId, a, meta) {
   });
 }
 
-export async function aprobaciones(clientId, { estado, limite }) {
+// ---- quién decide (docs/24 §5, migración 017)
+//
+// Los mensajes los puede decidir el cliente si su configuración lo deja (aprueba); el resto, sólo
+// Biguá. Con aprueba = 'cliente', Biguá puede rechazar un mensaje pero no aprobarlo.
+export const TIPOS_MENSAJE = ['calibracion_mail', 'respuesta_positivo', 'whatsapp_primero'];
+const SQL_MENSAJE = `a.tipo in ('calibracion_mail', 'respuesta_positivo', 'whatsapp_primero')`;
+const SQL_APRUEBA = `coalesce((select cc.aprueba from sdr.cliente_config cc where cc.client_id = a.client_id), 'bigua')`;
+// Lo que Biguá tiene para decidir (aprobar o rechazar): lo que el orquestador le presenta.
+export const SQL_BIGUA_DECIDE = `(not ${SQL_MENSAJE} or ${SQL_APRUEBA} <> 'cliente')`;
+
+// Qué puede hacer quien decide con una aprobación: { aprobar, rechazar } y por qué no, si no puede.
+export function permisoDecidir(aprobacion, aprueba, rol) {
+  const mensaje = TIPOS_MENSAJE.includes(aprobacion.tipo);
+  if (rol === 'cliente') {
+    if (!mensaje) return { aprobar: false, rechazar: false, motivo: 'Esta aprobación es de Biguá (no es un mensaje).' };
+    if (aprueba === 'bigua') return { aprobar: false, rechazar: false, motivo: 'En este cliente los mensajes los aprueba Biguá.' };
+    return { aprobar: true, rechazar: true };
+  }
+  if (mensaje && aprueba === 'cliente') {
+    return { aprobar: false, rechazar: true, motivo: 'En este cliente los mensajes los aprueba el cliente: Biguá sólo puede rechazar.' };
+  }
+  return { aprobar: true, rechazar: true };
+}
+
+export async function aprobaciones(clientId, { estado, limite, paraBigua = false }) {
   return asClient(clientId, async (c) => ({
+    aprueba: (await c.query(`select aprueba from sdr.cliente_config where client_id = $1`, [clientId])).rows[0]?.aprueba ?? 'bigua',
     aprobaciones: (await c.query(
       `select a.*, p.nombre as prospecto_nombre, p.email as prospecto_email, k.nombre as cuenta
          from sdr.aprobacion a left join sdr.prospecto p on p.id = a.prospecto_id left join sdr.cuenta k on k.id = p.cuenta_id
-        where a.client_id = $1 and a.estado = $2 order by a.creado_at limit $3`, [clientId, estado, limite])).rows,
+        where a.client_id = $1 and a.estado = $2 ${paraBigua && estado === 'pendiente' ? `and ${SQL_BIGUA_DECIDE}` : ''}
+        order by a.creado_at limit $3`, [clientId, estado, limite])).rows,
   }));
 }
 
-export async function aprobar(clientId, a, meta) {
+// Decide una aprobación. `quien` dice quién decide: { rol: 'bigua' | 'cliente', via: 'chat' | 'panel' |
+// 'mcp_panel', usuario, email }. Sin quien, es el operador de Biguá por el chat del orquestador
+// (registro_aprobar), con a.operador. Con simular, valida y devuelve cómo quedaría, sin guardar.
+export async function aprobar(clientId, a, meta, { quien = null, simular = false } = {}) {
+  const q = quien ?? { rol: 'bigua', via: 'chat', usuario: null, email: a.operador };
   return asClient(clientId, async (c) => {
     const { rows: prev } = await c.query(`select * from sdr.aprobacion where client_id = $1 and id = $2 for update`, [clientId, a.id]);
     if (!prev.length) throw errorsSdr.noExiste(`la aprobación ${a.id}`);
     if (prev[0].estado !== 'pendiente') {
-      throw new GatewayError('ya_decidida', `La aprobación ya está ${prev[0].estado}.`, 409);
+      // Primero gana: quien llega segundo ve quién se le adelantó.
+      throw new GatewayError('ya_decidida', `La aprobación ya está ${prev[0].estado}` +
+        `${prev[0].decidida_por ? ` (la decidió ${prev[0].decidida_por}${prev[0].decidida_por_rol === 'cliente' ? ', del cliente' : ''})` : ''}.`, 409);
+    }
+    const aprueba = (await c.query(`select aprueba from sdr.cliente_config where client_id = $1`, [clientId])).rows[0]?.aprueba ?? 'bigua';
+    const permiso = permisoDecidir(prev[0], aprueba, q.rol);
+    if (!permiso[a.decision === 'aprobada' ? 'aprobar' : 'rechazar']) {
+      throw new GatewayError('no_permitido', permiso.motivo ?? 'No podés decidir esta aprobación.', 403);
+    }
+    // El cliente corrige el asunto y el texto, no a quién va (docs/24 §5.2).
+    if (q.rol === 'cliente' && a.destinatario !== undefined
+        && String(a.destinatario).trim().toLowerCase() !== String(prev[0].contenido?.destinatario ?? '').trim().toLowerCase()) {
+      throw new GatewayError('no_permitido', 'El destinatario no se cambia desde acá: rechazá la aprobación con una nota y el bot propone otra persona.', 403);
     }
     const cambios = {};
     for (const k of ['asunto', 'texto', 'destinatario', 'linkedin']) if (a[k] !== undefined) cambios[k] = a[k];
+    if (q.rol === 'cliente') delete cambios.destinatario;
     const final = a.decision === 'aprobada' ? { ...prev[0].contenido, ...cambios } : null;
+    if (simular) {
+      return { simulada: true, decision: a.decision, tipo: prev[0].tipo, contenido_final: final,
+        editada: Object.keys(cambios).length > 0, nota: a.nota ?? null };
+    }
     const { rows } = await c.query(
-      `update sdr.aprobacion set estado = $3, decision_contenido = $4, decision_nota = $5, decidida_por = $6, decidida_at = now()
+      `update sdr.aprobacion set estado = $3, decision_contenido = $4, decision_nota = $5, decidida_por = $6, decidida_at = now(),
+              decidida_por_usuario = $7, decidida_por_rol = $8, decidida_via = $9
         where client_id = $1 and id = $2 returning *`,
-      [clientId, a.id, a.decision, final ? JSON.stringify(final) : null, a.nota ?? null, a.operador]);
+      [clientId, a.id, a.decision, final ? JSON.stringify(final) : null, a.nota ?? null, q.email ?? a.operador,
+        q.usuario ?? null, q.rol, q.via]);
     if (prev[0].prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'aprobacion.decidida', prospecto_id: prev[0].prospecto_id,
-        datos: { aprobacion: a.id, decision: a.decision, operador: a.operador, editada: Object.keys(cambios).length > 0 } },
+        datos: { aprobacion: a.id, decision: a.decision, operador: q.email ?? a.operador, rol: q.rol, via: q.via, editada: Object.keys(cambios).length > 0 } },
       { ...meta, version: await versionActual(c, clientId) });
     }
     // Un positivo aprobado entra a la cola del CRM en esta misma transacción (docs/23 §3.1): si la
@@ -830,7 +884,7 @@ export async function aprobar(clientId, a, meta) {
         `insert into sdr.crm_carga (client_id, prospecto_id, motivo, aprobacion_id, pedida_por)
          select $1, $2, 'positivo', $3, $4 where exists (select 1 from sdr.crm_conexion where client_id = $1)
          on conflict (client_id, prospecto_id) do nothing returning id`,
-        [clientId, prev[0].prospecto_id, a.id, a.operador]);
+        [clientId, prev[0].prospecto_id, a.id, q.email ?? a.operador]);
       if (k.length) crm = { carga: Number(k[0].id), estado: 'pendiente' };
     }
     return {
@@ -990,11 +1044,11 @@ export async function setConfig(clientId, cfg) {
   return asOwner(async (c) => {
     const { rows } = await c.query(
       `insert into sdr.cliente_config (client_id, canal, version_fija, ajustes, bots_activos, zona_horaria, calibracion_mails,
-                                       modo, tope_cuentas_dia)
+                                       modo, tope_cuentas_dia, aprueba)
        values ($1, coalesce($2::text, 'estable'), $3::text, coalesce($4::jsonb, '{}'::jsonb),
                coalesce($5::text[], '{orquestador,prospector}'::text[]),
                coalesce($6::text, 'America/Argentina/Buenos_Aires'), coalesce($7::int, 20),
-               coalesce($9::text, 'operado'), $10::int)
+               coalesce($9::text, 'operado'), $10::int, coalesce($12::text, 'cliente_y_bigua'))
        on conflict (client_id) do update set
          canal = coalesce($2::text, sdr.cliente_config.canal),
          version_fija = case when $8::boolean then $3::text else sdr.cliente_config.version_fija end,
@@ -1004,11 +1058,12 @@ export async function setConfig(clientId, cfg) {
          calibracion_mails = coalesce($7::int, sdr.cliente_config.calibracion_mails),
          modo = coalesce($9::text, sdr.cliente_config.modo),
          tope_cuentas_dia = case when $11::boolean then $10::int else sdr.cliente_config.tope_cuentas_dia end,
+         aprueba = coalesce($12::text, sdr.cliente_config.aprueba),
          actualizado_at = now()
        returning *`,
       [clientId, cfg.canal ?? null, cfg.version_fija ?? null, cfg.ajustes ? JSON.stringify(cfg.ajustes) : null,
         cfg.bots_activos ?? null, cfg.zona_horaria ?? null, cfg.calibracion_mails ?? null, 'version_fija' in cfg,
-        cfg.modo ?? null, cfg.tope_cuentas_dia ?? null, 'tope_cuentas_dia' in cfg]);
+        cfg.modo ?? null, cfg.tope_cuentas_dia ?? null, 'tope_cuentas_dia' in cfg, cfg.aprueba ?? null]);
     if (cfg.ajustes) {
       await c.query(
         `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_rol, nota) values ($1, $2, $3, 'cli', 'Cargado con la CLI')`,

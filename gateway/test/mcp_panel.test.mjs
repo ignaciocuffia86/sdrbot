@@ -14,6 +14,9 @@ import { newToken } from '../src/crypto.mjs';
 import { redirectPermitido, vaciarCacheCimd } from '../src/panel/oauth_util.mjs';
 
 process.env.OAUTH_FIRMA ??= crypto.randomBytes(32).toString('base64');
+// Los topes de uso los prueba test/aprobaciones_panel.test.mjs; acá van altos.
+process.env.MAILGW_LIMITE_IP ??= '100000';
+process.env.MAILGW_LIMITE_USUARIO ??= '100000';
 
 const A = 'mcpp-a';
 const B = 'mcpp-b';
@@ -235,7 +238,8 @@ test('herramientas: el cliente ve sólo su cliente; Biguá, todos', async () => 
   const nombres = listaA.map((t) => t.name);
   assert.ok(nombres.includes('resumen') && nombres.includes('aprobaciones_listar') && nombres.includes('campanas_listar'));
   assert.ok(!nombres.includes('clientes_listar'));
-  assert.ok(listaA.every((t) => t.annotations.readOnlyHint === true));
+  // Todas de lectura, salvo decidir una aprobación (M2), que es destructiveHint.
+  assert.ok(listaA.every((t) => t.annotations.readOnlyHint === (t.name !== 'aprobacion_decidir')));
   assert.ok((await mcp(top, 'tools/list')).body.result.tools.some((t) => t.name === 'clientes_listar'));
 
   const propio = await tool(ta, 'buzones_listar');
