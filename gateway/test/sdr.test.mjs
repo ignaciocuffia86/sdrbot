@@ -302,7 +302,8 @@ test('calibración: el gateway no deja enviar sin una aprobación de exactamente
   assert.equal(original.error.code, 'aprobacion_no_coincide');
   assert.match(original.error.message, /el texto/);
   const otroDestino = await call(tok.a, 'send', MAIL({ to: 'otra@prospecto.test', text: textoFinal, idempotency_key: `${ids.laura}:mail-1`, aprobacion_id: ids.ap1 }));
-  assert.match(otroDestino.error.message, /el destinatario/);
+  // Con el prospecto_id de Laura, el mail tiene que ir a Laura (antes de mirar la aprobación).
+  assert.equal(otroDestino.error.code, 'destinatario_no_coincide');
 
   // Con espacios distintos, igual coincide.
   const antes = smtp.received.length;
@@ -370,6 +371,13 @@ test('respuesta a un positivo: exige aprobación aunque la calibración haya ter
   const sin = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: ids.laura, idempotency_key: `${ids.laura}:respuesta-1` });
   assert.equal(sin.error.code, 'aprobacion_requerida');
   assert.match(sin.error.message, /positivo/);
+  // Sin prospecto_id, o con el de otra persona, la aprobación no se saltea: el gateway mira a quién
+  // va la respuesta de verdad.
+  const sinId = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, idempotency_key: `${ids.laura}:respuesta-sin-id` });
+  assert.equal(sinId.error.code, 'prospecto_requerido');
+  const otra = (await ok(tok.a, 'registro_guardar_prospecto', { nombre: 'Otra persona', email: 'otra.persona@prospecto.test', bot: 'seguimiento' })).prospecto;
+  const ajeno = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: otra.id, idempotency_key: `${ids.laura}:respuesta-ajena` });
+  assert.equal(ajeno.error.code, 'destinatario_no_coincide');
   const ap = await ok(tok.a, 'registro_pedir_aprobacion', { bot: 'seguimiento', tipo: 'respuesta_positivo', prospecto_id: ids.laura, contenido: { buzon: BUZON, texto } });
   await ok(tok.a, 'registro_aprobar', { id: ap.aprobacion.id, decision: 'aprobada', operador: 'Ignacio' });
   const r = await ok(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: ids.laura, aprobacion_id: ap.aprobacion.id, idempotency_key: `${ids.laura}:respuesta-1` });

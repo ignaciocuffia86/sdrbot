@@ -34,13 +34,49 @@ export function isPrivateIp(ip) {
     return V4_BLOCKED.some(([base, bits]) => (n >>> (32 - bits)) === (base >>> (32 - bits)));
   }
   if (net.isIPv6(ip)) {
-    const lower = ip.toLowerCase();
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(lower);
-    if (mapped) return isPrivateIp(mapped[1]);
-    return lower === '::' || lower === '::1' || /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower) || /^ff/.test(lower)
-      || lower.startsWith('2001:db8') || lower.startsWith('64:ff9b');
+    const g = v6Groups(ip);
+    if (!g) return true;
+    const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const ceros = (n) => g.slice(0, n).every((x) => x === 0);
+    // Las formas que llevan una IPv4 adentro se juzgan por esa IPv4, se escriban como se escriban
+    // («::ffff:127.0.0.1» y «::ffff:7f00:1» son la misma): mapeada (::ffff:0:0/96), compatible
+    // (::/96, que incluye :: y ::1), SIIT (::ffff:0:0:0/96) y 6to4 (2002::/16).
+    if (ceros(5) && g[5] === 0xffff) return isPrivateIp(v4(g[6], g[7]));
+    if (ceros(6)) return g[6] === 0 && g[7] <= 1 ? true : isPrivateIp(v4(g[6], g[7]));
+    if (ceros(4) && g[4] === 0xffff && g[5] === 0) return isPrivateIp(v4(g[6], g[7]));
+    if (g[0] === 0x2002) return isPrivateIp(v4(g[1], g[2]));
+    return (g[0] & 0xfe00) === 0xfc00 // fc00::/7, red local única
+      || (g[0] & 0xffc0) === 0xfe80 // fe80::/10, enlace local
+      || (g[0] & 0xffc0) === 0xfec0 // fec0::/10, sitio local (obsoleta)
+      || (g[0] & 0xff00) === 0xff00 // ff00::/8, multidifusión
+      || (g[0] === 0x2001 && g[1] === 0x0db8) // documentación
+      || (g[0] === 0x2001 && g[1] === 0) // Teredo: lleva una IPv4 ofuscada
+      || (g[0] === 0x0064 && g[1] === 0xff9b) // NAT64 (64:ff9b::/96 y 64:ff9b:1::/48)
+      || (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) // 100::/64, descarte
+      || g[0] === 0; // el resto de ::/16, reservado
   }
   return true;
+}
+
+// Una IPv6 en sus 8 grupos de 16 bits, con «::» expandido y una IPv4 final pasada a dos grupos. Sin
+// la zona («%eth0»). null si no se puede leer.
+function v6Groups(ip) {
+  let s = String(ip).toLowerCase().split('%')[0];
+  const cola = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (cola) {
+    if (!net.isIPv4(cola[1])) return null;
+    const n = v4ToInt(cola[1]);
+    s = `${s.slice(0, -cola[1].length)}${(n >>> 16).toString(16)}:${(n & 0xffff).toString(16)}`;
+  }
+  const partes = s.split('::');
+  if (partes.length > 2) return null;
+  const lee = (x) => (x ? x.split(':').map((h) => parseInt(h, 16)) : []);
+  const ini = lee(partes[0]);
+  const fin = partes.length === 2 ? lee(partes[1]) : [];
+  const faltan = 8 - ini.length - fin.length;
+  if (partes.length === 1 ? ini.length !== 8 : faltan < 1) return null;
+  const g = [...ini, ...Array(partes.length === 2 ? faltan : 0).fill(0), ...fin];
+  return g.length === 8 && g.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffff) ? g : null;
 }
 
 export function validateHostSyntax(host) {

@@ -8,6 +8,7 @@ import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
 import { CAMPOS, ordenar, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
+import * as enCampana from './en_campana.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -288,19 +289,20 @@ export async function buscar(clientId, q) {
     let aviso;
     const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : '';
     if (digitos.length >= 8) {
-      // Candidatos por los últimos 10 dígitos; el cruce de verdad lo hace mismoWhatsapp.
+      // Un número se compara entero, en su forma internacional: los que vienen sin código de país se
+      // completan con el del cliente (su zona horaria). Por el final no se cruza nunca. Al cruce va el número
+      // como vino, con su «+» o «00»: sin ellos no se sabe si ya trae el código de país. La consulta
+      // por los últimos 8 dígitos sólo junta candidatos; el cruce lo hace mismoWhatsapp.
+      const pais = paisDeZona((await configDe(c, clientId))?.zona_horaria);
       const { rows } = await c.query(
         `select p.* from sdr.prospecto p
           where p.client_id = $1 and p.whatsapp is not null
-            and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 10) = right($2, 10)
-          order by p.actualizado_at desc limit 20`, [clientId, digitos]);
-      const exactos = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'exacto');
-      const locales = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'local');
-      if (exactos.length) prospectos.push(...exactos);
-      else if (locales.length === 1) prospectos.push(...locales);
-      else if (locales.length > 1) {
-        aviso = `El número ${q.whatsapp} no tiene código de país y coincide con ${locales.length} personas: no se elige ninguna. ` +
-          'Buscá con el número completo (con +código de país) o por otro dato.';
+            and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 8) = right($2, 8)
+          order by p.actualizado_at desc limit 50`, [clientId, digitos]);
+      const iguales = rows.filter((p) => mismoWhatsapp(p.whatsapp, q.whatsapp, pais));
+      if (iguales.length === 1) prospectos.push(...iguales);
+      else if (iguales.length > 1) {
+        aviso = `El número ${q.whatsapp} está cargado en ${iguales.length} personas: no se elige ninguna. Buscá por otro dato.`;
       }
     }
     const vistos = new Set();
@@ -309,28 +311,43 @@ export async function buscar(clientId, q) {
   });
 }
 
-// Un número de WhatsApp en dígitos, con las formas equivalentes unificadas: el 9 de los celulares de
-// Argentina («+54 9 11…» es «+54 11…») y el 1 viejo de los de México («+52 1 55…» es «+52 55…»).
-export function canonWhatsapp(n) {
-  let d = String(n ?? '').replace(/\D/g, '').replace(/^00/, '');
+// El código de país de un cliente, por su zona horaria: con él se completan los números locales.
+const PAIS_POR_ZONA = [
+  [/^America\/Argentina\//, '54'], [/^America\/Santiago$/, '56'], [/^America\/Montevideo$/, '598'],
+  [/^America\/Asuncion$/, '595'], [/^America\/Bogota$/, '57'], [/^America\/Lima$/, '51'],
+  [/^America\/(Mexico_City|Monterrey|Merida|Cancun|Tijuana|Hermosillo|Chihuahua|Mazatlan)$/, '52'],
+  [/^America\/(Sao_Paulo|Bahia|Fortaleza|Recife|Manaus|Belem)$/, '55'], [/^Europe\/Madrid$/, '34'],
+];
+export const paisDeZona = (zona) => PAIS_POR_ZONA.find(([re]) => re.test(zona ?? ''))?.[1] ?? null;
+
+// Un número de WhatsApp en su forma internacional, en dígitos. Uno que viene sin código de país (10
+// dígitos o menos, sin «+» ni «00») se completa con el país del cliente, sin el 0 de larga
+// distancia; sin país conocido queda como vino y sólo coincide con uno escrito igual. Se unifican el
+// 9 de los celulares de Argentina («+54 9 11…» es «+54 11…») y el 1 viejo de México («+52 1 55…»).
+export function canonWhatsapp(n, pais = null) {
+  const crudo = String(n ?? '').trim();
+  let d = crudo.replace(/\D/g, '');
+  const internacional = crudo.startsWith('+') || d.startsWith('00');
+  d = d.replace(/^00/, '');
+  if (!internacional && pais) {
+    const nacional = d.replace(/^0+/, '');
+    if (nacional.length <= 10) d = `${pais}${nacional}`;
+  }
   if (d.length === 13 && d.startsWith('549')) d = `54${d.slice(3)}`;
   if (d.length === 13 && d.startsWith('521')) d = `52${d.slice(3)}`;
   return d;
 }
 
-// 'exacto': el mismo número. 'local': uno de los dos no trae código de país (10 dígitos o menos) y
-// los últimos 10 coinciden; sirve sólo si hay un único candidato. null: no es el mismo (dos números
-// con código de país distinto no se igualan por el final, aunque los últimos 10 coincidan).
-export function mismoWhatsapp(a, b) {
-  const x = canonWhatsapp(a);
-  const y = canonWhatsapp(b);
-  if (!x || !y) return null;
-  if (x === y) return 'exacto';
-  if (x.length > 10 && y.length > 10) return null;
-  return x.slice(-10) === y.slice(-10) && Math.min(x.length, y.length) >= 8 ? 'local' : null;
+// Si dos números son el mismo: enteros, en su forma internacional. Nunca por el final: dos números
+// de países distintos con los mismos últimos dígitos son personas distintas.
+export function mismoWhatsapp(a, b, pais = null) {
+  const x = canonWhatsapp(a, pais);
+  const y = canonWhatsapp(b, pais);
+  return x.length >= 8 && x === y;
 }
 
-const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta'];
+const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta',
+  'campana_id'];
 
 export async function guardarCuenta(clientId, a, meta) {
   return asClient(clientId, async (c) => {
@@ -356,8 +373,12 @@ export async function guardarCuenta(clientId, a, meta) {
       }
     }
     const val = (k) => (k === 'senales' ? JSON.stringify(a[k]) : a[k]);
+    // La campaña que toma la cuenta: la que mandó el bot o, para una cuenta nueva, la «principal».
+    const destino = a.campana ? await enCampana.porClave(c, clientId, a.campana) : (actual ? null : await enCampana.principal(c, clientId));
+    if (destino) a = { ...a, campana_id: destino.id };
     if (!actual) {
       if (!a.nombre) throw new GatewayError('invalid_request', 'Para crear una cuenta hace falta el nombre.', 400);
+      enCampana.exigirActiva(destino, 'no toma cuentas nuevas');
       const cols = CAMPOS_CUENTA.filter((k) => a[k] !== undefined);
       const { rows } = await c.query(
         `insert into sdr.cuenta (client_id, ${cols.join(', ')}) values ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')}) returning *`,
@@ -367,6 +388,10 @@ export async function guardarCuenta(clientId, a, meta) {
         await insertarEvento(c, clientId, { tipo: 'cuenta.excluida', cuenta_id: rows[0].id, datos: { motivo: rows[0].estado_motivo } }, { ...meta, version });
       }
       return { creada: true, cuenta: rows[0], ...(aviso ? { no_contactar: true, aviso } : {}) };
+    }
+    if (destino && destino.id !== actual.campana_id) {
+      enCampana.exigirActiva(destino, 'no toma cuentas nuevas');
+      await enCampana.controlarCuenta(c, clientId, actual, destino);
     }
     const cols = CAMPOS_CUENTA.filter((k) => a[k] !== undefined);
     if (!cols.length) return { creada: false, cuenta: actual };
@@ -381,7 +406,8 @@ export async function guardarCuenta(clientId, a, meta) {
 }
 
 const CAMPOS_PROSPECTO = ['cuenta_id', 'asci_id', 'apollo_id', 'nombre', 'cargo', 'area', 'seniority', 'email', 'email_calidad',
-  'linkedin_url', 'whatsapp', 'eleccion', 'estado', 'canales', 'dripify', 'proximo_paso', 'proximo_canal', 'proximo_fecha'];
+  'linkedin_url', 'whatsapp', 'eleccion', 'estado', 'canales', 'dripify', 'proximo_paso', 'proximo_canal', 'proximo_fecha',
+  'campana_id'];
 const JSONB_PROSPECTO = new Set(['eleccion', 'dripify']);
 
 export async function guardarProspecto(clientId, a, meta) {
@@ -406,6 +432,20 @@ export async function guardarProspecto(clientId, a, meta) {
     if (nc.length) {
       throw new GatewayError('no_contactar',
         `No se guarda: ${noContactar.describir(nc)} está en la lista de no contactar del cliente. No le escribas ni lo reveles.`, 409);
+    }
+    // La campaña de la persona (§4.3): la que mandó el bot; si no, una persona nueva va a la campaña
+    // que tomó su cuenta o a la «principal». Una persona está en una sola campaña activa.
+    let destino = null;
+    if (a.campana) destino = await enCampana.porClave(c, clientId, a.campana);
+    else if (!actual) {
+      const cta = cuentaId ? await cuentaDe(c, clientId, cuentaId) : null;
+      destino = cta?.campana_id ? await enCampana.porId(c, clientId, cta.campana_id) : await enCampana.principal(c, clientId);
+    }
+    if (destino && destino.id !== actual?.campana_id) {
+      enCampana.exigirActiva(destino, 'no toma personas nuevas');
+      if (actual) await enCampana.controlarCambio(c, clientId, actual, destino);
+      if (cuentaId) await enCampana.controlarCuenta(c, clientId, await cuentaDe(c, clientId, cuentaId), destino);
+      a = { ...a, campana_id: destino.id };
     }
     const version = await versionActual(c, clientId);
     const val = (k) => (JSONB_PROSPECTO.has(k) ? JSON.stringify(a[k]) : a[k]);
@@ -545,12 +585,18 @@ export async function pedir(clientId, a, meta) {
     }
     const escalado = idas > TOPE_IDAS;
     const para = escalado ? 'orquestador' : a.para_bot;
+    // La campaña del pedido: la que mandó el bot, la del prospecto o la «principal».
+    let campanaId = a.campana_id ?? null;
+    if (!campanaId && (a.campana || a.prospecto_id)) {
+      const p = a.prospecto_id ? await prospectoDe(c, clientId, a.prospecto_id) : null;
+      campanaId = (await enCampana.resolver(c, clientId, { clave: a.campana, prospecto: p })).id;
+    }
     const { rows } = await c.query(
       `insert into sdr.pedido (client_id, de_bot, para_bot, prospecto_id, que, por_que, para_cuando, relacionado_con, idas, escalado,
                                campana_id)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) returning *`,
       [clientId, meta.bot, para, a.prospecto_id ?? null, a.que, a.por_que ?? null, a.para_cuando ?? null,
-        a.relacionado_con ?? null, idas, escalado, a.campana_id ?? null]);
+        a.relacionado_con ?? null, idas, escalado, campanaId]);
     if (a.prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'pedido', prospecto_id: a.prospecto_id,
         datos: { pedido: rows[0].id, de: meta.bot, para, que: a.que, escalado } }, { ...meta, version: await versionActual(c, clientId) });
@@ -598,10 +644,12 @@ export async function resolverPedido(clientId, a) {
 
 export async function pedirAprobacion(clientId, a, meta) {
   return asClient(clientId, async (c) => {
-    if (a.prospecto_id) await prospectoDe(c, clientId, a.prospecto_id);
+    const p = a.prospecto_id ? await prospectoDe(c, clientId, a.prospecto_id) : null;
+    // La aprobación queda en la campaña de la persona: ahí se cuenta la calibración (decisión 4).
+    const k = await enCampana.resolver(c, clientId, { clave: a.campana, prospecto: p });
     const { rows } = await c.query(
-      `insert into sdr.aprobacion (client_id, tipo, prospecto_id, pedida_por, contenido) values ($1, $2, $3, $4, $5) returning *`,
-      [clientId, a.tipo, a.prospecto_id ?? null, meta.bot, JSON.stringify(a.contenido)]);
+      `insert into sdr.aprobacion (client_id, tipo, prospecto_id, pedida_por, contenido, campana_id) values ($1, $2, $3, $4, $5, $6) returning *`,
+      [clientId, a.tipo, a.prospecto_id ?? null, meta.bot, JSON.stringify(a.contenido), k.id]);
     if (a.prospecto_id) {
       await insertarEvento(c, clientId, { tipo: 'aprobacion.pedida', prospecto_id: a.prospecto_id,
         datos: { aprobacion: rows[0].id, tipo: a.tipo } }, { ...meta, version: await versionActual(c, clientId) });
@@ -650,26 +698,69 @@ const primerDestinatario = (to) => {
   return limpios.length === 1 ? limpios[0] : null;
 };
 
-// Calibración y aprobaciones que el gateway exige antes de enviar (docs/09 §5.4). Devuelve la
-// aprobación a marcar como usada, o null si el envío no la necesita.
+// Todas las direcciones de un envío (to, cc y bcc), en minúscula.
+const direcciones = (args) => ['to', 'cc', 'bcc'].flatMap((k) => {
+  const v = args[k];
+  if (!v) return [];
+  return (Array.isArray(v) ? v : String(v).split(',')).map((x) => normMail(/<([^>]+)>/.exec(x)?.[1] ?? x)).filter(Boolean);
+});
+
+// La campaña de un mail nuevo sale de a quién va, no de lo que elige quien llama: si no, un
+// prospecto_id de una campaña ya calibrada (o ninguno) serviría para escribirle sin aprobación a
+// una persona de otra campaña. Los destinatarios que son prospectos tienen que ser todos de una
+// misma campaña, y si se pasa prospecto_id, su mail tiene que estar entre los destinatarios.
+async function campanaDelEnvio(c, clientId, args, p) {
+  const dirs = [...new Set(direcciones(args))];
+  if (p && (!p.email || !dirs.includes(p.email))) {
+    throw new GatewayError('destinatario_no_coincide',
+      `El mail no va a ${p.nombre ?? 'el prospecto'} (${p.email ?? 'sin mail en el registro'}): con prospecto_id, su mail tiene que estar entre los destinatarios.`, 422);
+  }
+  const { rows } = dirs.length
+    ? await c.query(`select id, nombre, email, campana_id from sdr.prospecto where client_id = $1 and email = any($2::text[])`, [clientId, dirs])
+    : { rows: [] };
+  const campanas = [...new Set([...rows.map((r) => r.campana_id), ...(p ? [p.campana_id] : [])])];
+  if (campanas.length > 1) {
+    throw enCampana.errorsCampana.otra('El mail va a personas de distintas campañas: cada campaña se escribe por separado.');
+  }
+  const conCampana = p ?? (rows.length ? { ...rows[0] } : null);
+  return { k: await enCampana.resolver(c, clientId, { prospecto: conCampana }), deCampana: Boolean(conCampana) };
+}
+
+// Calibración, aprobaciones y campaña que el gateway exige antes de enviar (docs/09 §5.4, docs/21
+// §4.3). Devuelve { aprobacion, campanaId }: la aprobación a marcar como usada (o null) y la campaña
+// con la que se decidió, que controlarDestinatarios vuelve a verificar contra los destinatarios
+// canónicos del mail ya armado.
 export async function controlarEnvio(clientId, args, kind) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
+    const p = args.prospecto_id ? await prospectoDe(c, clientId, args.prospecto_id) : null;
+    // Un cliente sin el SDR (sólo el gateway de correo) no tiene campañas ni calibración. Un mail
+    // nuevo toma la campaña de sus destinatarios; una respuesta, la del prospecto que contesta.
+    let k = null;
+    let deCampana = Boolean(p);
+    if (cfg && kind === 'send') ({ k, deCampana } = await campanaDelEnvio(c, clientId, args, p));
+    else if (cfg) k = await enCampana.resolver(c, clientId, { prospecto: p });
+    if (deCampana && k) {
+      // Un mail nuevo sale sólo si su campaña está activa y por un buzón de la campaña; las respuestas
+      // salen del buzón que recibió, y siguen aunque la campaña esté en pausa.
+      if (kind === 'send') {
+        enCampana.exigirActiva(k, 'no salen mails nuevos');
+        if (!(await enCampana.buzonEnCampana(c, clientId, k, args.mailbox))) throw enCampana.errorsCampana.buzon(args.mailbox, k);
+      }
+      const fuera = await enCampana.linksNoPermitidos(c, clientId, k, cfg, { textos: [args.text, args.subject, args.html], buzon: args.mailbox });
+      if (fuera.length) throw enCampana.errorsCampana.links(fuera, k);
+    }
     let necesita = null;
-    if (kind === 'send' && cfg?.calibracion_mails > 0) {
-      const { rows } = await c.query(
-        `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId]);
-      if (rows[0].n < cfg.calibracion_mails) necesita = { tipo: 'calibracion_mail', usadas: rows[0].n, total: cfg.calibracion_mails };
+    if (kind === 'send' && k) {
+      const cal = await enCampana.calibracion(c, clientId, k, cfg);
+      if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
-    if (kind === 'reply' && args.prospecto_id) {
-      const p = await prospectoDe(c, clientId, args.prospecto_id);
-      if (p.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
-    }
-    if (args.prospecto_id) await prospectoDe(c, clientId, args.prospecto_id);
-    if (!necesita && !args.aprobacion_id) return null;
+    if (kind === 'reply' && p?.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
+    const campanaId = k?.id ?? null;
+    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId };
     if (!args.aprobacion_id) {
       throw errorsSdr.aprobacionRequerida(necesita.tipo === 'calibracion_mail'
-        ? `Este cliente está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
+        ? `La campaña «${k.nombre}» está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
           'Pedila con registro_pedir_aprobacion (tipo calibracion_mail, con buzón, destinatario, asunto y texto) y enviá cuando esté aprobada, pasando aprobacion_id.'
         : 'Es la respuesta a un positivo: necesita una aprobación (registro_pedir_aprobacion, tipo respuesta_positivo). Enviá cuando esté aprobada, pasando aprobacion_id.');
     }
@@ -703,7 +794,7 @@ export async function controlarEnvio(clientId, args, kind) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +
         '(si el operador lo editó, la versión editada está en decision_contenido).');
     }
-    return ap;
+    return { aprobacion: ap, campanaId };
   });
 }
 

@@ -6,7 +6,7 @@
 //   - CAMPAÑA: lo de cada campaña (sdr.campana.ajustes) y sus columnas (estado, fechas, volumen…).
 //   - El formulario de hoy (BLOQUES y CAMPOS): Empresa y la campaña «principal» juntas, como las
 //     editan hoy el panel y las leen las reglas. Es la transición: se va cuando el panel y las
-//     reglas lean la campaña y la migración 013 saque de Empresa las claves de la campaña.
+//     reglas lean la campaña y la migración 014 saque de Empresa las claves de la campaña.
 
 import { GatewayError } from '../errors.mjs';
 
