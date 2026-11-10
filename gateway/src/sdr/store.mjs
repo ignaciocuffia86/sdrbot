@@ -94,7 +94,9 @@ const textoCalibracion = (total, usadas) => {
 //   - campana-<clave> («Campaña: <nombre>»): lo que vale para las personas de esa campaña.
 // extra: { buzones: [{email, display_name, status, firma}], noContactar: {dominios, emails},
 //          campanas: [{...sdr.campana, buzones: [email], usadas?}] }.
-export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}) {
+// porCampana: false para una versión de las reglas que todavía no conoce las campañas (busca todo en
+// «Ajustes de este cliente», como las cuentas por día): recibe una sola sección, como antes.
+export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { porCampana = true } = {}) {
   const lineas = [`Cliente: ${nombreCliente} (\`${clientId}\`).`];
   const empresa = { seccion: 'ajustes-cliente', titulo: 'Ajustes de este cliente: Empresa',
     resumen: 'Lo común a todas las campañas: quién es, cómo habla, a quién no se le escribe, buzones y firmas.' };
@@ -102,7 +104,7 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}) {
     lineas.push('', 'Este cliente todavía no tiene ajustes cargados. No prospectes ni envíes: avisá al orquestador.');
     return [{ ...empresa, contenido: lineas.join('\n') }];
   }
-  const campanas = (extra.campanas ?? []).filter((k) => ESTADOS_CON_SECCION.includes(k.estado));
+  const campanas = porCampana ? (extra.campanas ?? []).filter((k) => ESTADOS_CON_SECCION.includes(k.estado)) : [];
   lineas.push(`Bots activos: ${cfg.bots_activos.join(', ')}. Zona horaria: ${cfg.zona_horaria}.`);
   if (!campanas.length) lineas.push(`Calibración: ${textoCalibracion(cfg.calibracion_mails)}`);
   else lineas.push('Lo de cada campaña (a quién, qué se ofrece, qué es positivo, volumen y calibración) está en la sección ' +
@@ -202,7 +204,10 @@ export async function manual(clientId, bot, tarea, seccion) {
         where version = $1 and bot in ('*', $2) and tarea in ('*', $3)
           and not (bot = '*' and tarea = 'rutina')
         order by (bot = '*') desc, (tarea = '*') desc, orden`, [version, bot, tarea]);
-    const delCliente = seccionesCliente(clientId, cli[0]?.name ?? clientId, cfg, await extraAjustes(c, clientId, { conCalibracion: true }))
+    // Las reglas que leen la campaña nombran sus secciones («campana-<clave>»); las de antes, no.
+    const porCampana = rows.some((r) => r.contenido.includes('campana-<clave>'));
+    const delCliente = seccionesCliente(clientId, cli[0]?.name ?? clientId, cfg,
+      await extraAjustes(c, clientId, { conCalibracion: true }), { porCampana })
       .map((x) => ({ bot: '-', tarea: '-', ...x }));
     const todas = [...rows, ...delCliente];
     if (seccion) {

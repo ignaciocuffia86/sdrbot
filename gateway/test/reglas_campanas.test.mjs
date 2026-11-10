@@ -93,6 +93,15 @@ test('un cliente sin campañas sigue con una sola sección, como antes', () => {
   assert.match(renderAjustes('cr', 'Cliente R', cfg, extra), /## Campaña: Webinar de noviembre\n\n/);
 });
 
+test('una versión de las reglas que no conoce las campañas recibe todo en una sección', () => {
+  // Las reglas de antes buscan las cuentas por día y el ICP en «Ajustes de este cliente»: hasta que
+  // el cliente pase a las reglas nuevas, siguen ahí (la «principal» no se parte).
+  const s = seccionesCliente('cr', 'Cliente R', cfg, extra, { porCampana: false });
+  assert.deepEqual(s.map((x) => x.seccion), ['ajustes-cliente']);
+  assert.match(s[0].contenido, /### Cuentas nuevas por día\n\n> 6/);
+  assert.match(s[0].contenido, /> Software en Argentina/);
+});
+
 test('un borrador no aparece en las reglas', () => {
   const borrador = { ...webinar, clave: 'borr', nombre: 'Borrador', estado: 'borrador' };
   const s = seccionesCliente('cr', 'Cliente R', cfg, { ...extra, campanas: [principal, borrador] });
