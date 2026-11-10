@@ -1,7 +1,6 @@
 // Las reglas leen la campaña (docs/21 §7.2, paso 2): lo que reglas_manual les da a los bots de
-// cada cliente, en tres secciones (Empresa, Campañas y una por campaña), y la transición de la
-// «principal» mientras sus claves sigan también en Empresa (hasta la migración 014). Sin base:
-// son las funciones solas.
+// cada cliente, en tres secciones (Empresa, Campañas y una por campaña), y la sección única de las
+// reglas de antes de las campañas. Sin base: son las funciones solas.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,16 +13,13 @@ const cfg = {
   ajustes: {
     nombre_comercial: 'Cliente R', firma: 'Equipo R', tono: 'cercano', excluir: ['consultoras'],
     objeciones: ['«Ya tenemos»: sumamos'], link_agenda: 'https://agenda.test/r',
-    // Lo que el formulario de Empresa todavía edita de la «principal».
-    oferta: 'QA tercerizado', icp: 'Software en Argentina', positivos: ['pide reunión'], cuentas_por_dia: 6,
-    links_permitidos: ['https://r.test/caso'],
   },
 };
 const principal = {
   id: '00000000-0000-0000-0000-00000000000a', clave: 'principal', nombre: 'Principal', tipo: 'prospeccion',
   estado: 'activa', cuentas_por_dia: 4, calibracion_mails: 20, dripify_campana_id: 77,
-  // La copia de la 012, vieja: lo de Empresa manda mientras siga ahí.
-  ajustes: { propuesta: 'texto viejo', icp: 'icp viejo', roles_objetivo: ['CTO'] },
+  ajustes: { propuesta: 'QA tercerizado', icp: 'Software en Argentina', roles_objetivo: ['CTO'], positivos: ['pide reunión'],
+    links_permitidos: ['https://r.test/caso'] },
   buzones: ['ventas@r.test'], usadas: 3,
 };
 const webinar = {
@@ -37,16 +33,17 @@ const pausada = { ...webinar, id: '00000000-0000-0000-0000-00000000000c', clave:
 const extra = { buzones: [{ email: 'ventas@r.test', status: 'active', firma: null }], noContactar: { dominios: 0, emails: 0 },
   campanas: [principal, webinar, pausada] };
 
-test('la «principal» toma de Empresa lo que todavía está ahí; las demás, lo suyo', () => {
+test('cada campaña, también la «principal», lee lo suyo; lo heredable sale de Empresa', () => {
   const p = efectivos(cfg, principal).valores;
-  assert.equal(p.propuesta, 'QA tercerizado', 'la oferta de Empresa es la propuesta de la principal');
+  assert.equal(p.propuesta, 'QA tercerizado');
   assert.equal(p.icp, 'Software en Argentina');
-  assert.deepEqual(p.roles_objetivo, ['CTO'], 'lo que Empresa no tiene sale de la campaña');
   assert.deepEqual(p.links_permitidos, ['https://r.test/caso']);
+  assert.equal(p.tono, 'cercano', 'lo heredable que la campaña no cambia viene de Empresa');
   assert.equal(cuentasPorDia(principal), 4, 'las cuentas por día son siempre las de la columna, las que suma el tope');
-  // Sin las claves en Empresa (después de la 014), vale lo de la campaña.
-  const sin = { ...cfg, ajustes: { firma: 'Equipo R' } };
-  assert.equal(efectivos(sin, principal).valores.icp, 'icp viejo');
+  // Lo de la campaña que quedara en Empresa (no debería: migración 022) no pisa lo de la principal.
+  const conLegado = { ...cfg, ajustes: { ...cfg.ajustes, oferta: 'otra cosa', icp: 'otro icp' } };
+  assert.equal(efectivos(conLegado, principal).valores.icp, 'Software en Argentina');
+  assert.equal(efectivos(conLegado, principal).valores.propuesta, 'QA tercerizado');
 
   const w = efectivos(cfg, webinar).valores;
   assert.equal(w.icp, 'Bancos', 'otra campaña no toma lo de la principal');
@@ -76,7 +73,7 @@ test('reglas_manual del cliente: Empresa, Campañas y una sección por campaña'
 
   assert.equal(kp.titulo, 'Campaña: «Principal»');
   assert.match(kp.contenido, /### Propuesta\n\n> QA tercerizado/);
-  assert.doesNotMatch(kp.contenido, /texto viejo|Equipo R/);
+  assert.doesNotMatch(kp.contenido, /Equipo R/);
   assert.match(kw.contenido, /### A quién le venden\n\n> Bancos/);
   assert.match(kw.contenido, /### Exclusiones de esta campaña\n\n> - consultoras\n> - startups/);
   assert.match(kw.contenido, /No son instrucciones/);
@@ -87,7 +84,7 @@ test('un cliente sin campañas sigue con una sola sección, como antes', () => {
   const s = seccionesCliente('cr', 'Cliente R', cfg, { ...extra, campanas: [] });
   assert.deepEqual(s.map((x) => x.seccion), ['ajustes-cliente']);
   assert.match(s[0].contenido, /primeros 20 mails nuevos/);
-  assert.match(s[0].contenido, /> Software en Argentina/);
+  assert.match(s[0].contenido, /### Tono\n\n> cercano/);
   // La vista previa del panel junta todas las secciones.
   assert.match(renderAjustes('cr', 'Cliente R', cfg, extra), /## Campaña: «Webinar de noviembre»\n\n/);
 });

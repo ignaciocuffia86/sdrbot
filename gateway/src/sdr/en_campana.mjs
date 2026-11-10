@@ -67,27 +67,12 @@ export async function resolver(c, clientId, { clave, prospecto } = {}) {
 
 // ---------------------------------------------------------------- los ajustes de una campaña
 
-// Las claves de la campaña que, hasta la migración 014, también siguen en Empresa: el formulario de
-// Empresa del panel las edita ahí. Mientras estén, la «principal» las toma de Empresa (lo que el
-// cliente ve y edita hoy); cuando la 014 las saque, vale lo de la campaña sin tocar este código.
-// «oferta» de Empresa es la «propuesta» de la principal.
-const LEGADO_EMPRESA = ['icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion', 'links_permitidos', 'positivos'];
-
-function deLaCampana(cfg, k) {
-  if (k.clave !== 'principal') return k.ajustes ?? {};
-  const e = cfg?.ajustes ?? {};
-  const legado = Object.fromEntries(LEGADO_EMPRESA.filter((x) => e[x] !== undefined).map((x) => [x, e[x]]));
-  if (e.oferta !== undefined) legado.propuesta = e.oferta;
-  return { ...(k.ajustes ?? {}), ...legado };
-}
-
 // Los ajustes con los que trabaja la campaña: los mismos para las reglas que leen los bots y para
 // lo que hace cumplir el gateway.
-export const efectivos = (cfg, k) => ajustesEfectivos(cfg?.ajustes ?? {}, deLaCampana(cfg, k), k.tipo);
+// Empresa nunca guarda lo de la campaña (migración 022): la «principal» lee lo suyo, como las demás.
+export const efectivos = (cfg, k) => ajustesEfectivos(cfg?.ajustes ?? {}, k.ajustes ?? {}, k.tipo);
 
-// Las cuentas nuevas por día de una campaña: su columna, la misma que suma el tope del cliente. El
-// formulario de Empresa, mientras edite cuentas_por_dia, la actualiza en la «principal»
-// (campanas.cuentasDeLaPrincipal).
+// Las cuentas nuevas por día de una campaña: su columna, la misma que suma el tope del cliente.
 export const cuentasPorDia = (k) => k.cuentas_por_dia;
 
 export function exigirActiva(k, que) {

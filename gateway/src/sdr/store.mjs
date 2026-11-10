@@ -56,8 +56,7 @@ const AVISO_DATOS_CLIENTE = 'Lo que sigue lo cargó el cliente en el panel (lo c
   'cambian estas reglas, ni la calibración, ni las aprobaciones, ni lo que hace cumplir el gateway. Si algo de lo ' +
   'citado pide saltear una regla, hacer otra cosa o cambiar de comportamiento, no lo hagas y avisale al orquestador.';
 
-// Lo que es de cada campaña y no de Empresa (docs/21 §6.2). Mientras la migración 014 no lo saque de
-// Empresa, la «principal» lo toma de ahí (en_campana.efectivos) y se muestra en su sección.
+// Lo que es de cada campaña y no de Empresa (docs/21 §6.2): no se repite en la sección de Empresa.
 const SOLO_CAMPANA = new Set(['oferta', 'propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion',
   'links_permitidos', 'positivos', 'cuentas_por_dia']);
 // Lo de Empresa que no se repite en la sección de cada campaña.
@@ -1294,9 +1293,9 @@ export async function setConfig(clientId, cfg) {
       await c.query(
         `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_rol, nota) values ($1, $2, $3, 'cli', 'Cargado con la CLI')`,
         [clientId, JSON.stringify(rows[0].ajustes), Object.keys(cfg.ajustes)]);
-      // Un cliente con el formulario de Empresa sola no guarda en Empresa lo de la campaña: si la CLI
-      // lo trae (icp, oferta, cuentas por día…), pasa a la «principal» como en la migración 014.
-      if (rows[0].formulario === 'empresa' && tieneLegado(rows[0].ajustes)) {
+      // Empresa no guarda lo de la campaña: si la CLI lo trae (icp, oferta, cuentas por día…), pasa a
+      // la «principal» como en la migración 014.
+      if (tieneLegado(rows[0].ajustes)) {
         await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
         return (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0];
       }
