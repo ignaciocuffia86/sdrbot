@@ -509,3 +509,41 @@ test('dripify_cargar por campaña: la campaña de Dripify de la campaña, una ca
   assert.equal(pausa.status, 409);
   assert.equal(pausa.error.code, 'campana_inactiva');
 });
+
+test('no contactar: quien entra a la lista ya cargado en Dripify sale de la campaña en la próxima vuelta', async () => {
+  await sdr.setConfig(C, { calibracion_mails: 0 });
+  const nuevo = async (n, email) => (await ok(tok.c, 'registro_guardar_prospecto', {
+    nombre: n, email, linkedin_url: `https://www.linkedin.com/in/${n}-ops/`, ...META })).prospecto;
+  const fede = await nuevo('fede', 'fede@frenada.test');
+  const gabi = await nuevo('gabi', 'gabi@ventas.otra.test');
+  const hugo = await nuevo('hugo', 'hugo@sigue.test');
+  await ok(tok.c, 'dripify_cargar', {
+    prospectos: [fede, gabi, hugo].map((p) => ({ prospecto_id: p.id, ...textos(p.nombre) })), idempotency_key: 'carga-no-contactar', ...META,
+  });
+
+  // El cliente suma a la lista un dominio y otro del que la persona usa un subdominio.
+  await sql(`insert into sdr.no_contactar (client_id, valor, tipo, motivo) values ($1, 'frenada.test', 'dominio', 'cliente'),
+             ($1, 'otra.test', 'dominio', 'referido')`, [C]);
+  const f = await dripify.frenarPendientes(C);
+  assert.deepEqual(f.filter((x) => x.frenado).map((x) => x.prospecto_id).sort(), [fede.id, gabi.id].sort());
+  assert.ok(mock.s.blacklist.has(mock.s.leads.get('fede-ops').id));
+  assert.ok(mock.s.blacklist.has(mock.s.leads.get('gabi-ops').id));
+  assert.ok(!mock.s.blacklist.has(mock.s.leads.get('hugo-ops').id), 'quien no está en la lista sigue en la campaña');
+  const { rows } = await sql(`select id, dripify from sdr.prospecto where id = any($1)`, [[fede.id, gabi.id, hugo.id]]);
+  const por = Object.fromEntries(rows.map((r) => [r.id, r.dripify]));
+  assert.equal(por[fede.id].estado, 'frenado');
+  assert.equal(por[fede.id].frenado_motivo, dripify.MOTIVO_NO_CONTACTAR);
+  assert.equal(por[hugo.id].estado, 'cargado');
+  const h = await ok(tok.c, 'registro_historia', { prospecto_id: gabi.id, ...META });
+  assert.equal(h.eventos.at(-1).tipo, 'linkedin.pausado');
+
+  // No se vuelve a frenar, y un mail suelto de la lista también frena.
+  assert.deepEqual(await dripify.frenarPendientes(C), []);
+  await sql(`insert into sdr.no_contactar (client_id, valor, tipo) values ($1, 'hugo@sigue.test', 'email')`, [C]);
+  assert.deepEqual((await dripify.frenarPendientes(C)).filter((x) => x.frenado).map((x) => x.prospecto_id), [hugo.id]);
+
+  // Mientras siga en la lista, no se lo reanuda.
+  const r = await call(tok.c, 'dripify_reanudar', { prospecto_id: fede.id, bot: 'seguimiento', tarea: 'respuestas' });
+  assert.equal(r.status, 409);
+  assert.match(r.error.message, /no contactar/);
+});

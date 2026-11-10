@@ -612,10 +612,41 @@ export async function reanudar(clientId, prospectoId, meta) {
   return { reanudado: true, lead_id: lead };
 }
 
-// Los frenos que dejó el correo (respuesta o baja por mail): ver aplicarEvento en store.mjs.
+export const MOTIVO_NO_CONTACTAR = 'está en no contactar';
+
+// Quien entró a «No contactar» con la persona ya cargada en Dripify. El gateway ya rechaza su
+// próximo mail y toda carga nueva, pero la secuencia de Dripify (invitación y dos mensajes) seguiría
+// sola. Acá se le marca el freno, como a una baja; lo manda frenarPendientes. Se hace en cada
+// vuelta del reloj y no al agregar a la lista, así vale para cualquier forma de cargarla (panel, CSV,
+// carga por archivo, SQL) y el rol del panel no necesita tocar el registro. Un dominio de la lista
+// cubre sus subdominios, como en noContactar.coincidencias.
+export async function marcarNoContactar(c, clientId) {
+  const { rows } = await c.query(
+    `update sdr.prospecto p
+        set dripify = p.dripify || jsonb_build_object('freno',
+              jsonb_build_object('pendiente', true, 'motivo', $2::text, 'desde', now()))
+       from (select distinct p2.id
+               from sdr.prospecto p2
+               left join sdr.cuenta k on k.client_id = p2.client_id and k.id = p2.cuenta_id
+               join sdr.no_contactar n on n.client_id = p2.client_id
+              where p2.client_id = $1 and p2.dripify->>'estado' = 'cargado' and not (p2.dripify ? 'freno')
+                and ((n.tipo = 'email' and n.valor = p2.email)
+                  or (n.tipo = 'dominio' and exists (
+                        select 1 from unnest(array[split_part(p2.email, '@', 2), k.dominio]) as d(v)
+                         where d.v = n.valor or d.v like '%.' || n.valor)))) x
+      where p.client_id = $1 and p.id = x.id
+      returning p.id`, [clientId, MOTIVO_NO_CONTACTAR]);
+  return rows.map((r) => r.id);
+}
+
+// Los frenos pendientes: los que dejó el correo (respuesta o baja por mail, ver aplicarEvento en
+// store.mjs) y los de «No contactar» (marcarNoContactar).
 export async function frenarPendientes(clientId, { hasta = Date.now() + 20_000 } = {}) {
-  const { rows } = await asClient(clientId, (c) => c.query(
-    `select * from sdr.prospecto where client_id = $1 and dripify->'freno'->>'pendiente' = 'true' order by actualizado_at limit 20`, [clientId]));
+  const { rows } = await asClient(clientId, async (c) => {
+    await marcarNoContactar(c, clientId);
+    return c.query(
+      `select * from sdr.prospecto where client_id = $1 and dripify->'freno'->>'pendiente' = 'true' order by actualizado_at limit 20`, [clientId]);
+  });
   if (!rows.length) return [];
   let cx;
   try { cx = await conexion(clientId); } catch (e) { return [{ error: e.message }]; }

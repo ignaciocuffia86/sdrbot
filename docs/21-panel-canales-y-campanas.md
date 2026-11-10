@@ -511,7 +511,9 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
   Las direcciones de las pestañas viejas llevan a su lugar nuevo.
 - **No contactar** (`sdr.no_contactar`): dominios con sus subdominios y mails, de a uno, pegados o
   por CSV. El gateway la hace cumplir al guardar una cuenta (queda `excluida`) o una persona, al
-  enviar o responder un mail y al cargar en Dripify (error `no_contactar`).
+  enviar o responder un mail y al cargar en Dripify (error `no_contactar`). A quien ya estaba
+  cargado en Dripify cuando entra a la lista, el reloj lo saca de la campaña (lista negra) en su
+  próxima vuelta, como a una baja (`dripify.marcarNoContactar`).
 - **Firma por buzón** (`mailgw.account.firma`): los bots la ven en `buzones` y en «Buzones y firmas».
 - **Ajustes nuevos:** qué le pedimos al prospecto, casos y datos que se pueden citar, quién toma a
   los interesados y link de agenda. Las reglas (`comun`, `prospector/diaria`,

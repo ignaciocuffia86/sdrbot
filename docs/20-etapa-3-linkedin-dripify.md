@@ -31,7 +31,7 @@ y el gateway los carga con la persona por la Open API.
 | `dripify_responder` | Contesta en la conversación. A un positivo, sólo con aprobación `respuesta_positivo` con `canal: "linkedin"` y ese texto |
 | `dripify_frenar` / `dripify_reanudar` | Lista negra de Dripify (sale de la secuencia) y vuelta atrás |
 | `dripify_estado` | Campaña activa, campos, largo de la nota, números de la campaña y cupo usado |
-| Freno cruzado | Si alguien responde por mail o pide la baja, el gateway lo saca de la campaña (lista negra) en la próxima vuelta del reloj o en el `correo_revisar` siguiente. Si responde por LinkedIn, Dripify corta la secuencia solo y el gateway ya no deja salir mails de la secuencia (`prospecto_respondio`) |
+| Freno cruzado | Si alguien responde por mail, pide la baja o entra a la lista de no contactar del cliente (por mail o por dominio, aunque ya estuviera cargado), el gateway lo saca de la campaña (lista negra) en la próxima vuelta del reloj o en el `correo_revisar` siguiente. Si responde por LinkedIn, Dripify corta la secuencia solo y el gateway ya no deja salir mails de la secuencia (`prospecto_respondio`) |
 | Despertador de `seguimiento` | También avisa las respuestas de LinkedIn |
 | Calibración | La aprobación del primer contacto (`calibracion_mail`) lleva `contenido.linkedin` con los tres textos, en la misma aprobación que el mail. El operador puede corregirlos en el chat del `orquestador` |
 | Cupo de la API | 50 pedidos por minuto y 4500 por día por cliente (Dripify permite 60 y 5000). Pasado eso, `dripify_limite` |

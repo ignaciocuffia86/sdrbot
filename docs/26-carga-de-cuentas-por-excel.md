@@ -60,7 +60,7 @@ Una semilla queda en el registro y no en la lista porque tiene que llevar su per
 | Nota para el bot | No | `cuenta.tesis` | Por qué la eligió el cliente («exporta cerezas a China; afectada por la 204»). Máx. 300 caracteres |
 | Contacto: nombre | No | `prospecto.nombre` | Una persona por fila. Para dos personas de la misma empresa, dos filas con la misma empresa |
 | Contacto: cargo | No | `prospecto.cargo` | |
-| Contacto: mail | No | `prospecto.email` | Entra con `email_calidad: desconocido` (§4.4) |
+| Contacto: mail | No | `prospecto.email` | Entra con `email_calidad: desconocido` (§4.5) |
 | Contacto: teléfono | No | `prospecto.whatsapp` | Solo se usa si el WhatsApp está activo y la persona respondió (`22`) |
 | Contacto: LinkedIn | No | `prospecto.linkedin_url` | Se normaliza como en `dripify_cargar` |
 
@@ -102,22 +102,25 @@ Por fila, en este orden:
 
 | Caso | Qué pasa |
 |---|---|
-| La cuenta ya está en el registro, `en_investigacion` | `prospectar`: se le suman los contactos nuevos y la nota; queda en su campaña. `no_contactar`: entra a la lista y la cuenta pasa a `excluida`, como cuando se carga a mano hoy |
-| Ya está `en_contacto` o `en_pausa` | `prospectar`: no se toca (se informa). `no_contactar`: entra a la lista; ver el pendiente de §4.4 |
+| La cuenta ya está en el registro, `en_investigacion` | `prospectar`: se le suman los contactos nuevos y la nota; queda en su campaña. `no_contactar`: entra a la lista; la cuenta no cambia de estado sola (hoy tampoco), pero el gateway ya no deja guardar personas, mandar mails ni cargar en Dripify de esa empresa |
+| Ya está `en_contacto` o `en_pausa` | `prospectar`: no se toca (se informa). `no_contactar`: entra a la lista y quien ya estaba en Dripify sale de la campaña (§4.4) |
 | Ya está `excluida` o `descartada` | No se toca; se informa |
 | Ya está en «No contactar» | `prospectar` y `semilla` quedan `excluida`, como hoy en `guardarCuenta`; una `no_contactar` repetida no se toca (`on conflict do nothing`, como hoy) |
 | Una persona ya existe (mismo mail o LinkedIn) en otra cuenta o campaña | No se mueve (regla «una persona, una campaña», `21` §4.3); se informa |
 | Dos filas de la misma empresa | Una cuenta; cada fila con contacto suma una persona |
 
-### 4.4 Pendiente de la lista de hoy, que la carga hace más visible
+### 4.4 Lo que ya estaba en marcha (hecho el 10/11)
 
-Cargar una empresa en «No contactar» hoy frena lo **nuevo** (el gateway rechaza el próximo mail, la
-próxima persona y la próxima carga en Dripify), pero no lo que ya está en marcha: un prospecto que
-ya está cargado en una campaña de Dripify sigue recibiendo la invitación y los dos mensajes. Con una
-carga de cientos de exclusiones de una vez, el caso es más probable. Propuesta: al agregar a la
-lista (a mano, por CSV o por el Excel), el gateway busca en el registro las cuentas y personas
-activas que coinciden, pausa sus leads en Dripify (como hace con una baja) y le avisa al
-orquestador. Es un arreglo de la lista, no de la carga: sirve igual para las altas de hoy.
+Agregar a «No contactar» frena lo **nuevo** (el gateway rechaza el próximo mail, la próxima persona
+y la próxima carga en Dripify). Lo que ya estaba cargado en Dripify seguía solo: la invitación y los
+dos mensajes. Con una carga de cientos de exclusiones de una vez, el caso es probable.
+
+Desde el 10/11, en cada vuelta del reloj (`dripify.frenarPendientes`), el gateway marca el freno de
+toda persona cargada en Dripify cuyo mail, o el dominio de su mail o de su cuenta (con
+subdominios), esté en la lista, y la saca de la campaña como a una baja: lista negra de Dripify,
+evento `linkedin.pausado` con el motivo «está en no contactar», y `dripify_reanudar` no la vuelve a
+poner mientras siga en la lista. Vale para cualquier forma de agregar a la lista (de a uno, CSV,
+esta carga o SQL), y el panel no necesita permisos sobre el registro.
 
 ### 4.5 Los contactos del archivo
 
@@ -205,7 +208,7 @@ días).
 | `gateway/src/sdr/carga.mjs` (nuevo) | Leer el archivo (CSV con el lector de `no_contactar.mjs` extendido; `.xlsx` con una dependencia chica y sin macros, p. ej. `read-excel-file`, que no evalúa fórmulas), normalizar, resolver (§4.2), armar la vista previa y aplicar por tandas |
 | `admin/servicio.mjs` y `api.mjs` | `POST /admin/api/clients/:c/cargas/previa` (multipart, hasta 5 MB), `POST …/cargas` (aplica la previa por su id, válida 30 min), `GET …/cargas`, `POST …/cargas/:id/deshacer`. Auditoría `admin.sdr.carga` con conteos, sin contenido |
 | `admin/static/` | Pestaña «Cuentas cargadas» en Empresa: subir, mapear, vista previa, historial de lotes, deshacer |
-| `no_contactar.mjs` | `coincidencias` compara además el nombre normalizado de la cuenta contra las filas de tipo `empresa`; `leerCsv` acepta un nombre de empresa en la primera columna cuando no es dominio ni mail. Lo usan `guardarCuenta`, el envío y Dripify, sin otros cambios. Más el arreglo de §4.4 al agregar |
+| `no_contactar.mjs` y `dripify.marcarNoContactar` | `coincidencias` compara además el nombre normalizado de la cuenta contra las filas de tipo `empresa`, y `marcarNoContactar` (§4.4) también; `leerCsv` acepta un nombre de empresa en la primera columna cuando no es dominio ni mail. Lo usan `guardarCuenta`, el envío y Dripify, sin otros cambios |
 | Pestaña «No contactar» | Muestra las filas de tipo `empresa` y de qué carga vinieron; el CSV pegado de hoy sigue igual |
 | MCP del bot | `registro_cuentas_de_lista(campana, limite)`: las próximas cuentas de la lista sin trabajar, con sus contactos y su nota; `registro_buscar` devuelve `origen` y `uso` |
 | MCP del panel (`24`) | `cargas_listar` de lectura; la subida queda en el panel (un archivo no pasa por el chat) |
@@ -223,8 +226,8 @@ días).
 
 1. `carga.test.mjs`: mapeo propuesto, normalización de dominios y LinkedIn, filas inválidas, celdas
    con fórmula, dos filas de la misma empresa, Latin-1.
-2. Choques de §4.3, uno por caso. Y el arreglo de §4.4: agregar a la lista una empresa con un lead
-   ya cargado en Dripify lo pausa.
+2. Choques de §4.3, uno por caso (el freno en Dripify de §4.4 ya tiene su prueba en
+   `dripify.test.mjs`).
 3. Aislamiento: un usuario de un cliente no ve ni deshace lotes de otro (`aislamiento.test.mjs`).
 4. Una fila `no_contactar` sin dominio entra como tipo `empresa`, y `guardarCuenta` excluye la cuenta
    de ese nombre aunque llegue después con dominio.
@@ -245,7 +248,7 @@ días).
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
+| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla` | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
 | **2** | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
 | **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 
