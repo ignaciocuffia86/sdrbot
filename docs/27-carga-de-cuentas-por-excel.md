@@ -2,7 +2,9 @@
 
 Estado: **etapas 1, 2 y 3 construidas, 10/11/2026** (ver §0: lo que cambió respecto del diseño
 original). Migraciones `019`, `020` y `021` aplicadas en producción el 10/11/2026, después de la `018`
-de la derivación. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+de la derivación. Reglas `2026.11.10-7` (la tarea `prospector/lista` y los cambios de `comun`,
+`prospector/diaria` y `orquestador/diaria`) publicadas en **canario** el 10/11/2026; estable sigue en
+la `2026.11.10-6` hasta que el código llegue a producción. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
