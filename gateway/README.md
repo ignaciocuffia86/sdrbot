@@ -20,7 +20,7 @@ script del box ─── REST (HTTPS, Bearer) ─┼─► gateway (Vercel) ─�
 | `search` | `buscar` | read | Búsqueda por fecha, remitente, asunto, texto, no leídos, no respondidos, palabra clave |
 | `read` | `leer_mensaje` | read | Un mensaje completo; `mark_seen` opcional |
 | `send` | `enviar` | send | Envío nuevo por el SMTP del buzón, con copia en Enviados |
-| `reply` | `responder` | send | Respuesta en el mismo hilo (Re:, In-Reply-To, References), con cita y marca `\Answered` |
+| `reply` | `responder` | send | Respuesta en el mismo hilo (Re:, In-Reply-To, References), con cita y marca `\Answered`; con `cc`, deriva a un interesado a quien lo toma ([`docs/26`](../docs/26-derivacion-al-cliente.md)) |
 | `draft` | `crear_borrador` | draft | Borrador en la carpeta Borradores, para que una persona lo revise y lo mande |
 | `flags` | `marcar` | manage | `\Seen`, `\Answered`, `\Flagged` y palabras clave propias (por ejemplo `SDR_procesado`) |
 | `move` | `mover` | manage | Mover a otra carpeta existente |

@@ -56,7 +56,9 @@ const DEF = {
   positivos: { titulo: 'Qué cuenta como respuesta positiva', tipo: 'lista', max: 120, maxItems: 15, cliente: true,
     ayuda: 'Uno por línea. Una respuesta positiva se contesta sólo con aprobación del operador.' },
   responsable_positivos: { titulo: 'Quién toma a los interesados', tipo: 'texto', max: 200, cliente: true,
-    ayuda: 'Nombre y mail de quien sigue con un interesado, por ejemplo «Ana Pérez, ana@empresa.com». Los bots lo nombran al proponer la reunión.' },
+    ayuda: 'El nombre de quien sigue con un interesado, por ejemplo «Ana Pérez». Los bots lo nombran al proponer la reunión.' },
+  responsable_email: { titulo: 'Mail de quien toma a los interesados', tipo: 'email', max: 254, cliente: true,
+    ayuda: 'La casilla del dominio principal de quien toma a los interesados, por ejemplo ana@empresa.com. Va en copia en la respuesta a un interesado: desde ahí la conversación sigue con esa persona.' },
   link_agenda: { titulo: 'Link de agenda', tipo: 'url', max: 300, cliente: true,
     ayuda: 'Para que un interesado elija horario (Calendly, HubSpot Meetings). Va sólo en la respuesta a un positivo, que siempre se aprueba antes.' },
   cuentas_por_dia: { titulo: 'Cuentas nuevas por día', tipo: 'numero', min: 0, max: 100, autogestion: true,
@@ -90,6 +92,7 @@ export const CAMPOS_EMPRESA = armar([
   ['prueba_social', 'prueba'],
   ['objeciones', 'conversacion', { titulo: 'Objeciones de siempre y cómo responderlas' }],
   ['responsable_positivos', 'conversacion'],
+  ['responsable_email', 'conversacion'],
   ['link_agenda', 'conversacion'],
   ['acepta_mails_extrapolados', 'operacion'],
 ]);
@@ -109,7 +112,7 @@ export const BLOQUES_CAMPANA = [
 
 // Lo que la campaña cambia de Empresa: si la campaña no lo tiene, vale el de Empresa (decisión 9 y
 // §6.2). La firma no: es del buzón (decisión 11).
-export const HEREDABLES = ['tono', 'idioma', 'acepta_mails_extrapolados', 'responsable_positivos', 'link_agenda'];
+export const HEREDABLES = ['tono', 'idioma', 'acepta_mails_extrapolados', 'responsable_positivos', 'responsable_email', 'link_agenda'];
 
 // Las listas que están en los dos niveles se suman: el bot ve las de Empresa y las de la campaña.
 export const SE_SUMAN = ['excluir', 'objeciones'];
@@ -131,6 +134,7 @@ export const CAMPOS_CAMPANA = armar([
   ['positivos', 'respuestas'],
   ['objeciones', 'respuestas', { titulo: 'Objeciones de esta campaña', ayuda: 'Además de las de Empresa. Una por línea: «lo que dicen»: cómo se responde.' }],
   ['responsable_positivos', 'respuestas'],
+  ['responsable_email', 'respuestas'],
   ['link_agenda', 'respuestas'],
   ['acepta_mails_extrapolados', 'ritmo'],
 ]).map((c) => (HEREDABLES.includes(c.clave) ? { ...c, hereda: true } : c));
@@ -185,6 +189,7 @@ export const CAMPOS = armar([
   ['objeciones', 'conversacion'],
   ['positivos', 'conversacion'],
   ['responsable_positivos', 'conversacion'],
+  ['responsable_email', 'conversacion'],
   ['link_agenda', 'conversacion'],
   ['cuentas_por_dia', 'operacion'],
   ['buzones', 'operacion'],
@@ -192,6 +197,8 @@ export const CAMPOS = armar([
 ]);
 
 // ---------------------------------------------------------------- validación
+
+const EMAIL = /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/;
 
 function urlValida(c, t) {
   let u = null;
@@ -241,6 +248,13 @@ function limpiarValor(c, v, contexto = {}) {
         if (!de.includes(x)) throw invalido(`«${x.slice(0, 60)}» no está en «${DEF[c.de].titulo}» de Empresa.`);
       }
       return items.length ? items : undefined;
+    }
+    case 'email': {
+      if (typeof v !== 'string') throw invalido(`«${c.titulo}» tiene que ser texto.`);
+      const t = v.trim().toLowerCase();
+      if (!t) return undefined;
+      if (t.length > c.max || !EMAIL.test(t)) throw invalido(`«${c.titulo}» tiene que ser un mail, por ejemplo ana@empresa.com.`);
+      return t;
     }
     case 'url': {
       if (typeof v !== 'string') throw invalido(`«${c.titulo}» tiene que ser texto.`);

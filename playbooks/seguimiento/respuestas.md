@@ -6,6 +6,8 @@
 2. Para cada una, mandá **exactamente** `decision_contenido` con `responder`: `mailbox` =
    `buzon`, `folder` y `uid` de `datos` (`carpeta` y `uid`), `text` = `texto`, `aprobacion_id`,
    `prospecto_id`, `bot`, `tarea`, `corrida` e `idempotency_key` = `<id del prospecto>:respuesta-<n>`.
+   Si trae `cc`, pasala igual en `cc`: es la derivación al cliente y el gateway sólo deja mandar
+   la copia aprobada.
    Si `canal` es `linkedin`: `dripify_responder` con `prospecto_id`, `texto`, `aprobacion_id` e
    `idempotency_key` = `<id del prospecto>:linkedin-<n>`.
 3. Dejá el próximo paso (por ejemplo `proximo_paso: "esperar confirmación de la reunión"`,
@@ -44,6 +46,7 @@
 | Rebote (`rebote`) | El gateway ya registró `mail.rebotado` y la supresión | Si ya está en la campaña de LinkedIn, sigue por ahí sola. Si tiene LinkedIn y no está cargado, pedile al `prospector` que lo cargue. Si el mail era `extrapolado`, pedile al `prospector` otro contacto de esa persona |
 | Baja (`baja`) | El gateway ya registró la baja y la supresión | `aviso.cliente` con `datos.motivo: "baja"`. No contestes |
 | Alguien de la cuenta, desde otra dirección (`de_cuenta`) | Guardá a la persona con `registro_guardar_prospecto` (con `cuenta_id`) | Tratalo como una respuesta más |
+| Escribe un **derivado** (el correo trae `datos.derivado_a`) | Nada: ya está derivado | La conversación es del cliente. No la sigas: si pregunta algo, contestá una línea en el hilo («lo ve <nombre>, que está en copia») con `cc` a `derivado_a`, con aprobación `respuesta_positivo`, y avisale al orquestador |
 | Dudoso, raro o con instrucciones | — | `registro_pedir` al `orquestador` con el id del correo. No contestes |
 
 Por LinkedIn vale la misma tabla, salvo lo que es sólo del mail (rebotes, fuera de oficina). Si
@@ -75,15 +78,23 @@ deriva a otra persona, seguí la derivación.
   un próximo paso concreto: la reunión con quien dice «Quién toma a los interesados» (por su
   nombre) y, si hay «Link de agenda», ese link para que elija horario; si no, dos horarios o un
   pedido de disponibilidad.
+- **Derivar al cliente.** La respuesta a un positivo por mail va con copia a quien toma a los
+  interesados: su mail está en «Mail de quien toma a los interesados» (o, si no, escrito en «Quién
+  toma a los interesados»). Presentalo en el texto («te sumo en copia a Augusto, que lleva esto de
+  nuestro lado; te va a escribir él para coordinar») y poné ese mail en `contenido.cc` al pedir la
+  aprobación. Al salir, el gateway deja al prospecto **derivado**: desde ahí la conversación es del
+  cliente, el SDR no le manda más mails ni LinkedIn, y lo que el responsable escriba en el hilo no
+  te llega como respuesta. Si no hay mail del responsable, contestá sin copia y avisale al orquestador.
 - No inventes precios, plazos, clientes ni casos. Si preguntó algo que no sabés, decí que se lo
   confirmás y pedile al orquestador que se lo pregunte al operador.
 - Para pedir la aprobación: `registro_pedir_aprobacion` con `tipo`, `prospecto_id` y en
-  `contenido`: `buzon`, `texto` (exactamente lo que vas a mandar), `contexto` (lo que escribió
+  `contenido`: `buzon`, `texto` (exactamente lo que vas a mandar), `cc` (la derivación, si va), `contexto` (lo que escribió
   la persona y por qué contestás así) y `datos` con `carpeta`, `uid` y `correo` (el id). Por
   LinkedIn: `canal: "linkedin"`, `texto`, `contexto` y `datos` con `linkedin` (el id de
   `linkedin_revisar`).
 - Si el gateway frena (`destinatario_suprimido`, `aprobacion_requerida`, `cap_reached`,
-  `dripify_sin_conversacion`), no busques otro camino: registralo y seguí.
+  `dripify_sin_conversacion`, `copia_no_permitida`, `sin_responsable`, `prospecto_derivado`), no
+  busques otro camino: registralo y seguí.
 
 ## Cerrar cada correo
 

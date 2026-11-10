@@ -197,13 +197,16 @@ export const SDR_OPS = [
       'gateway sólo deja enviar eso. Si el primer contacto va también por LinkedIn, sumá contenido.linkedin con nota, ' +
       'mensaje1 y mensaje2: es lo único que dripify_cargar va a dejar cargar. Una respuesta a un positivo por LinkedIn ' +
       'lleva contenido.canal "linkedin" y el texto. El primer WhatsApp a una persona (whatsapp_primero) o la respuesta ' +
-      'a un positivo por WhatsApp llevan contenido.canal "whatsapp" y el texto exacto.',
+      'a un positivo por WhatsApp llevan contenido.canal "whatsapp" y el texto exacto. Para derivar a un interesado al ' +
+      'cliente, la respuesta por mail lleva en contenido.cc a quien toma a los interesados (su mail de los ajustes).',
     schema: obj({
       tipo: { enum: ['calibracion_mail', 'respuesta_positivo', 'crm_mapeo', 'crm_cambio', 'whatsapp_primero', 'otro'] },
       prospecto_id: uuid, campana,
       contenido: obj({
         canal: { enum: ['mail', 'linkedin', 'whatsapp'], description: 'Para respuesta_positivo o whatsapp_primero: por dónde sale (por defecto mail).' },
         buzon: texto(254), destinatario: texto(320), asunto: texto(500), texto: texto(20000),
+        cc: { type: 'array', items: texto(320), maxItems: 3, uniqueItems: true,
+          description: 'Sólo en respuesta_positivo por mail: quien toma a los interesados, en copia, para derivarle el interesado.' },
         linkedin: obj({ nota: texto(300), mensaje1: texto(1000), mensaje2: texto(1000) }, ['nota', 'mensaje1', 'mensaje2']),
         contexto: texto(4000), datos: { type: 'object', maxProperties: 50 },
       }),
