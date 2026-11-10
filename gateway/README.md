@@ -103,7 +103,7 @@ Diseño en `docs/21-panel-canales-y-campanas.md` (etapas A y B, migración `010`
 |---|---|---|
 | **Resumen** | Lo que necesita atención (buzones bloqueados, dominio mal, aprobaciones y respuestas que esperan, Dripify con error, despertadores y corridas con error), los números de los últimos 7 días, la calibración y el estado de cada canal (`GET /clients/:id/resumen`) | Los dos roles; despertadores y corridas, sólo Biguá |
 | **Empresa** | Los ajustes que leen los bots, en bloques (identidad y voz, a quién y con qué señal, conversación, operación), la vista previa, la lista de **no contactar** y el historial | Los dos roles |
-| **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, y WhatsApp y CRM como próximamente | Los dos roles; Dripify lo carga Biguá |
+| **Canales** | Correo (buzones, con su firma, y dominios), LinkedIn · Dripify, WhatsApp y CRM (HubSpot: conexión, vista previa y cargas) | Los dos roles; Dripify lo carga Biguá; en el CRM, los campos fijos y el tope, sólo Biguá |
 | **Actividad** | El monitor: a la izquierda los canales con su modo (supervisado o autónomo); a la derecha lo que pasó hoy, en orden, con su estado (`GET /clients/:id/monitor`, se actualiza cada 30 s). Debajo, la auditoría completa (`docs/22`) | Los dos roles |
 | **⚙ Administración** | Operación (activar el SDR, canal de reglas, zona horaria, calibración, bots activos, modo de operación y tope), bots y despertadores, usuarios y tokens | Sólo Biguá |
 
@@ -219,6 +219,12 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
+## Conectar Claude (MCP del panel)
+
+Para personas, no para los bots (`docs/24`): en claude.ai, Configuración → Conectores → agregar un conector con `https://sdrbot.bigua.lat/mcp/panel`, y Conectar. Se abre una página del gateway donde la persona entra con su usuario y su contraseña del panel y autoriza. En Claude Code: `claude mcp add --transport http sdrbot https://sdrbot.bigua.lat/mcp/panel`. Un usuario de un cliente ve sólo su cliente; un operador de Biguá, todos. Las conexiones se ven y se desconectan en el panel, en «Conexiones».
+
+El OAuth está en `src/panel/oauth.mjs` (metadata en `/.well-known/oauth-*`, y `/oauth/register`, `authorize`, `login`, `token` y `revoke`) y el MCP en `src/panel/mcp.mjs`. Necesita `OAUTH_FIRMA` en Vercel (`openssl rand -base64 32`); `OAUTH_ISSUER`, `OAUTH_REDIRECTS` y `OAUTH_CIMD_HOSTS` son opcionales.
+
 ## Núcleo SDR (etapas 1 a 3 de `docs/09`)
 
 Con el permiso `sdr`, el mismo token y el mismo MCP suman 29 herramientas para los bots de Grok (`src/sdr/`, migraciones `005_sdr_nucleo`, `006_memoria_del_correo` y `009_dripify`):
@@ -282,7 +288,7 @@ node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sq
 node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
 ```
 
-Publicado en producción: `2026.11.05-6` en estable, con LinkedIn por Dripify y el prospector sobre `avisos_recientes` de ASCI; `2026.11.09-2` en canario (09/11). Es la `2026.11.09-1` (etapas A y B del panel y el bot `whatsapp`) más dos correcciones de seguridad: los ajustes del cliente son datos y no instrucciones (`comun.md`), y WhatsApp busca con el número completo y no atribuye un chat ambiguo (`whatsapp/pasada.md`). La migración `012_campanas` está aplicada desde el 09/11. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
+Publicado en producción (10/11): `2026.11.10-3` en estable (multi-campaña C1, con el recorte en proporción y el reparto de los publicantes) y `2026.11.10-4` en canario, que es la `-3` más el CRM de la etapa 4a (los bots no cargan en el CRM; el orquestador usa `crm_cargar` a pedido y `crm_cargas` en el resumen; `docs/23`). Migraciones aplicadas: de la `001` a la `015`, con dos `015` (`015_clientes_nuevos_formulario_empresa` y `015_crm`). La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
 
 ## Envíos cortados
 
@@ -309,3 +315,32 @@ Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de 
 - No descarga ni envía adjuntos.
 - Las copias ocultas (bcc) no quedan en un borrador.
 - La salida de Vercel no tiene IP fija: un servidor de correo que sólo acepta IPs de una lista no va a dejar entrar al gateway (ver `docs/07` §7).
+
+### CRM: la carga de los positivos en HubSpot
+
+Diseño en `docs/23-crm-carga-mixta.md` (etapa 4a, migración `015`, aplicada en producción el 10/11/2026). Cuando el operador aprueba la
+respuesta a un positivo (`registro_aprobar` sobre una `respuesta_positivo`), la carga entra a
+`sdr.crm_carga` en la misma transacción, si el cliente tiene el CRM conectado. La vuelta del reloj
+(`POST /cron/correo`) la procesa antes de leer los buzones (`src/sdr/crm.mjs`, adaptador en
+`src/sdr/hubspot.mjs`):
+
+1. **Contacto** buscado por email. Si no existe, se crea con nombre, cargo, empresa, la propiedad de
+   origen y el dueño por defecto. Si existe, sólo se completan las propiedades vacías y no se
+   cambia el dueño.
+2. **Empresa** por dominio (la que haya o una nueva), asociada al contacto.
+3. **Nota** con lo que respondió, qué pide, la respuesta aprobada y la referencia al registro.
+4. **Tarea** para el dueño, para el día hábil siguiente.
+
+Cada paso guarda lo que creó: si se corta, el reintento sigue desde ahí sin duplicar. Los errores
+de red o de HubSpot se reintentan (1 min, 5 min, 30 min, 2 h, 6 h, 12 h; después, `error`). Un token
+rechazado pausa la conexión sin gastar intentos. Un dato que HubSpot no acepta, o un prospecto sin
+email, bloquea la carga con el motivo. En los dos últimos casos el orquestador recibe un pedido para
+contárselo al operador. Al terminar, el prospecto pasa a `en_crm` y queda el evento `crm.cargado`
+con el enlace al contacto.
+
+- **El token** de la app privada se guarda cifrado con `MAILGW_ENC_KEYS` (y `rekey` lo recifra);
+  nunca vuelve al navegador.
+- **Herramientas para los bots:** `crm_cargar(prospecto_id)` para cuando el operador pide cargar a
+  alguien a mano, y `crm_cargas` para el resumen. Los bots no escriben en el CRM.
+- **Pruebas:** `test/crm.test.mjs`, contra un HubSpot simulado (`MAILGW_HUBSPOT_URL`). Para correr
+  sólo ese archivo: `MAILGW_TESTS=test/crm.test.mjs npm test`.

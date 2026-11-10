@@ -1,312 +1,303 @@
-# Roadmap: buzones en Microsoft 365 y Google Workspace
+# Buzones de Microsoft 365 y Google Workspace
 
-Estado: **propuesto, para después del piloto de BairesQA.** Escrito el 04/11/2026. Nada de esto
-está construido; el gateway hoy habla sólo IMAP/SMTP con contraseña (`07-gateway-imap.md`).
+Estado: **propuesto; es la etapa F del plan del panel (`21` §7).** Escrito el 04/11/2026 y
+reescrito el 10/11/2026 con el enfoque de «un clic». Nada de esto está construido: el gateway hoy
+habla IMAP/SMTP con contraseña (`07-gateway-imap.md`).
 
-Este documento dice qué hacer cuando entre un cliente con los buzones en Microsoft 365 (Office
-365, Outlook) o en Google Workspace (Gmail): la decisión, por qué, qué se construye, en qué
-orden, qué se le pide al cliente y qué falta confirmar. Los datos de Microsoft y Google que
-dependen de anuncios de esos proveedores están marcados **(verificar al implementar)**: cambian
-seguido y hay que confirmarlos contra la documentación vigente antes de escribir código.
+Los datos de Microsoft y Google que dependen de sus políticas están marcados **(verificar al
+implementar)**: cambian seguido y hay que confirmarlos contra la documentación vigente antes de
+escribir código.
 
-## 1. La decisión
+## 1. Resumen
 
-**Todos los proveedores de correo entran por el gateway de SDRBOT**, con un tipo de buzón por
-proveedor: `imap` (lo de hoy), `microsoft` (Microsoft Graph) y `google` (Gmail API). El bot usa
-las mismas herramientas MCP sea cual sea el proveedor; el gateway traduce.
+- **El camino definitivo es «un clic»**, como Woodpecker, Apollo o Klenty: el dueño de cada buzón
+  aprieta «Conectar con Google» o «Conectar con Microsoft» en un enlace del panel, inicia sesión
+  y acepta. Biguá tiene **una aplicación por proveedor** para todos sus clientes. El gateway
+  guarda un token de ese buzón (cifrado) y sigue leyendo y enviando por **IMAP y SMTP**, pero con
+  el token en lugar de la contraseña (XOAUTH2). Las reglas del gateway (cupo, idempotencia,
+  campañas, aprobaciones) no cambian.
+- **El cuello de botella no es el código: es la autorización de Google** (la verificación de la
+  aplicación, con una evaluación de seguridad) y, en menor medida, la de Microsoft. Se pide en
+  paralelo, desde el primer día.
+- **Mientras tanto, para no quedar parados:**
+  - **Google Workspace:** IMAP con **contraseña de aplicación** (§6.1). Funciona hoy, sin código.
+  - **Microsoft 365, o Google con las contraseñas de aplicación bloqueadas:** el **conector de
+    Gmail u Outlook de Grok Bot** (§7). El bot lee y escribe por el conector, y el gateway sigue
+    decidiendo cupo, calibración y campañas con una reserva antes de cada envío.
 
-Esto cambia el diseño anterior. `02-arquitectura.md` §4.2 ponía Gmail API y Graph en un módulo
-de los scripts del box, con la credencial como secreto de Grok Bot (`MAIL_CREDENTIAL`). El
-gateway, que nació para IMAP, resultó ser el mejor lugar para todos: ya tiene el cupo diario,
-la idempotencia, el tope de destinatarios, la auditoría, el aislamiento por cliente en la base,
-el panel y el chequeo de dominio. Duplicar eso en los scripts para cada proveedor sería
-mantener dos implementaciones de las mismas reglas.
+## 2. Por qué «un clic» y no lo que decía la versión anterior
 
-### 1.1 Por qué no los conectores de Grok Bot
+La versión del 04/11 proponía permisos **de aplicación** (Microsoft Graph con una aplicación por
+cliente, acotada en Exchange; Google con delegación de dominio). Funcionan, pero:
 
-| | Conector de Gmail u Outlook de Grok Bot | Gateway de SDRBOT |
+| | Permisos de aplicación (versión anterior) | OAuth por buzón, «un clic» |
 |---|---|---|
-| Tiempo para arrancar | Inmediato: cada dueño de buzón inicia sesión en la app | Hay que construir el adaptador y el administrador del cliente da un permiso una vez |
-| Tope diario, sin envíos repetidos, máximo de destinatarios | No existen: dependen de que el bot obedezca el prompt | Los aplica el gateway en código |
-| Registro de qué se envió | Nada propio | `mailgw.send_log` y `mailgw.audit_log`, por cliente y por buzón |
-| Aislamiento | Todos los bots de la cuenta ven todos los conectores (`06` 5.1) | Un token por cliente, separado también en la base |
-| Panel, chequeo de dominio, pausar un buzón | No aplican | Los mismos que BairesQA |
-| Si se corta el acceso | Re-autorizar en la app, buzón por buzón | El gateway lo detecta, frena el buzón y lo muestra en el panel |
-| Para Biguá | Un procedimiento por proveedor | Un solo modelo de operación |
+| Alcance de la credencial | Toda la organización del cliente, salvo que se acote (RBAC de Exchange; en Google no se puede acotar) | **Sólo ese buzón**: es un permiso delegado del usuario que se conectó |
+| Qué hace el cliente | Su administrador registra una aplicación, sube un certificado, corre PowerShell, prueba el alcance; en Google crea un proyecto y una cuenta de servicio | Cada dueño de buzón hace clic y acepta. A veces el administrador da un consentimiento o habilita la aplicación, también con un clic (§4.3, §5.3) |
+| Qué construye Biguá | Adaptadores de Microsoft Graph y Gmail API | El flujo OAuth y el guardado de tokens; **IMAP y SMTP siguen igual** |
+| Trámite con el proveedor | Ninguno | Verificación de la aplicación de Biguá (§3) |
 
-El tope y el "no mandar dos veces" son lo que separa la prospección de quemar un dominio: no
-pueden depender de un prompt. **El conector queda sólo como puente** para una demo o para un
-cliente apurado mientras el adaptador no existe, y en ese caso **sólo con borradores**, sin
-envío automático.
+La versión anterior queda como **camino del administrador** (§8), para un cliente cuya área de
+seguridad no acepte el OAuth por buzón.
 
-### 1.2 Por qué no IMAP/SMTP con contraseña en Microsoft y Google
+## 3. La aplicación de Biguá y su autorización
 
-- **Microsoft 365** apagó la autenticación básica (usuario y contraseña) para IMAP en 2022, y
-  anunció el apagado de SMTP AUTH con contraseña entre marzo y abril de 2026 **(verificar al
-  implementar)**. Lo que queda es OAuth. Cargar un buzón de Microsoft 365 en el panel como uno
-  de IMAP no conecta.
-- **Outlook.com y Hotmail** (cuentas personales) exigen OAuth desde 2024. Además no sirven
-  para prospectar por ningún camino: no tienen dominio propio, tienen límites de envío bajos y
-  las condiciones de Microsoft no lo permiten. Si el cliente sólo tiene eso, la respuesta es un
-  dominio alternativo en Microsoft 365 o Google Workspace (`03` ítem 6).
-- **Google Workspace** cortó el acceso de "apps menos seguras" con contraseña común en
-  2024–2025 **(verificar al implementar)**. Siguen existiendo las **contraseñas de aplicación**
-  para cuentas con verificación en dos pasos, si el administrador no las bloqueó. Con eso el
-  gateway actual funciona contra Gmail sin una línea de código nueva: es el puente de §5.1.
+| | Google | Microsoft |
+|---|---|---|
+| Aplicación | Un cliente OAuth **externo** en un proyecto de Google Cloud de Biguá | Una aplicación **multi-tenant** en el Entra ID de Biguá |
+| Permisos (scopes) | `https://mail.google.com/` (lo que pide IMAP/SMTP con XOAUTH2) | `IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access` (delegados) |
+| Trámite | **Verificación de la aplicación.** Los scopes de Gmail son **restringidos**: piden una evaluación de seguridad externa (CASA) que se renueva cada año, con costo y semanas de plazo **(verificar al implementar)** | **Verificación del editor** (Microsoft Partner Center, MPN ID). Más liviana **(verificar)** |
+| Mientras no esté | Modo prueba: hasta 100 usuarios agregados a mano, con pantalla de advertencia, y los tokens vencen a los 7 días **(verificar)**. Sirve para Biguá y un piloto, no para clientes | Funciona; sin editor verificado, muchas organizaciones no dejan que el usuario la acepte solo y hace falta el consentimiento del administrador |
+| Quién la tramita | Biguá (política de privacidad, dominio verificado, video de uso, evaluación) | Biguá (cuenta de Partner Center) |
 
-## 2. Diseño común: un tipo de buzón por proveedor
+**Se arranca con la verificación de Google apenas se decida la etapa**: es lo que más tarda y no
+depende del código. Hacen falta la página de privacidad y los términos en un dominio de Biguá, y
+la pantalla de consentimiento con el logo y la descripción del SDR.
 
-Lo que se construye una vez y sirve para los dos proveedores (etapa 1 de §6).
+## 4. Microsoft 365
 
-### 2.1 Base
+### 4.1 El clic
 
-- `mailgw.account.provider`: `imap` (default, lo de hoy), `microsoft`, `google`.
-- Tabla nueva `mailgw.provider_connection`: **la credencial es por cliente, no por buzón.**
-  Una fila por (cliente, proveedor, organización del cliente) con el identificador de la
-  organización (tenant de Microsoft o cliente de Workspace), el de la aplicación, la
-  credencial cifrada con `MAILGW_ENC_KEYS` (igual que hoy las contraseñas, con su propio AAD),
-  el estado y la fecha de la última verificación de alcance (§2.4).
-- Los buzones `microsoft` y `google` apuntan a su conexión y no llevan contraseña ni
-  servidores. Misma seguridad por filas por cliente que el resto (`002`, `003`).
+1. En el panel, Canales → Correo → «Agregar buzón de Microsoft 365». El panel da un **enlace de
+   un solo uso** para el dueño del buzón (no necesita usuario del panel).
+2. El dueño inicia sesión con su cuenta de Microsoft 365 y acepta los permisos de §3.
+3. Microsoft vuelve al gateway (`https://sdrbot.bigua.lat/oauth/microsoft/callback`) con un código;
+   el gateway lo cambia por los tokens, comprueba que la cuenta que aceptó es la del buzón
+   pedido, y lo activa.
 
-### 2.2 Adaptadores
+### 4.2 Cómo trabaja el gateway
 
-Un módulo por proveedor detrás de la misma interfaz que hoy implementa `src/mail/imap.mjs` +
-`smtp.mjs`:
-
-| Operación del bot | IMAP (hoy) | Microsoft Graph | Gmail API |
-|---|---|---|---|
-| `carpetas` | `LIST` con SPECIAL-USE | `mailFolders` (+ `childFolders`, nombres bien conocidos `inbox`, `sentitems`, `drafts`) | `labels.list` |
-| `sincronizar` | UID desde un cursor | `messages/delta` por carpeta (el cursor es el `deltaLink`) | `history.list` desde un `historyId` |
-| `buscar` | `SEARCH` | `$search` / `$filter` | `messages.list` con `q` |
-| `leer_mensaje` | `FETCH` del MIME | `messages/{id}/$value` (MIME) | `messages.get` con `format=raw` |
-| `enviar` | SMTP + copia en Enviados | `sendMail` (guarda en Enviados solo) | `messages.send` con el MIME que ya arma `compose.mjs` (guarda en Enviados solo) |
-| `responder` | SMTP con `In-Reply-To` y `References` | `createReply` y `send` (mantiene el hilo) | `messages.send` con `threadId` y las mismas cabeceras |
-| `crear_borrador` | `APPEND` en Borradores | `POST messages` (queda en Borradores) | `drafts.create` |
-| `marcar` | flags y palabras clave (`SDR_procesado`) | `isRead`, `flag` y **categorías** para las palabras clave | etiqueta `UNREAD`, `STARRED` y **etiquetas propias** para las palabras clave |
-| `mover` | `MOVE` (nunca a la papelera) | `messages/{id}/move` (nunca a `deleteditems`) | cambiar etiquetas (nunca `TRASH`) |
-| `crear_carpeta` | `CREATE` | `childFolders` | `labels.create` |
-
-Las reglas que hoy viven en `ops.mjs` (cupo, idempotencia, máximo de destinatarios, nada se
-borra, auditoría sin contenido) quedan **arriba** de los adaptadores y no se tocan.
-
-### 2.3 El contrato con el bot
-
-Hoy los mensajes se identifican con `uid` (entero de IMAP) y el cursor es
-`{ uidvalidity, last_uid }`. Graph y Gmail usan identificadores de texto y cursores propios.
-Para que el bot no cambie según el proveedor:
-
-- Cada mensaje devuelve además un **`id` opaco** (texto). Las operaciones aceptan `id` o, en
-  buzones IMAP, `uid` como hasta ahora: lo que ya usa BairesQA sigue funcionando.
-- El cursor de `sincronizar` pasa a ser **opaco**: el bot lo guarda y lo devuelve sin mirarlo.
-  En IMAP sigue siendo el mismo objeto.
-- Las palabras clave (`SDR_procesado`) se mapean a categorías (Graph) o etiquetas (Gmail) con
-  el mismo nombre; el bot no se entera.
-- `enviar` y `responder` siguen devolviendo el `Message-ID`: en Graph sale de
-  `internetMessageId` y en Gmail del mensaje enviado.
-
-### 2.4 Panel
-
-- Al crear un buzón se elige el proveedor. Para `imap`, lo de hoy. Para `microsoft` y
-  `google`, primero se da de alta la **conexión** del cliente con un asistente que muestra los
-  pasos para su administrador (§4.3 y §5.3), y después se agregan los buzones (sólo email y
-  nombre visible).
-- **«Verificar alcance»**: comprueba que la conexión llega a los buzones del SDR **y que no
-  llega a uno que no lo es** (el administrador da una dirección cualquiera de la empresa para
-  la prueba negativa). Un buzón no se habilita hasta que esa prueba pasa. Es la defensa contra
-  un permiso que, mal configurado, deja leer el correo de toda la empresa.
-- «Probar», pausar, cupo, actividad y la pestaña «Dominios» funcionan igual. El chequeo de
-  dominio ya detecta Microsoft 365 y Google y da los pasos de cada uno.
-
-## 3. Lo que no cambia
-
-El aislamiento por cliente en la base, los tokens de Grok Bot por cliente, las herramientas MCP,
-el registro de envíos y la idempotencia, el panel y sus roles, y la regla de que nada se borra.
-Un cliente con buzones en dos proveedores (por ejemplo, Microsoft 365 para el dominio principal
-y un hosting para el alternativo) es un caso normal: buzones de distinto tipo bajo el mismo
-cliente y el mismo token.
-
-## 4. Microsoft 365 con Microsoft Graph
-
-### 4.1 Cómo entra el gateway
-
-Permisos **de aplicación** (sin usuario que inicie sesión): `Mail.ReadWrite` y `Mail.Send`.
-`Mail.ReadWrite` cubre leer, crear borradores, mover y marcar; `Mail.Send`, enviar. No hacen
-falta `Mail.Read` aparte ni permisos de calendario o contactos.
-
-**Una aplicación por cliente, registrada en el Entra ID del cliente**, con autenticación por
-**certificado**: el gateway genera el par de claves, el cliente sube sólo la parte pública a su
-aplicación, y la privada queda cifrada en `provider_connection`. Así no viaja ningún secreto, y
-si una credencial se filtra expone a un solo cliente.
-
-La alternativa, una aplicación multi-tenant de Biguá con consentimiento de cada cliente, es más
-rápida de dar de alta pero concentra el riesgo: una sola credencial para todos los clientes. Se
-puede revisar si el volumen de clientes lo justifica (§7).
-
-### 4.2 Acotar la aplicación a los buzones del SDR
-
-**No es opcional.** Un permiso de aplicación de Graph, concedido sin más, deja leer y enviar
-desde **todos** los buzones de la organización. Ninguna área de seguridad lo acepta, y no
-debería.
-
-Exchange Online lo acota con **RBAC para aplicaciones** (el reemplazo de las antiguas
-*application access policies*) **(verificar al implementar)**:
-
-```powershell
-# En Exchange Online PowerShell, como administrador del cliente.
-# 1. Marcar los buzones del SDR (o usar un grupo).
-Set-Mailbox ventas1@dominio.com -CustomAttribute1 "sdrbot"
-# 2. Dar de alta la aplicación en Exchange (AppId y ObjectId del service principal de Entra).
-New-ServicePrincipal -AppId <app-id> -ObjectId <object-id> -DisplayName "SDRBOT Mail"
-# 3. Un alcance con sólo esos buzones.
-New-ManagementScope -Name "SDRBOT buzones" -RecipientRestrictionFilter "CustomAttribute1 -eq 'sdrbot'"
-# 4. Los permisos, sólo dentro de ese alcance.
-New-ManagementRoleAssignment -App <app-id> -Role "Application Mail.ReadWrite" -CustomResourceScope "SDRBOT buzones"
-New-ManagementRoleAssignment -App <app-id> -Role "Application Mail.Send" -CustomResourceScope "SDRBOT buzones"
-# 5. Comprobar.
-Test-ServicePrincipalAuthorization -Identity <app-id> -Resource ventas1@dominio.com
-```
-
-Con RBAC para aplicaciones los permisos se asignan en Exchange, **no** se conceden en Entra ID:
-si además se conceden en Entra para toda la organización, el acotamiento no sirve. El asistente
-del panel lo tiene que decir en rojo, y «Verificar alcance» (§2.4) lo comprueba.
+- IMAP en `outlook.office365.com:993` y SMTP en `smtp.office365.com:587`, con XOAUTH2 y el token de
+  acceso (dura alrededor de una hora; el gateway lo renueva con el de actualización antes de usarlo).
+- Si Microsoft rechaza la renovación (la contraseña cambió, el administrador revocó, la cuenta se
+  desactivó), el buzón pasa a `auth_error`, se frena y el panel muestra «Volver a conectar», como
+  hoy con una contraseña rechazada.
 
 ### 4.3 Qué se le pide al cliente
 
 | # | Qué | Quién |
 |---|---|---|
 | 1 | Licencia de Exchange Online en cada buzón del SDR | TI del cliente |
-| 2 | Registrar una aplicación en Entra ID y subir el certificado que genera el panel | Administrador de Entra ID |
-| 3 | Los pasos de §4.2 con los buzones del SDR | Administrador de Exchange |
-| 4 | Una dirección que **no** sea del SDR, para la prueba negativa de alcance | Administrador |
-| 5 | SPF con `include:spf.protection.outlook.com`, DKIM activado en Defender, DMARC | TI del cliente (la pestaña «Dominios» lo verifica y da los pasos) |
+| 2 | **SMTP con OAuth habilitado en cada buzón del SDR.** En muchas organizaciones viene apagado: `Set-CASMailbox <buzón> -SmtpClientAuthenticationDisabled $false` **(verificar)** | Administrador de Exchange |
+| 3 | Si la organización no deja que los usuarios acepten aplicaciones: **consentimiento del administrador** para la aplicación de Biguá, una vez, desde el enlace que da el panel | Administrador de Entra ID |
+| 4 | Cada dueño de buzón: el clic de §4.1 | Cada dueño |
+| 5 | SPF con `include:spf.protection.outlook.com`, DKIM activado, DMARC (la pestaña «Dominios» lo verifica y da los pasos) | TI del cliente |
 
-Se hace en una videollamada de 30 a 45 minutos con un operador de Biguá, igual que hoy la carga
-de contraseñas.
+Outlook.com y Hotmail personales no sirven para prospectar (sin dominio propio, límites bajos):
+la respuesta es un dominio alternativo en Microsoft 365 o Workspace (`03` ítem 6).
 
-### 4.4 Límites a tener en cuenta
+### 4.4 Límites
 
-- Exchange Online limita a 30 mensajes por minuto y 10.000 destinatarios por día por buzón
-  **(verificar al implementar)**; los cupos del SDR están muy por debajo.
-- Graph limita pedidos por aplicación y por buzón. Si responde 429, hay que respetar el
-  `Retry-After`. `sincronizar` con `delta` es barato.
-- Microsoft anunció en su momento un límite de destinatarios externos por día y después lo
-  postergó **(verificar al implementar)**. Si entra en vigor, el cupo del panel tiene que
-  quedar por debajo.
-
-### 4.5 Cómo se prueba
-
-- Un servidor Graph de mentira en los tests (`test/`), igual que hoy Dovecot hace de servidor
-  IMAP: endpoints mínimos de `mailFolders`, `messages`, `delta`, `sendMail`, `createReply`,
-  `move` y respuestas 401, 403 y 429.
-- Un tenant de desarrollo de Microsoft 365 para la prueba de punta a punta, incluida la prueba
-  negativa de alcance. El programa de desarrolladores de Microsoft restringió quién accede
-  **(verificar)**: si no se consigue, un tenant de prueba pago con una licencia.
+Exchange Online limita a 30 mensajes por minuto y 10.000 destinatarios por día por buzón
+**(verificar)**; los cupos del SDR están muy por debajo. Microsoft anunció en su momento un límite
+de destinatarios externos por día y lo postergó **(verificar)**: si entra en vigor, el cupo del
+panel tiene que quedar por debajo.
 
 ## 5. Google Workspace
 
-### 5.1 Puente sin código: IMAP con contraseña de aplicación
+### 5.1 El clic
 
-Para un cliente en Workspace que no puede esperar al adaptador:
+Igual que §4.1, con «Conectar con Google» y el callback `https://sdrbot.bigua.lat/oauth/google/callback`.
+IMAP en `imap.gmail.com:993` y SMTP en `smtp.gmail.com:465`, con XOAUTH2.
 
-- Servidores `imap.gmail.com` (993, TLS) y `smtp.gmail.com` (465, TLS). El usuario es la
-  dirección completa; la contraseña, una **contraseña de aplicación** de esa cuenta (requiere
-  verificación en dos pasos y que el administrador no las haya bloqueado).
-- **Desactivar «Guardar copia de lo enviado»** en el buzón: Gmail guarda solo lo que se manda
-  por SMTP, y con la opción activa cada mail quedaría dos veces en Enviados. (Pendiente de la
-  etapa 1: que el panel la desactive solo cuando el servidor es de Gmail.)
-- Las carpetas de Gmail son etiquetas: un mensaje puede estar en varias, y «mover» quita una
-  etiqueta y pone otra. El gateway usa SPECIAL-USE, así que reconoce Enviados y Borradores
-  aunque estén en español.
-- Es un puente: una contraseña por buzón, que el administrador puede invalidar en cualquier
-  momento. Pasar al adaptador (§5.2) cuando exista.
+### 5.2 Detalles de Gmail
 
-### 5.2 El definitivo: Gmail API
-
-Dos formas de autorizar, y la elección depende de **dónde están los buzones**:
-
-| | Cuenta de servicio con delegación de dominio | OAuth por buzón |
-|---|---|---|
-| Cómo | Una cuenta de servicio en un proyecto de Google Cloud **del cliente**, autorizada por el administrador de Workspace a actuar como cualquier usuario con el scope `gmail.modify` | Cada dueño de buzón autoriza una vez; el gateway guarda el token de actualización cifrado |
-| Alcance | **Todos los usuarios de la cuenta de Workspace**: Google no permite acotarla a algunos buzones ni a un dominio secundario **(verificar al implementar)** | Sólo ese buzón |
-| Credencial | Una por cliente | Una por buzón, que se renueva sola mientras se use |
-| Verificación de Google | No hace falta | `gmail.modify` es un scope restringido: con un cliente OAuth **interno** en el proyecto de Google Cloud del cliente no hace falta verificación; con una aplicación externa de Biguá sí, con evaluación de seguridad anual **(verificar al implementar)** |
-| Cuándo | Los buzones del SDR viven en **una cuenta de Workspace propia**, sólo para prospección (el dominio alternativo de `03` ítem 6 en su propia cuenta, no como dominio secundario de la principal) | Los buzones están en la cuenta de Workspace principal de la empresa |
-
-Un único scope, `https://www.googleapis.com/auth/gmail.modify`, cubre leer, enviar, borradores y
-etiquetas, sin borrado permanente. Es más chico que la suma `gmail.send` + `gmail.readonly` +
-`gmail.modify` que proponía `02` §4.2.
-
-**Recomendación:** que el dominio alternativo del SDR viva en su propia cuenta de Workspace y
-usar la delegación de dominio. Así el alcance de la credencial es exactamente el SDR, que es el
-mismo resultado que da Microsoft con §4.2. Si eso no es posible, OAuth por buzón con un cliente
-OAuth interno en el proyecto del cliente.
+- **Desactivar «Guardar copia de lo enviado»** en esos buzones: Gmail guarda solo lo que se manda
+  por SMTP, y con la opción activa cada mail quedaría dos veces en Enviados. El panel la apaga sola
+  cuando el buzón es de Google.
+- Las carpetas son etiquetas: un mensaje puede estar en varias, y «mover» quita una y pone otra.
+  El gateway usa SPECIAL-USE, así que reconoce Enviados y Borradores aunque estén en español.
 
 ### 5.3 Qué se le pide al cliente
 
 | # | Qué | Quién |
 |---|---|---|
-| 1 | Con delegación: un proyecto de Google Cloud, una cuenta de servicio y su clave cargada en el panel (o generada por el panel), y la autorización en la consola de Workspace (Seguridad → Control de acceso y datos → Controles de API → Delegación de todo el dominio) con el scope `gmail.modify` | Administrador de Workspace |
-| 1b | Con OAuth por buzón: un cliente OAuth interno en su proyecto de Google Cloud; después, cada dueño de buzón autoriza desde el enlace que da el panel | Administrador y cada dueño |
-| 2 | La API de Gmail habilitada en el proyecto | Administrador |
-| 3 | SPF con `include:_spf.google.com`, DKIM activado en la consola de Google (selector `google`), DMARC | TI del cliente (la pestaña «Dominios» lo verifica y da los pasos) |
+| 1 | Si la consola de Workspace restringe las aplicaciones de terceros: **habilitar la aplicación de Biguá** (Seguridad → Controles de API → Acceso de aplicaciones de terceros) **(verificar)** | Administrador de Workspace |
+| 2 | Cada dueño de buzón: el clic de §5.1 | Cada dueño |
+| 3 | SPF con `include:_spf.google.com`, DKIM activado (selector `google`), DMARC | TI del cliente |
 
 ### 5.4 Límites
 
-- Workspace limita a 2.000 mensajes por día por usuario **(verificar al implementar)**; los
-  cupos del SDR están muy por debajo.
-- La API de Gmail mide cuota por unidades por usuario y por proyecto; `history.list` es barato,
-  `messages.send` cuesta más. Con 429, reintentar con espera.
+Workspace limita a 2.000 mensajes por día por usuario **(verificar)**; los cupos del SDR están muy
+por debajo.
 
-### 5.5 Cómo se prueba
+## 6. Mientras la aplicación no está verificada
 
-Un servidor Gmail API de mentira en los tests (`labels`, `messages`, `history`, `send`,
-`drafts`), y una cuenta de Workspace de prueba de Biguá para la prueba de punta a punta, con la
-delegación configurada como la configuraría un cliente.
+### 6.1 Google: contraseña de aplicación (hoy, sin código)
 
-## 6. Etapas
+Para un cliente en Workspace:
 
-Cada etapa se cierra con `npm test` en verde, el piloto de BairesQA intacto y la documentación
-al día. El orden de 2 y 3 lo decide el primer cliente que llegue: si es de Google, la 3 va antes.
+- El buzón se carga como uno IMAP de hoy, con `imap.gmail.com` (993, TLS) y `smtp.gmail.com`
+  (465, TLS), el usuario con la dirección completa y una **contraseña de aplicación** de esa cuenta
+  (requiere verificación en dos pasos y que el administrador no las haya bloqueado).
+- Con «Guardar copia de lo enviado» apagado (§5.2).
+- Cuando la aplicación de Biguá esté verificada, el buzón pasa a «un clic» sin perder su
+  historial: es la misma fila de `mailgw.account`, cambia la credencial.
+
+### 6.2 Microsoft, o Google sin contraseñas de aplicación
+
+No hay forma de entrar al gateway sin OAuth: Microsoft apagó la contraseña para IMAP en 2022 y
+para SMTP en 2026 **(verificar)**. El puente es el conector de Grok Bot (§7).
+
+## 7. Salida rápida: Grok Bot con el conector del buzón
+
+### 7.1 Por qué sirve
+
+Los conectores de Gmail y Outlook de Grok Bot se autorizan con la aplicación **de Grok**, que ya
+está verificada por Google y Microsoft: el dueño del buzón lo conecta en la cuenta de Grok del
+cliente con un clic, hoy. Los tokens quedan en el backend de Grok y el bot usa las herramientas
+del conector sin verlos (`12` 3.2).
+
+Lo que se pierde, y por qué la versión anterior lo descartaba como definitivo: **el gateway no
+está en el camino del envío**. Lo manda el bot por el conector. El cupo, la idempotencia, la
+calibración y las campañas dejarían de estar en código. Por eso el puente se arma así:
+
+### 7.2 Cómo se arma: el gateway reserva, el bot envía, el gateway concilia
+
+Un tipo de buzón nuevo, **`conector`**: una fila de `mailgw.account` sin credenciales ni
+servidores, con su cupo, su campaña y su estado como cualquier otro. Tres herramientas MCP nuevas:
+
+| Herramienta | Qué hace |
+|---|---|
+| `correo_conector_reservar` | Antes de cada envío. Recibe lo mismo que `enviar` (buzón, destinatarios, asunto, texto, `prospecto_id`, aprobación, clave de idempotencia) y corre **los mismos controles** que `enviar`: cupo del día, idempotencia, campaña activa y buzón de la campaña, calibración y aprobación, no contactar, supresiones, links permitidos, prospecto que ya respondió. Si pasa, reserva el lugar en `mailgw.send_log` y devuelve un `permiso`. Si no, el error de siempre (`cap_reached`, `aprobacion_requerida`…) |
+| `correo_conector_confirmar` | Después de enviar por el conector: el `permiso` y el `Message-ID` (o el id del conector). Cierra la reserva y registra `mail.enviado` en el registro, como hoy hace `enviar` |
+| `correo_conector_recibido` | `seguimiento` le pasa al gateway lo que leyó por el conector (remitente, asunto, texto, fecha, ids del hilo). Entra en la memoria del correo (`sdr.correo`) y sigue el mismo camino que lo que hoy lee el reloj: respuestas, rebotes, bajas, freno de la secuencia |
+
+Las reglas de los bots, para un buzón `conector`:
+
+- `prospector`: «Un mail por conector: primero `correo_conector_reservar`; si no da permiso, no
+  lo mandes. Con el permiso, mandalo por el conector **exactamente** como lo reservaste, y
+  `correo_conector_confirmar`. Nunca mandes por el conector sin permiso».
+- `seguimiento`: lee el buzón por el conector en cada corrida, pasa cada mail nuevo con
+  `correo_conector_recibido` y responde con la misma pareja reservar/confirmar.
+
+### 7.3 Lo que el gateway no puede impedir, y cómo se controla
+
+- **Un envío sin reserva.** El gateway no está en el medio. Se controla por conciliación: una vez
+  por día el bot lista lo enviado por el conector (`Enviados` del día) y lo pasa al gateway, que
+  compara con las reservas. **Un envío sin reserva pausa el buzón** (estado `paused`, alerta en el
+  panel) hasta que Biguá lo revise.
+- **Un envío distinto de lo reservado** (otro destinatario, otro texto): la conciliación compara
+  destinatarios y un hash del texto; si no coinciden, lo mismo.
+- **Los conectores los ven todos los bots de la cuenta** (`06` 5.1, `12` 3.6): una cuenta de Grok
+  por cliente (ya es así), y las reglas dicen qué bot usa el conector y para qué. La revisión
+  automática de Grok (Auto Review) con la herramienta de enviar del conector en «Ask first» para
+  los bots que no la usan **(verificar si se puede por herramienta)**.
+- **Cupo conservador:** un buzón `conector` arranca con un cupo bajo (10 por día) y en
+  calibración, aunque la campaña ya haya terminado la suya.
+
+### 7.4 Modo borradores, para arrancar el primer día
+
+Antes de tener las herramientas de §7.2, o con un cliente desconfiado: el bot **sólo crea
+borradores** por el conector y una persona del cliente los manda. El bot registra cada borrador
+con `registro_evento` y la persona marca lo que mandó. Es lento pero no tiene riesgo de envío.
+
+### 7.5 Cuándo se sale del puente
+
+Cuando la aplicación de Biguá del proveedor está verificada (§3): el dueño del buzón hace el clic
+de «un clic», el buzón pasa de `conector` a `oauth` (misma fila, mismo historial y mismo cupo), se
+desconecta el conector de Grok y las reglas vuelven a `enviar` y al reloj.
+
+## 8. Camino del administrador (alternativa)
+
+Para un cliente cuya seguridad no acepte que cada usuario autorice una aplicación externa, o que
+prefiera que la credencial sea de la organización:
+
+- **Microsoft:** una aplicación registrada en el Entra ID del cliente, con certificado, permisos de
+  aplicación `Mail.ReadWrite` y `Mail.Send` **acotados en Exchange con RBAC para aplicaciones** a
+  los buzones del SDR, y una prueba negativa de alcance en el panel (un buzón fuera del SDR tiene
+  que dar 403). Sin acotar, ese permiso deja leer el correo de toda la empresa.
+- **Google:** cuenta de servicio con delegación de dominio en un proyecto del cliente, sólo si los
+  buzones del SDR viven en una cuenta de Workspace propia (la delegación no se puede acotar a
+  algunos buzones **(verificar)**). Si no, OAuth por buzón con un cliente OAuth **interno** en el
+  proyecto del cliente, que no necesita la verificación de Google.
+
+Necesita los adaptadores de Microsoft Graph y Gmail API (permisos de aplicación no sirven para
+IMAP con XOAUTH2 en Google; en Microsoft sí con `IMAP.AccessAsUser.All` de aplicación
+**(verificar)**). Se construye sólo si un cliente lo pide.
+
+## 9. Cambios en el gateway
+
+### 9.1 Base
+
+- `mailgw.account.auth`: `password` (lo de hoy), `oauth` o `conector`. Con `oauth` y `conector`,
+  `secret_enc`, `username` y servidores no aplican (los servidores de Google y Microsoft son fijos).
+- `mailgw.account.provider`: `imap`, `google` o `microsoft`.
+- Tabla nueva `mailgw.oauth_token`: una fila por buzón con el token de actualización **cifrado con
+  `MAILGW_ENC_KEYS`** (AAD propio, como las contraseñas), el de acceso y su vencimiento, los scopes
+  concedidos, la cuenta que aceptó y el estado. Misma seguridad por filas por cliente que el resto.
+- Tabla `mailgw.oauth_estado` para el flujo: el `state` y el verificador PKCE de cada enlace de un
+  solo uso, con vencimiento corto.
+
+### 9.2 Código
+
+- `src/mail/oauth.mjs`: armar el enlace (código de autorización con PKCE y `state`), el callback,
+  el cambio de código por tokens, la renovación con un candado por buzón (dos pedidos a la vez no
+  renuevan dos veces) y la revocación al dar de baja un buzón.
+- `src/mail/imap.mjs` y `smtp.mjs`: con `auth = 'oauth'`, `accessToken` en lugar de la contraseña
+  (imapflow y nodemailer lo aceptan **(verificar en el código)**). Un 401 de renovación es un
+  `auth_error`, como hoy una contraseña rechazada.
+- El panel: el alta por proveedor, el enlace para el dueño, «Volver a conectar», el estado del
+  token.
+- Las herramientas del §7.2 y la conciliación, para el puente.
+
+### 9.3 Lo que no cambia
+
+Las herramientas MCP de correo (`enviar`, `responder`, `buscar`…), el cupo, la idempotencia, el
+registro de envíos, las campañas y sus buzones (`sdr.campana_buzon` apunta a `mailgw.account`), la
+memoria del correo y el reloj para los buzones `oauth` (siguen con `uid` de IMAP, que XOAUTH2
+mantiene), y las reglas de los bots para los buzones que no son `conector`.
+
+Los buzones `conector` no tienen `uid`: lo que entra por `correo_conector_recibido` se guarda en
+`sdr.correo` con el id del conector y el `Message-ID`, y `seguimiento` responde con ese id. Es el
+primer paso del `id` opaco que necesitarán los adaptadores de API (F4).
+
+### 9.4 Cómo se prueba
+
+- Un servidor OAuth de mentira en los tests (autorización, cambio de código, renovación,
+  revocación, errores) y Dovecot con XOAUTH2 contra ese servidor, o un IMAP de mentira que acepte
+  el token **(a definir al implementar)**.
+- Un Workspace y un tenant de Microsoft 365 de prueba de Biguá, con la aplicación en modo prueba,
+  para la prueba de punta a punta.
+- El puente: las tres herramientas y la conciliación con envíos reservados, sin reservar y
+  distintos de lo reservado.
+
+## 10. Etapas
 
 | Etapa | Qué | Sale cuando | Tamaño |
 |---|---|---|---|
-| **0** · hecho | Gateway IMAP/SMTP, panel, dominios, piloto BairesQA | — | — |
-| **1** · base común | `provider` en `account`, tabla `provider_connection`, interfaz de adaptador con IMAP detrás sin cambiar su comportamiento, `id` y cursor opacos (§2.3) con compatibilidad, panel por proveedor, Gmail detectado para el puente (§5.1) | Las pruebas actuales pasan sin tocarlas y BairesQA sigue andando | Mediano |
-| **2** · Microsoft 365 | Adaptador Graph, asistente de conexión con certificado, «Verificar alcance» con prueba negativa, servidor Graph de mentira, prueba en un tenant de desarrollo | Un buzón de un tenant de prueba lee, responde en hilo y respeta el cupo, y uno fuera del alcance da 403 | Grande |
-| **3** · Google Workspace | Adaptador Gmail API, delegación de dominio y OAuth por buzón, servidor Gmail de mentira, prueba en una cuenta de Workspace | Lo mismo que la etapa 2, con Gmail | Grande |
-| **4** · tiempo real | Suscripciones de Graph y `users.watch` de Gmail hacia el gateway, que dispara la routine por webhook (`06` 3.6) en vez de esperar al chequeo cada 15 minutos | Una respuesta de un prospecto dispara la routine en menos de un minuto | Mediano |
+| **F0 · Trámites** (en paralelo, desde ya) | Verificación de la aplicación de Google; verificación de editor de Microsoft; página de privacidad y términos | Las dos aplicaciones aprobadas | Trámite, semanas |
+| **F1 · Puente con conector** | Tipo `conector`, `correo_conector_reservar`/`confirmar`/`recibido`, conciliación diaria, reglas para buzones `conector`, modo borradores | Un buzón de Microsoft 365 conectado en Grok manda un mail reservado, se registra, y un envío sin reserva pausa el buzón | Mediano |
+| **F2 · Un clic** | `oauth_token`, flujo OAuth, IMAP/SMTP con XOAUTH2, panel, renovación y revocación | Un buzón de Workspace y uno de Microsoft 365 conectados con un clic leen, responden en hilo y respetan el cupo, con la aplicación en modo prueba | Mediano |
+| **F3 · Pasar del puente a un clic** | Con las aplicaciones verificadas: los buzones `conector` pasan a `oauth` | Ningún buzón queda en el puente | Chico |
+| **F4 · Tiempo real y camino del administrador** | Adaptadores de Microsoft Graph y Gmail API, avisos al instante (suscripciones de Graph, `users.watch` de Gmail), permisos de aplicación (§8) | Sólo si un cliente lo pide o el chequeo cada 15 minutos no alcanza | Grande |
 
-Mientras una etapa no esté, el camino para un cliente nuevo es:
+Qué usa un cliente nuevo según dónde están sus buzones:
 
-| Cliente con buzones en | Hoy | Después de su etapa |
-|---|---|---|
-| Hosting genérico (cPanel, Plesk, Zimbra, DonWeb/Ferozo) | Gateway IMAP | Igual |
-| Google Workspace | Gateway IMAP con contraseña de aplicación (§5.1) | Gateway con Gmail API |
-| Microsoft 365 | Conector de Outlook de Grok Bot, **sólo borradores** | Gateway con Graph |
-| Outlook.com o Hotmail personal | No: dominio alternativo en Microsoft 365 o Workspace | Igual |
+| Buzones en | Hoy | Con F1 | Con F2 y F3 |
+|---|---|---|---|
+| Hosting genérico (cPanel, Plesk, Zimbra, DonWeb/Ferozo) | Gateway IMAP | Igual | Igual |
+| Google Workspace | IMAP con contraseña de aplicación (§6.1) | Igual, o conector si están bloqueadas | Un clic |
+| Microsoft 365 | Conector de Outlook, sólo borradores (§7.4) | Conector con reserva (§7.2) | Un clic |
+| Outlook.com o Hotmail personal | No: dominio alternativo en Microsoft 365 o Workspace | Igual | Igual |
 
-## 7. Decisiones abiertas
+## 11. Decisiones abiertas
 
 | Tema | Opciones | Inclinación | Quién decide |
 |---|---|---|---|
-| Aplicación de Microsoft | Una por cliente (más alta, menos riesgo) o una multi-tenant de Biguá (alta en un clic, una credencial para todos) | Una por cliente hasta tener muchos clientes en Microsoft | Biguá |
-| Google: delegación u OAuth por buzón | Depende de dónde estén los buzones (§5.2) | Cuenta de Workspace propia para el SDR + delegación | Biguá con el cliente, en el alta |
-| Credenciales de correo en Biguá | `02` §5 decía que Biguá no guardaba la credencial de mail del cliente; con el gateway sí la guarda, cifrada | Ya pasa con IMAP: el DPA tiene que decirlo para todos los proveedores | Biguá (legal) |
-| Quién configura del lado del cliente | El administrador del cliente solo, con el asistente, o en videollamada con Biguá | Videollamada las primeras veces; el asistente después | Biguá |
-| Verificación de Google | Necesaria sólo si Biguá ofrece una aplicación OAuth propia a clientes externos | Evitarla: cliente OAuth interno en el proyecto del cliente | Biguá |
+| ¿Pedir ya la verificación de Google? | Ahora (semanas de plazo, costo anual de la evaluación) o cuando llegue un cliente de Google | Ahora: es lo único que no se acelera con trabajo | Biguá |
+| ¿El puente manda o sólo hace borradores? | Borradores siempre, o envío con reserva y conciliación | Envío con reserva, con cupo bajo y calibración; borradores el primer día | Biguá con cada cliente |
+| Tokens de muchos clientes en Biguá | Ya pasa con las contraseñas IMAP; los tokens se revocan al dar de baja | El DPA lo tiene que decir para todos los proveedores | Biguá (legal) |
+| Camino del administrador | Construirlo de entrada o a pedido | A pedido | Biguá |
 
-## 8. Cambios en otros documentos
+## 12. Cambios en otros documentos
 
-Cuando arranque la etapa 1:
+Cuando arranque la etapa F1:
 
-- `02-arquitectura.md` §4.2: el «módulo de mail por API» deja de vivir en los scripts del box;
-  Gmail API y Graph van en el gateway. La credencial pasa de secreto de Grok Bot
-  (`MAIL_CREDENTIAL`) a `provider_connection`, cifrada. §5: la fila «Casillas» y la regla de
-  que Biguá no guarda la credencial de mail.
-- `03-onboarding-y-prerrequisitos.md` ítem 6: el pedido al cliente según su proveedor (§4.3,
-  §5.3).
-- `tenant-manifest.example.yaml`, `channels.email`: `api_auth` y `api_credential_secret` se
-  reemplazan por la conexión del gateway (`graph_app_rbac`, `google_dwd`, `google_oauth`).
-- `07-gateway-imap.md`: deja de ser sólo IMAP; pasa a describir el gateway de correo con sus
-  tres tipos de buzón.
+- `02-arquitectura.md` §4.2 y §5: el correo de Google y Microsoft va por el gateway; el conector de
+  Grok queda sólo como puente con reserva.
+- `03-onboarding-y-prerrequisitos.md` ítem 6: lo que se le pide al cliente según su proveedor
+  (§4.3, §5.3).
+- `07-gateway-imap.md`: deja de ser sólo IMAP con contraseña; describe los tres tipos de
+  credencial (`password`, `oauth`, `conector`).
+- `15-alta-de-un-cliente.md`: el alta de buzones por proveedor.

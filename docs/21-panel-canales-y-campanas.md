@@ -497,6 +497,7 @@ Cada etapa se puede usar sola; la A no toca la base ni las reglas.
 | **C · Campañas** (C1 y C2) | Tabla `sdr.campana`, la «principal» migrada (§6.2), tipo Prospección, buzones y Dripify por campaña, `campana` en las herramientas MCP, reparto en el orquestador, calibración por campaña, resumen por campaña | Base, gateway, MCP, `playbooks/`, panel |
 | **D · Más tipos** | Invitación a evento y Reactivación, cadencia configurable | `playbooks/` (tareas nuevas), panel |
 | **E · Canales nuevos** | CRM (HubSpot), WhatsApp de seguimiento | Según `11` y §5 |
+| **F · Buzones de Microsoft 365 y Google Workspace** | «Un clic»: OAuth por buzón con aplicaciones de Biguá e IMAP/SMTP con XOAUTH2, detrás de las mismas herramientas MCP. Mientras se verifican las aplicaciones: Google con contraseña de aplicación, y Microsoft por el conector de Grok con reserva en el gateway | `gateway/src/mail`, base, panel (Canales → Correo), `playbooks/` (buzones `conector`). Plan completo en `08` |
 
 A y B se entregaron juntas. C arranca ya, sin la revisión con BairesQA (decisión 14), en dos
 entregas: **C1**, todo lo de la fila C con un perfil de LinkedIn por cliente, y **C2**, varios
@@ -629,6 +630,8 @@ Todo quedó nivelado como punto de partida:
   mergearse. El registro usa el nombre entero, así que no chocan; la del CRM entra a `main` con
   esa rama.
 - **Gateway:** producción corre `main`.
+- **CRM (etapa 4a, `23`):** la rama se mergeó el 10/11 (PR #5) y `canario` pasó a `2026.11.10-4`
+  (la `-3` más las seis secciones del CRM); `estable` sigue en `-3`.
 - **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
 
 **Probado en producción con BairesQA** (10/11, cliente de prueba):

@@ -39,3 +39,17 @@
 Cuando termines de registrar, mandale un mensaje corto a cada bot que tenga aprobaciones
 decididas: «Tenés aprobaciones decididas en el registro». Confirmale al operador qué quedó
 aprobado y qué no.
+
+Si `registro_aprobar` devuelve `crm`, el positivo entra solo al CRM del cliente en el próximo
+minuto: decíselo al operador en la misma confirmación.
+
+## Cargar a alguien en el CRM a pedido
+
+> Sólo si el operador lo pide.
+
+Los positivos aprobados se cargan solos. Si el operador pide en el chat cargar a alguien más
+(«cargá a X como lead»), buscalo con `registro_buscar` y llamá `crm_cargar(prospecto_id)`. Si el
+cliente no tiene el CRM conectado, la herramienta lo dice: contáselo al operador.
+
+Si te llega un pedido del gateway porque una carga falló o quedó bloqueada, contale al operador
+el motivo en una línea: se arregla y se reintenta desde el panel (Canales → CRM).

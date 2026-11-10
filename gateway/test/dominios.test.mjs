@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import * as store from '../src/store.mjs';
 import { startServer } from '../src/server.mjs';
 import { createUser } from '../src/admin/auth.mjs';
-import { useResolver } from '../src/admin/api.mjs';
+import { useResolver } from '../src/admin/servicio.mjs';
 import { checkDomain, spfCheckHost, signaturesFromHeaders } from '../src/dns/domain-check.mjs';
 import { aadFor, encryptSecret } from '../src/crypto.mjs';
 import { appendTo, rfc822, HOST, PORTS, USERS } from './helpers.mjs';
