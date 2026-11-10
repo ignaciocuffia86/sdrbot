@@ -153,13 +153,34 @@ verificaciones de dominio, cambios de ajustes y lo que hicieron los bots, con fe
 
 - Las respuestas llegan a **tu buzón** como siempre; además el SDR las lee y decide qué sigue.
 - A una persona **interesada** se le contesta con aprobación de Biguá, en el mismo hilo, desde tu
-  buzón. Biguá te avisa de cada interesado. Más adelante van a ir directo a tu CRM.
+  buzón. Biguá te avisa de cada interesado y, si conectás tu HubSpot (§7.1), entra solo ahí.
 - Si alguien **pide la baja** o el mail **rebota**, el SDR no le vuelve a escribir desde ningún
   buzón de tu empresa.
 - Cuando una persona responde, el SDR no le manda otro mail de la secuencia: lo que sigue lo decide
   el bot de seguimiento.
 - Si le escribís vos a un prospecto por fuera del SDR, avisale a Biguá para que el bot no le siga
   escribiendo: el SDR lee las respuestas que llegan, no lo que mandás vos.
+
+### 7.1 Tu HubSpot
+
+Si usás HubSpot, cada interesado que Biguá aprueba entra solo a tu CRM: el contacto (si ya lo
+tenías, sólo se completa lo que está vacío y no se cambia el vendedor asignado), la empresa, una
+nota con lo que respondió y una tarea para el vendedor, que vence el día hábil siguiente. Nunca se
+borra nada.
+
+1. En HubSpot: **Settings → Integrations → Private Apps → Create a private app**. Nombre: «SDR
+   Biguá». En **Scopes**, marcá: `crm.objects.contacts` (read y write), `crm.objects.companies`
+   (read y write), `crm.objects.owners.read` y `crm.schemas.contacts.read`. Creala y copiá el token.
+2. En el panel: **Canales → CRM**, pegá el token y apretá **Conectar HubSpot**. No lo mandes por
+   mail ni por chat.
+3. **Probar conexión** tiene que decir «listo». Elegí la propiedad que dice de dónde vino el
+   contacto (si tenés una, por ejemplo «Origen del lead») con su valor, y quién recibe las tareas
+   de los contactos nuevos. **Guardar**.
+4. **Vista previa** te muestra cómo va a quedar un interesado, sin escribir nada en HubSpot.
+
+Abajo ves cada carga: cargada (con el enlace al contacto), en cola o con un problema. Si cambiás o
+revocás el token, las cargas esperan en cola hasta que cargues uno nuevo. **Pausar** las frena sin
+perderlas.
 
 ## 8. Cuándo hablar con Biguá
 

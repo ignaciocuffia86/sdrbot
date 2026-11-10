@@ -19,7 +19,8 @@ Este documento reemplaza a `13` §2 y, para el SDR v2, al runbook de `03` §3.
 ```
 Reunión de inicio  →  1. Cliente en el panel  →  2. Usuario del cliente  →  3. Buzones (el cliente)
 →  4. Dominio  →  5. Activar el SDR  →  6. Usuario de ASCI  →  7. Token del gateway
-→  8. Cuenta de Grok Bot  →  9. Routines  →  10. Despertador  →  11. LinkedIn (Dripify)  →  12. Comprobar  →  doc 17
+→  8. Cuenta de Grok Bot  →  9. Routines  →  10. Despertador  →  11. LinkedIn (Dripify)  →  11b. CRM (HubSpot)
+→  12. Comprobar  →  doc 17
 ```
 
 Los pasos 3 y 4 y los ajustes del SDR los hace el cliente con la guía `16`, en paralelo con los
@@ -236,6 +237,23 @@ Si el cliente va también por LinkedIn. Lo que se arma en Dripify (plan con Open
 
 Sin Dripify, el SDR va sólo por mail: los bots lo ven en `dripify_estado` y no cargan nada.
 
+## 11b. CRM: HubSpot
+
+Si el cliente quiere que los interesados entren solos a su HubSpot (`23`). Lo conecta el cliente
+(guía `16` §7.1) o Biguá con él:
+
+1. En HubSpot, una **app privada** con los scopes de `23` §13.2. El token se pega en el panel
+   (pestaña **Canales** → **CRM**), nunca por chat.
+2. **Probar conexión:** tiene que decir «listo». Después elegir la **propiedad de origen** (si el
+   cliente tiene una, por ejemplo «Origen del lead», con un valor que diga SDR) y el **dueño por
+   defecto**, y **Guardar**.
+3. Si el CRM del cliente exige propiedades propias para crear un contacto, cargarlas en **Campos
+   fijos** (sólo Biguá).
+4. **Vista previa:** revisar con el cliente cómo va a quedar un positivo (no escribe nada).
+
+Desde ahí, cada respuesta a un positivo que el operador aprueba entra sola al CRM en el próximo
+minuto. Sin CRM conectado no pasa nada: el positivo queda en el registro, como hasta ahora.
+
 ## 12. Comprobar
 
 - En el chat del `orquestador`: «Llamá registro_agenda y decime qué ves». Tiene que contestar con
@@ -244,6 +262,7 @@ Sin Dripify, el SDR va sólo por mail: los bots lo ven en `dripify_estado` y no 
 - Pestaña **Empresa**: la vista previa «Así lo leen los bots» muestra los ajustes del cliente.
 - Pestaña **Resumen**: «Necesita atención» no muestra nada en rojo.
 - Con LinkedIn: «Llamá dripify_estado y decime qué ves» tiene que decir `listo`.
+- Con CRM: en **Canales → CRM**, «Probar conexión» dice «listo».
 
 Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, lanzamiento) está en
 [`17`](17-puesta-en-marcha-operacion-y-baja.md).
@@ -264,4 +283,5 @@ Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, la
 | 9 | Siete routines creadas y habilitadas | Biguá (con los bots) | ☐ |
 | 10 | Despertadores de seguimiento y del orquestador cargados | Biguá | ☐ |
 | 11 | Con LinkedIn: Dripify cargado, «Probar» listo y webhooks en la campaña | Biguá (con el cliente) | ☐ |
+| 11b | Con CRM: HubSpot conectado, «Probar» listo, origen y dueño elegidos, vista previa revisada | Cliente (Biguá revisa) | ☐ |
 | 12 | Comprobado: agenda sin errores y llamadas en Actividad | Biguá | ☐ |

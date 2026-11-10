@@ -108,4 +108,4 @@ export NODE_EXTRA_CA_CERTS="$T/ca.pem"
 export MAILGW_TEST_DIR="$T"
 
 node bin/admin.mjs migrate
-node --test --test-concurrency=1 test/*.test.mjs "$@"
+node --test --test-concurrency=1 ${MAILGW_TESTS:-test/*.test.mjs} "$@"

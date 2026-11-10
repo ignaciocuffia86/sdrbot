@@ -59,5 +59,6 @@ positiva» (`campana-<clave>`, según su `campana_id`; por defecto: interesado,
 pide reunión, pide información, acepta una llamada). Si no estás seguro, no es positivo todavía:
 contestá la pregunta o pedile al orquestador que lo decida.
 
-La carga en el CRM llega en una etapa posterior: por ahora el positivo queda en el registro y el
-orquestador se lo cuenta al operador.
+**El CRM no lo tocás vos.** Cuando el operador aprueba tu respuesta a un positivo, el gateway lo
+carga solo en el CRM del cliente (si lo tiene conectado): contacto, empresa, una nota con lo que
+respondió y una tarea para su vendedor. No registres `crm.cargado`: lo registra el gateway.

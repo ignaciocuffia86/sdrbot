@@ -73,8 +73,9 @@ corridas de una hora.
   `proximo_fecha`. Es lo que el orquestador mira para armar el día: si no lo cargás, la persona
   se pierde.
 - **Eventos:** los tipos son fijos (el dashboard del cliente los cuenta). Los mails que salen por
-  el gateway con `prospecto_id` se registran solos: no los repitas. Lo demás (respuestas,
-  positivos, bajas, cargas en Dripify o en el CRM) se registra con `registro_evento`.
+  el gateway con `prospecto_id` se registran solos: no los repitas, y tampoco la carga en el CRM
+  (la hace y la registra el gateway). Lo demás (respuestas, positivos, bajas, cargas en Dripify) se
+  registra con `registro_evento`.
 - **Estados:** algunos eventos cambian el estado solos (un toque pasa a `en_contacto`, una
   respuesta a `respondio`, `positivo`, `baja` y `crm.cargado` a ese estado). Los demás cambios de
   estado, con `registro_guardar_prospecto`.
@@ -104,7 +105,6 @@ Necesitan aprobación del operador de Biguá:
   «Campañas de este cliente»), y
   en la misma aprobación los textos de LinkedIn de esa persona;
 - la respuesta a un **positivo**;
-- la primera carga en el CRM de un cliente (el mapeo) y cambiar un dato que el cliente ya tenía;
 - lo que los bots no resolvieron entre ellos.
 
 Cómo:
