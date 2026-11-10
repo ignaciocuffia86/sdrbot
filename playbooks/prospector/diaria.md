@@ -54,7 +54,7 @@ aviso»; si no dice, **14 días**.
      nombre, el `cargo` si viene y `eleccion.rol_compra: "publicante"`. **No lo reveles para
      tener la URL.**
    - **mail:** si `contacto_cacheado` dice que ya tiene mail, `revelar_publicante(job_id)` (sale
-     gratis de la caché). Si no, revelá a lo sumo **3 publicantes por tanda** (1 crédito cada uno
+     gratis de la caché). Si no, revelá a lo sumo los publicantes que diga el pedido (si no dice, **3 por tanda**; 1 crédito cada uno
      que Apollo encuentre), los de cargo más cercano al área del aviso, y contá en el cierre
      cuántos trajeron mail. Muchos publicantes son de RRHH y Apollo no tiene su mail: sin mail, va
      sólo por LinkedIn.

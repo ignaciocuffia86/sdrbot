@@ -368,7 +368,7 @@ decida otra cosa (decisión abierta 3).
 
 ## 7. Base
 
-### 7.1 Migración `015_mcp_del_panel_oauth` (M1, construida)
+### 7.1 Migración `016_mcp_del_panel_oauth` (M1, construida)
 
 `mailgw.oauth_code` (el código, de uso único) y `mailgw.oauth_token` (los tokens de acceso y de
 renovación, en familias: una familia es una conexión). Todo como hash, con RLS y sin permisos para
@@ -432,12 +432,12 @@ los datos del panel.
 | Ingreso con las reglas del panel (scrypt, bloqueo tras 5 intentos) | `verificarCredenciales` en `gateway/src/admin/auth.mjs`; el login del panel la usa también |
 | Desactivar un usuario o resetearle la contraseña revoca sus conexiones | `revocarConexiones` en `auth.mjs` |
 | «Conexiones» en el panel (botón arriba, al lado de «Cambiar contraseña») | `GET /admin/api/me/conexiones`, `POST /admin/api/me/conexiones/:id/revocar`; Biguá ve y desconecta las de todos |
-| Base | `015_mcp_del_panel_oauth.sql` (§7.1) |
+| Base | `016_mcp_del_panel_oauth.sql` (§7.1) |
 | Pruebas | `gateway/test/mcp_panel.test.mjs`: los casos de §3.7, con CIMD contra un documento simulado |
 
 **Para ponerlo en producción** (lo hace Biguá; no está hecho):
 
-1. Aplicar la `015` en el proyecto `sdrbot` de Supabase (`node bin/admin.mjs migrate`).
+1. Aplicar la `016` en el proyecto `sdrbot` de Supabase (`node bin/admin.mjs migrate`).
 2. Cargar `OAUTH_FIRMA` en Vercel (proyecto `sdrbot-mail-gateway`): 32 bytes aleatorios en base64
    (`openssl rand -base64 32`), distinta de la de ASCI. Sin ella, `/oauth/*` responde
    `server_error` y nadie puede conectar.

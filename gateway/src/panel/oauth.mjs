@@ -12,7 +12,7 @@
 // Sigue al OAuth de ASCI (repo locasci, api/oauth.mjs y docs/32): CIMD y DCR, `iss` en toda
 // respuesta de /authorize, el estado de la página firmado en el formulario (sin cookies ni
 // sesión). Lo distinto: se entra con la contraseña del panel, y el código y los tokens van a la
-// base (015), para que el código sea de uso único y una conexión se pueda ver y desconectar.
+// base (016), para que el código sea de uso único y una conexión se pueda ver y desconectar.
 
 import crypto from 'node:crypto';
 import { getPool } from '../store.mjs';

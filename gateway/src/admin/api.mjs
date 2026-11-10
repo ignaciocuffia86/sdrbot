@@ -104,6 +104,7 @@ route('GET', '/clients/:client/sdr/campanas', S.campanasListar);
 route('POST', '/clients/:client/sdr/campanas', S.campanaCrear);
 route('GET', '/clients/:client/sdr/campanas/:id', S.campanaVer);
 route('PUT', '/clients/:client/sdr/campanas/:id', S.campanaGuardar);
+route('POST', '/clients/:client/sdr/campanas/:id/historial/:hid/restaurar', S.campanaRestaurar);
 route('POST', '/clients/:client/sdr/campanas/:id/duplicar', S.campanaDuplicar);
 route('GET', '/clients/:client/monitor', S.monitorVer);
 route('GET', '/clients/:client/no-contactar', S.noContactarListar);
