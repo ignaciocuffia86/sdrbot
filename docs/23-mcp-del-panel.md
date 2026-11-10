@@ -1,6 +1,6 @@
 # MCP del panel: gestionar el SDR desde Claude
 
-Estado al 10/11/2026: **diseño**. No hay código. Se apoya en el panel `/admin` (`15`, `16`, `21`)
+Estado al 10/11/2026: **diseño**, con la etapa M0 hecha (§9). Se apoya en el panel `/admin` (`15`, `16`, `21`)
 y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
@@ -48,11 +48,13 @@ base se cumplen aunque falle una consulta (`test/aislamiento.test.mjs`).
 se mezclan, una persona vería `bitacora_inicio` y un bot podría ver `campana_activar`. Separados,
 el MCP de los bots no se toca y el del panel puede crecer sin pensar en los playbooks.
 
-**Una sola lógica.** Las herramientas del MCP del panel no reimplementan nada. Hoy las rutas de
-`admin/api.mjs` tienen la lógica adentro. El primer paso (etapa M0) es sacarla a funciones
-(`src/admin/servicio.mjs`) que reciben `(user, clientId, args)` y pasan por `scoped()`. La ruta
-web y la herramienta MCP llaman a la misma función, así que los permisos, la auditoría y las
-validaciones son los mismos en los dos.
+**Una sola lógica.** Las herramientas del MCP del panel no reimplementan nada. Desde la etapa M0
+(hecha el 10/11), lo que hace cada ruta del panel está en `src/admin/servicio.mjs`: 39
+operaciones (`clienteVer`, `campanaGuardar`, `noContactarAgregar`…) que reciben
+`{ user, params, body }`, con el cliente en `params.client`, y pasan por `scoped()`.
+`src/admin/api.mjs` quedó con lo de HTTP: la sesión por cookie, el CSRF y la tabla de rutas.
+La ruta web y la herramienta MCP llaman a la misma función, así que los permisos, la auditoría y
+las validaciones son los mismos en los dos (`test/servicio.test.mjs` las llama sin HTTP).
 
 ## 3. Autenticación
 
@@ -416,7 +418,7 @@ tocar el destinatario.
 
 | Etapa | Qué | Toca |
 |---|---|---|
-| **M0 · Servicio** | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
+| **M0 · Servicio** (hecha) | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
 | **M1 · Conectar y mirar** | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
 | **M2 · Aprobaciones del cliente** | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
 | **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
