@@ -1,7 +1,8 @@
 # Carga de cuentas y contactos por Excel
 
 Estado: **etapas 1, 2 y 3 construidas, 10/11/2026** (ver §0: lo que cambió respecto del diseño
-original). Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+original). Migraciones `019`, `020` y `021` aplicadas en producción el 10/11/2026, después de la `018`
+de la derivación. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
