@@ -200,6 +200,35 @@ $('#btn-password').addEventListener('click', () => {
   });
 });
 
+// Las conexiones de Claude con el MCP del panel (docs/24 §3.4): cada una es un cliente OAuth que
+// autorizó una persona. Se ven y se desconectan acá; un operador de Biguá ve las de todos.
+async function conexionesDialog() {
+  const { conexiones } = await api('GET', '/me/conexiones');
+  const bigua = me.role === 'bigua_admin';
+  const lista = conexiones.length
+    ? h('table', {}, h('thead', {}, h('tr', {},
+      h('th', {}, 'Cliente'), bigua ? h('th', {}, 'Usuario') : null, h('th', {}, 'Conectada'), h('th', {}, 'Último uso'), h('th', {}, ''))),
+    h('tbody', {}, conexiones.map((x) => h('tr', {},
+      h('td', {}, x.cliente_oauth), bigua ? h('td', { class: 'small' }, x.email, x.client_id ? h('span', { class: 'muted' }, ` · ${x.client_id}`) : null) : null,
+      h('td', { class: 'small' }, fmtDate(x.creada_at)), h('td', { class: 'small' }, fmtDate(x.usada_at)),
+      h('td', {}, h('button', { type: 'button', class: 'danger', onclick: async (ev) => {
+        await busy(ev.currentTarget, async () => {
+          await api('POST', `/me/conexiones/${enc(x.id)}/revocar`);
+          toast('Conexión desconectada.');
+          dlg.close();
+          await conexionesDialog();
+        });
+      } }, 'Desconectar'))))))
+    : h('p', { class: 'muted' }, 'No hay conexiones activas.');
+  openDialog('Conexiones con Claude', h('div', {},
+    h('p', {}, 'Para gestionar el SDR desde Claude, agregá un conector con ', h('span', { class: 'mono' }, `${location.origin}/mcp/panel`),
+      ' y entrá con tu usuario del panel.'),
+    lista,
+    h('p', { class: 'small muted' }, 'Si Claude muestra el conector conectado pero sin herramientas: Desconectar y Conectar en la tarjeta del conector.')));
+}
+
+$('#btn-conexiones').addEventListener('click', () => { conexionesDialog().catch((e) => toast(e.message)); });
+
 // ---------------------------------------------------------------- clientes
 
 async function renderClients() {
