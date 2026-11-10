@@ -278,8 +278,9 @@ export const SDR_OPS = [
   // ------------------------------------------------------------ CRM (docs/23, capa 1)
   {
     op: 'crm_cargar', mcp: 'crm_cargar', scope: 'sdr',
-    description: 'Pone a un prospecto en la cola del CRM del cliente: el gateway lo carga solo (contacto, empresa, nota ' +
-      'con la respuesta y tarea al dueño) en el próximo minuto. Los positivos aprobados ya entran solos al aprobar la ' +
+    description: 'Pone a un prospecto en la cola del CRM del cliente: el gateway lo carga solo en el próximo minuto (en ' +
+      'HubSpot: contacto, empresa, nota con la respuesta y tarea al dueño; si el cliente no tiene CRM, una fila en su ' +
+      'planilla de Google Sheets). Los positivos aprobados ya entran solos al aprobar la ' +
       'respuesta: usala sólo cuando el operador pide en el chat cargar a alguien («cargá a X como lead»). Si ya estaba ' +
       'cargado no hace nada; si había fallado, lo reintenta.',
     schema: obj({ prospecto_id: uuid, por_que: texto(500), ...META }, ['prospecto_id']),
@@ -288,7 +289,8 @@ export const SDR_OPS = [
   },
   {
     op: 'crm_cargas', mcp: 'crm_cargas', scope: 'sdr',
-    description: 'Las cargas en el CRM del cliente: en cola, hechas (con el enlace al contacto), con error o bloqueadas ' +
+    description: 'Las cargas en el CRM del cliente (HubSpot o su planilla, según proveedor): en cola, hechas (con el ' +
+      'enlace al contacto o a la fila), con error o bloqueadas ' +
       '(con el motivo), y los positivos que todavía no tienen carga. Para el resumen del orquestador.',
     schema: obj({ estado: { enum: ['pendiente', 'en_curso', 'hecha', 'error', 'bloqueada'] },
       limite: { type: 'integer', minimum: 1, maximum: 100, default: 30 }, ...META }),

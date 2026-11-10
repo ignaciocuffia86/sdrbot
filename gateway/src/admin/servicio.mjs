@@ -168,6 +168,9 @@ const V = {
     } }),
   crm: validator({ type: 'object', additionalProperties: false, minProperties: 1,
     properties: {
+      // hubspot, o sheets para el cliente sin CRM que lleva una planilla de Google (docs/23 §14).
+      proveedor: { enum: ['hubspot', 'sheets'] },
+      planilla_url: { type: 'string', minLength: 40, maxLength: 500, pattern: '^https://docs\\.google\\.com/spreadsheets/d/[A-Za-z0-9_-]{20,}' },
       token: { type: 'string', minLength: 20, maxLength: 500, pattern: '^\\S+$' },
       origen_campo: { type: ['string', 'null'], maxLength: 100, pattern: '^$|^[a-z0-9_]+$' },
       origen_valor: { type: ['string', 'null'], maxLength: 200 },
@@ -661,8 +664,9 @@ export const dripifyWebhook = async ({ user, params }) => {
   return r;
 };
 
-// ----- CRM (docs/23, capa 1): la conexión con HubSpot, la cola de cargas y la vista previa. La
-// conecta el cliente o Biguá; los campos fijos y el tope por día, sólo Biguá.
+// ----- CRM (docs/23, capa 1): la conexión con HubSpot o con una planilla de Google Sheets
+// (§14), la cola de cargas y la vista previa. La conecta el cliente o Biguá; los campos fijos y el
+// tope por día, sólo Biguá.
 
 async function sdrActivo(user, clientId) {
   await scoped(user, clientId, (c) => clienteExiste(c, clientId));
@@ -685,7 +689,14 @@ export const crmGuardar = async ({ user, params, body }) => {
   if (!isBigua(user) && (b.campos_fijos !== undefined || b.tope_dia !== undefined)) throw forbidden();
   await sdrActivo(user, params.client);
   const actual = await asOwner((c) => crm.ver(c, params.client));
-  if (!actual?.token && !b.token) throw errors.invalid('Falta el token de la app privada de HubSpot.');
+  const proveedor = b.proveedor ?? actual?.proveedor ?? 'hubspot';
+  if (proveedor === 'hubspot' && !actual?.token && !b.token) throw errors.invalid('Falta el token de la app privada de HubSpot.');
+  if (proveedor === 'sheets' && !(actual?.proveedor === 'sheets' && actual.planilla_url) && !b.planilla_url) {
+    throw errors.invalid('Falta la URL de la planilla de Google Sheets.');
+  }
+  if (proveedor === 'sheets' && ['token', 'origen_campo', 'dueno_defecto', 'campos_fijos'].some((k) => b[k] !== undefined && b[k] !== null)) {
+    throw errors.invalid('Con una planilla no hay token, propiedad de origen, dueño ni campos fijos: eso es de HubSpot.');
+  }
   try {
     await crm.configurar(params.client, b);
   } catch (e) {
@@ -693,7 +704,7 @@ export const crmGuardar = async ({ user, params, body }) => {
     throw e;
   }
   await asOwner((c) => audit(c, user, params.client, 'admin.sdr.crm', {
-    token_nuevo: Boolean(b.token), origen_campo: b.origen_campo, dueno_defecto: b.dueno_defecto, estado: b.estado,
+    proveedor: b.proveedor, planilla_url: b.planilla_url, token_nuevo: Boolean(b.token), origen_campo: b.origen_campo, dueno_defecto: b.dueno_defecto, estado: b.estado,
     tope_dia: b.tope_dia, campos_fijos: b.campos_fijos ? Object.keys(b.campos_fijos) : undefined }));
   return verCrm(params.client);
 };
@@ -1538,7 +1549,7 @@ export const PASOS_ALTA = [
   { etapa: 'Correo', clave: 'dominios', titulo: 'Dominios: SPF, DKIM y DMARC' },
   { etapa: 'Canales', clave: 'linkedin', titulo: 'LinkedIn · Dripify' },
   { etapa: 'Canales', clave: 'whatsapp', titulo: 'WhatsApp' },
-  { etapa: 'Canales', clave: 'crm', titulo: 'CRM · HubSpot' },
+  { etapa: 'Canales', clave: 'crm', titulo: 'CRM · HubSpot o planilla' },
   { etapa: 'Bots', clave: 'asci', titulo: 'Usuario de ASCI', manual: true },
   { etapa: 'Bots', clave: 'token', titulo: 'Token del gateway' },
   { etapa: 'Bots', clave: 'grok', titulo: 'Cuenta de Grok Bot', manual: true },
@@ -1573,7 +1584,7 @@ async function datosDelAlta(c, user, clientId) {
   const tokens = (await c.query(
     `select count(*)::int as n from mailgw.token where client_id = $1 and revoked_at is null
         and (expires_at is null or expires_at > now()) and 'sdr' = any(scopes)`, [clientId])).rows[0].n;
-  const crmCx = (await c.query(`select estado, token_enc is not null as token from sdr.crm_conexion where client_id = $1`, [clientId])).rows[0];
+  const crmCx = (await c.query(`select proveedor, estado, token_enc, planilla_id, planilla_verificada_at from sdr.crm_conexion where client_id = $1`, [clientId])).rows[0];
   const titulos = Object.fromEntries(sdr.campos.map((x) => [x.clave, x.titulo]));
   const faltanCampos = (claves) => claves.filter((k) => titulos[k] && vacio(cfg[k])).map((k) => titulos[k]);
   const dominiosBuzones = [...new Set(buzones.map((b) => b.email.split('@')[1]))];
@@ -1597,8 +1608,10 @@ async function datosDelAlta(c, user, clientId) {
   out.linkedin = d?.api_key && d?.ultimo_ok_at && !d?.ultimo_error ? { hecho: true }
     : { hecho: false, falta: !d?.api_key ? 'Sin la API key de Dripify.' : d.ultimo_error ? `Error: ${d.ultimo_error}` : 'Falta probar la conexión.' };
   out.whatsapp = sdr.whatsapp?.activo ? { hecho: true } : { hecho: false, falta: 'WhatsApp no está activado.' };
-  out.crm = crmCx?.token && crmCx.estado === 'activa' ? { hecho: true }
-    : { hecho: false, falta: !crmCx?.token ? 'HubSpot no está conectado.' : `La conexión está ${crmCx.estado}.` };
+  out.crm = crm.conectada(crmCx) && crmCx.estado === 'activa' ? { hecho: true }
+    : { hecho: false, falta: crm.conectada(crmCx) ? `La conexión está ${crmCx.estado}.`
+      : crmCx?.proveedor === 'sheets' && crmCx.planilla_id ? 'Falta verificar la planilla: la pestaña con el código que muestra el panel.'
+        : 'Ni HubSpot ni una planilla de Google Sheets están conectados.' };
   out.token = tokens ? { hecho: true } : { hecho: false, falta: 'No hay un token vigente con el permiso sdr.' };
   const conAviso = (sdr.tecnico?.bots_activos ?? []).filter((b) => BOTS_CON_AVISO.includes(b));
   const sinDespertador = conAviso.filter((b) => !sdr.despertadores?.[b]);

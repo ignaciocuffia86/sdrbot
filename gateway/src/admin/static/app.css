@@ -212,6 +212,7 @@ label.btn { margin: 0; color: var(--text); font-size: inherit; }
   .mon-canal { display: none; }
 }
 .nota { white-space: pre-wrap; font: inherit; background: var(--muted-bg); padding: 8px 10px; border-radius: 6px; margin: 4px 0; }
+td.celda { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Campañas (docs/21 §3.2). */
 .campana-sec > summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; list-style: none; }

@@ -411,7 +411,9 @@ async function resumenView({ clientId, bigua, base }) {
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
     if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, bigua ? `${base}/admin/integraciones` : `${base}/canales`, 'Ver');
-    if (r.crm?.estado === 'credencial_vencida') aviso('err', `CRM: HubSpot rechazó el token. Las cargas esperan en cola.${r.crm.ultimo_error ? ` ${r.crm.ultimo_error}` : ''}`, `${base}/canales`, 'Reconectar');
+    if (r.crm?.estado === 'credencial_vencida') {
+      aviso('err', `CRM: ${r.crm.proveedor === 'sheets' ? 'el gateway no puede escribir en la planilla' : 'HubSpot rechazó el token'}. Las cargas esperan en cola.${r.crm.ultimo_error ? ` ${r.crm.ultimo_error}` : ''}`, `${base}/canales`, 'Reconectar');
+    }
     if (r.crm?.con_problema) aviso('err', `${plural(r.crm.con_problema, 'positivo no se pudo', 'positivos no se pudieron')} cargar en el CRM.`, `${base}/canales`, 'Ver');
     if (r.whatsapp?.pausado) aviso('err', `WhatsApp en pausa: ${r.whatsapp.pausa_motivo ?? 'bloqueo'}.`, bigua ? `${base}/admin/integraciones` : `${base}/canales`, bigua ? 'Revisar y reanudar' : 'Ver');
     for (const [bot, d] of Object.entries(r.despertadores ?? {})) {
@@ -453,8 +455,8 @@ async function resumenView({ clientId, bigua, base }) {
     canal('Correo', activos.length ? (activos.length < r.buzones.length ? ['b-warn', 'revisar'] : ['b-ok', 'activo']) : ['b-err', 'sin buzones'],
       `${plural(activos.length, 'buzón activo', 'buzones activos')} · ${envios} de ${tope} envíos hoy`, dom),
     canal('LinkedIn · Dripify', li, d?.ultimo_ok_at ? `Última respuesta buena: ${fmtDate(d.ultimo_ok_at)}` : 'Va con la campaña de Dripify del cliente'),
-    canal('CRM · HubSpot', !r.crm?.token ? ['b-mute', 'sin conectar'] : r.crm.con_problema ? ['b-err', 'con problemas'] : CRM_ESTADO[r.crm.estado] ?? ['b-mute', r.crm.estado],
-      r.crm?.token ? `${plural(r.crm.semana, 'cargado', 'cargados')} en 7 días${r.crm.en_cola ? ` · ${r.crm.en_cola} en cola` : ''}` : 'Los positivos aprobados se cargan solos'),
+    canal(`CRM · ${CRM_NOMBRE[r.crm?.proveedor] ?? 'HubSpot o planilla'}`, !r.crm?.conectado ? ['b-mute', 'sin conectar'] : r.crm.con_problema ? ['b-err', 'con problemas'] : crmEstado(r.crm),
+      r.crm?.conectado ? `${plural(r.crm.semana, 'cargado', 'cargados')} en 7 días${r.crm.en_cola ? ` · ${r.crm.en_cola} en cola` : ''}` : 'Los positivos aprobados se cargan solos'),
     h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
       h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails + (r.no_contactar.empresas ?? 0)))),
       h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
@@ -1245,16 +1247,20 @@ async function canalesView({ clientId, data, bigua, base, reload }) {
       h('h3', {}, 'Dominios'), await domainsView(clientId, reload)),
     h('section', { class: 'stack' }, h('h2', {}, 'CRM'), resumen.sdr_activo
       ? await crmView(clientId, bigua, reload)
-      : pronto('CRM · HubSpot', 'Se conecta cuando el SDR esté activado: los positivos aprobados se cargan solos.')),
+      : pronto('CRM · HubSpot o planilla', 'Se conecta cuando el SDR esté activado: los positivos aprobados se cargan solos en HubSpot o en una planilla de Google Sheets.')),
     h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
     h('section', { class: 'stack' }, h('h2', {}, 'WhatsApp'), wa));
 }
 
-// ----- CRM (docs/23): la conexión con HubSpot, la cola de cargas y la vista previa.
+// ----- CRM (docs/23): la conexión con HubSpot o con una planilla de Google Sheets (§14), la cola
+// de cargas y la vista previa.
 
 const CRM_ESTADO = {
   activa: ['b-ok', 'conectado'], pausada: ['b-mute', 'en pausa'], credencial_vencida: ['b-err', 'token rechazado'],
 };
+const CRM_NOMBRE = { hubspot: 'HubSpot', sheets: 'Google Sheets' };
+const crmEstado = (cx) => (cx.proveedor === 'sheets' && cx.estado === 'credencial_vencida'
+  ? ['b-err', 'sin acceso'] : CRM_ESTADO[cx.estado] ?? ['b-mute', cx.estado]);
 const CARGA_ESTADO = {
   pendiente: ['b-mute', 'en cola'], en_curso: ['b-mute', 'cargando'], hecha: ['b-ok', 'cargado'],
   error: ['b-err', 'falló'], bloqueada: ['b-warn', 'bloqueada'],
@@ -1269,7 +1275,102 @@ async function crmView(clientId, bigua, reload) {
   return wrap;
 }
 
+// Dónde van los positivos: HubSpot o, si el cliente no tiene CRM, una planilla. Cambiar la opción
+// sólo cambia el formulario; se guarda al conectar.
 function crmConexionCard(clientId, bigua, cx, reload) {
+  const caja = h('div', { class: 'stack' });
+  const pintar = (proveedor) => {
+    const selector = h('select', { name: 'proveedor', onchange: (ev) => pintar(ev.currentTarget.value) },
+      h('option', { value: 'hubspot', selected: proveedor === 'hubspot' }, 'HubSpot'),
+      h('option', { value: 'sheets', selected: proveedor === 'sheets' }, 'Una planilla de Google Sheets (sin CRM)'));
+    const elegir = field('Dónde se cargan los positivos', selector,
+      cx && proveedor !== cx.proveedor ? `Hoy se cargan en ${CRM_NOMBRE[cx.proveedor]}. Cambia al conectar; las cargas hechas quedan donde están.` : null);
+    caja.replaceChildren(proveedor === 'sheets'
+      ? crmPlanillaCard(clientId, bigua, cx?.proveedor === 'sheets' ? cx : null, cx, elegir, reload)
+      : crmHubspotCard(clientId, bigua, cx?.proveedor === 'sheets' ? null : cx, cx, elegir, reload));
+  };
+  pintar(cx?.proveedor ?? 'hubspot');
+  return caja;
+}
+
+// La planilla: la URL y el mail de la cuenta de servicio con el que el cliente la comparte.
+function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
+  // Guardada: tiene la URL. Verificada: el cliente demostró que es suya (la pestaña con el código).
+  const conectada = Boolean(cx?.planilla_url);
+  const verificada = Boolean(cx?.planilla_verificada);
+  const estado = badge(!conectada ? ['b-mute', 'sin conectar'] : !verificada ? ['b-warn', 'falta verificar'] : crmEstado(cx));
+  const copiable = (valor) => {
+    const input = h('input', { readonly: true, value: valor, class: 'mono' });
+    return h('div', { class: 'secret' }, input, h('button', { type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(valor); toast('Copiado.'); } catch { input.select(); }
+    } }, 'Copiar'));
+  };
+  const err = h('p', { class: 'err', role: 'alert' });
+  const salida = h('div', {});
+  const cuenta = guardado?.cuenta_google ?? null;
+  const form = h('form', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Google Sheets'), estado),
+    elegir,
+    h('p', { class: 'muted small' }, 'Para el cliente que no tiene CRM y lleva su gestión en una planilla. Cuando el operador de ' +
+      'Biguá aprueba la respuesta a un positivo, el gateway agrega una fila con la persona, la empresa, el canal, qué pide, lo que ' +
+      'respondió y la respuesta aprobada. Nunca borra ni cambia una fila que ya estaba. Si la planilla ya tiene encabezados, usa ' +
+      'los suyos (Nombre, Email, Empresa…) y agrega al final las columnas que falten.'),
+    cuenta
+      ? field('1. Compartí la planilla como Editor con este mail', copiable(cuenta),
+        'En Google Sheets: Compartir → pegar el mail → Editor. Sin esto, el gateway no puede escribir.')
+      : h('p', { class: 'small err' }, 'El gateway todavía no tiene la cuenta de servicio de Google. La carga Biguá en Vercel ' +
+        '(MAILGW_GOOGLE_SA); hasta entonces la planilla se puede guardar pero no probar.'),
+    cx?.ultimo_error ? h('p', { class: 'small err' }, cx.ultimo_error) : null,
+    cx?.ultimo_ok_at ? h('p', { class: 'small' }, `Última escritura buena en la planilla: ${fmtDate(cx.ultimo_ok_at)}`) : null,
+    field('2. URL de la planilla', h('input', { name: 'planilla_url', type: 'url', required: true, value: cx?.planilla_url ?? '',
+      placeholder: 'https://docs.google.com/spreadsheets/d/…/edit#gid=0' }),
+    'Copiala del navegador con la pestaña donde van los positivos abierta: el #gid= del final dice cuál es.' +
+      (cx?.planilla_hoja ? ` Hoy: pestaña «${cx.planilla_hoja}».` : '')),
+    conectada && !verificada && cx.planilla_codigo
+      ? field('3. Agregale a la planilla una pestaña con este nombre', copiable(cx.planilla_codigo),
+        'Puede quedar vacía. Demuestra que la planilla es de este cliente: hasta que «Probar conexión» la encuentre, el gateway ' +
+        'no escribe ni lee nada de la planilla. Después se puede borrar.')
+      : null,
+    conectada && bigua ? field('Tope de cargas por día', h('input', { name: 'tope_dia', type: 'number', min: 1, max: 1000, value: cx.tope_dia }), 'Sólo Biguá.') : null);
+
+  const btn = h('button', { type: 'submit', class: 'primary' }, conectada ? 'Guardar' : 'Conectar planilla');
+  const probar = conectada ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/crm/probar`), err);
+    if (!r) return;
+    const e = r.prueba;
+    salida.replaceChildren(h('div', { class: 'small' },
+      h('p', {}, e.listo ? badge(['b-ok', 'listo']) : badge(['b-err', e.verificada === false ? 'falta verificar' : 'falta algo']),
+        e.planilla ? ` ${e.planilla}${e.hoja ? ` · pestaña «${e.hoja}»` : ''}.` : ''),
+      e.problemas?.length ? h('ul', {}, e.problemas.map((x) => h('li', { class: 'err' }, x))) : null,
+      e.avisos?.length ? h('ul', {}, e.avisos.map((x) => h('li', { class: 'muted' }, x))) : null,
+      e.columnas?.length ? h('p', { class: 'muted' }, `Columnas: ${e.columnas.join(' · ')}`) : null));
+    if (e.verificada && !verificada) { toast('Planilla verificada.'); reload(); }
+  } }, 'Probar conexión') : null;
+  const vista = conectada ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/crm/vista-previa`, {}), err);
+    if (r) salida.replaceChildren(crmVistaPrevia(r.vista));
+  } }, 'Vista previa') : null;
+  const pausa = conectada ? h('button', { type: 'button', onclick: async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('PUT', `/clients/${enc(clientId)}/crm`, { estado: cx.estado === 'pausada' ? 'activa' : 'pausada' }), err);
+    if (r) { toast(cx.estado === 'pausada' ? 'Cargas reanudadas.' : 'Cargas en pausa: quedan en cola.'); reload(); }
+  } }, cx.estado === 'pausada' ? 'Reanudar' : 'Pausar') : null;
+  form.append(err, h('div', { class: 'row' }, btn, probar, vista, pausa), salida);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const body = { proveedor: 'sheets', planilla_url: String(fd.get('planilla_url') ?? '').trim() };
+    if (conectada && bigua) body.tope_dia = Number(fd.get('tope_dia'));
+    const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/crm`, body), err);
+    if (r) {
+      toast(r.conexion?.planilla_verificada ? 'Planilla guardada.'
+        : 'Planilla guardada. Compartila con el mail de la cuenta, agregale la pestaña de verificación y probá la conexión.');
+      reload();
+    }
+  });
+  return form;
+}
+
+function crmHubspotCard(clientId, bigua, cx, guardado, elegir, reload) {
   const estado = !cx?.token ? badge(['b-mute', 'sin conectar']) : badge(CRM_ESTADO[cx.estado] ?? ['b-mute', cx.estado]);
   const err = h('p', { class: 'err', role: 'alert' });
   const salida = h('div', {});
@@ -1299,13 +1400,14 @@ function crmConexionCard(clientId, bigua, cx, reload) {
 
   const form = h('form', { class: 'card' },
     h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'HubSpot'), estado),
+    elegir,
     h('p', { class: 'muted small' }, 'Cuando el operador de Biguá aprueba la respuesta a un positivo, el gateway lo carga solo en el ' +
       'HubSpot del cliente: el contacto (si ya existe, sólo completa lo vacío y no cambia el dueño), la empresa por dominio, una nota ' +
       'con lo que respondió y una tarea para el dueño. Nunca borra nada.'),
     cx?.ultimo_error ? h('p', { class: 'small err' }, cx.ultimo_error) : null,
     cx?.ultimo_ok_at ? h('p', { class: 'small' }, `Última respuesta buena de HubSpot: ${fmtDate(cx.ultimo_ok_at)}`) : null,
-    field('Token de la app privada', h('input', { name: 'token', type: 'password', autocomplete: 'off', required: !cx?.token, minlength: 20 }),
-      cx?.token ? 'Dejalo vacío para conservar el guardado. Se guarda cifrado y no se vuelve a mostrar.'
+    field('Token de la app privada', h('input', { name: 'token', type: 'password', autocomplete: 'off', required: !guardado?.token, minlength: 20 }),
+      guardado?.token ? 'Dejalo vacío para conservar el guardado. Se guarda cifrado y no se vuelve a mostrar.'
         : 'En HubSpot: Settings → Integrations → Private Apps → Create a private app. Scopes: crm.objects.contacts (read y write), ' +
           'crm.objects.companies (read y write), crm.objects.owners.read y crm.schemas.contacts.read. Se guarda cifrado y no se vuelve a mostrar.'),
     cx?.token ? h('div', { class: 'cols2' },
@@ -1350,7 +1452,7 @@ function crmConexionCard(clientId, bigua, cx, reload) {
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = new FormData(form);
-    const body = {};
+    const body = { proveedor: 'hubspot' };
     if (fd.get('token')) body.token = String(fd.get('token')).trim();
     if (cx?.token) {
       body.origen_campo = String(fd.get('origen_campo') ?? '') || null;
@@ -1371,6 +1473,13 @@ function crmConexionCard(clientId, bigua, cx, reload) {
 }
 
 function crmVistaPrevia(v) {
+  if (v.proveedor === 'sheets') {
+    return h('div', { class: 'stack small' },
+      h('p', {}, v.ejemplo ? 'Con un positivo de ejemplo (todavía no hay uno real):' : `Con el último positivo: ${v.nombre}.`,
+        ' Nada de esto se escribió en la planilla.'),
+      h('p', {}, `Va una fila nueva al final${v.hoja ? ` de la pestaña «${v.hoja}»` : ''}. Si ya hay una con el mismo ID registro, no se repite.`),
+      h('table', {}, h('tbody', {}, v.fila.map((c) => h('tr', {}, h('td', { class: 'small' }, c.columna), h('td', { class: 'celda' }, c.valor))))));
+  }
   const filas = (o) => h('table', {}, h('tbody', {}, Object.entries(o).map(([k, x]) => h('tr', {}, h('td', { class: 'mono small' }, k), h('td', {}, String(x))))));
   // La nota y la tarea van a HubSpot como HTML; acá se muestran como texto, sin interpretarlas.
   const comoTexto = (html) => html.replace(/<br>/g, '\n').replace(/<\/(p|blockquote)>/g, '\n').replace(/<[^>]+>/g, '')
@@ -1401,7 +1510,7 @@ function crmCargasCards(clientId, d, pintar) {
       h('td', { class: 'small' }, fmtDate(p.actualizado_at)),
       h('td', {}, accion('Cargar en el CRM', `/clients/${enc(clientId)}/crm/cargar`, { prospecto_id: p.id }))))))) : null;
   const detalle = (k) => {
-    if (k.estado === 'hecha') return k.url ? h('a', { href: k.url, target: '_blank', rel: 'noopener noreferrer' }, 'Ver en HubSpot') : fmtDate(k.hecha_at);
+    if (k.estado === 'hecha') return k.url ? h('a', { href: k.url, target: '_blank', rel: 'noopener noreferrer' }, d.proveedor === 'sheets' ? 'Ver la fila' : 'Ver en HubSpot') : fmtDate(k.hecha_at);
     if (k.error) return h('span', { class: k.estado === 'pendiente' ? 'muted' : 'err' }, k.error);
     if (k.proximo_intento) return `Próximo intento: ${fmtDate(k.proximo_intento)}`;
     return '—';
@@ -2196,7 +2305,7 @@ const GUIA_ALTA = {
   dominios: 'SPF, DKIM y DMARC de cada dominio de envío: deciden si los mails llegan a la bandeja. Si algo está mal, la ayuda dice qué registro cargar.',
   linkedin: 'Si se suma LinkedIn: la API key de Dripify del cliente, la prueba de conexión y la URL del webhook para su campaña.',
   whatsapp: 'Sólo para seguir conversaciones con quien ya respondió: número, horario y tope del día.',
-  crm: 'Si los positivos entran solos a HubSpot: el token de la app privada, la propiedad de origen y la vista previa.',
+  crm: 'Dónde entran solos los positivos: en HubSpot (el token de la app privada, la propiedad de origen y el dueño) o, si no tiene CRM, en una planilla de Google Sheets (la URL, compartida como Editor con el mail de la cuenta de servicio y verificada con una pestaña que lleva el código del panel). Después, «Probar conexión» y la vista previa.',
   asci: 'El usuario de ASCI con el que el prospector busca cuentas y decisores.',
   token: 'El token con el que la cuenta de Grok del cliente llega al gateway.',
   grok: 'La cuenta de Grok Bot del cliente: los bots, los conectores y la revisión automática.',

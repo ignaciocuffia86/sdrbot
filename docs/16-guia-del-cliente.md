@@ -154,7 +154,8 @@ verificaciones de dominio, cambios de ajustes y lo que hicieron los bots, con fe
 
 - Las respuestas llegan a **tu buzón** como siempre; además el SDR las lee y decide qué sigue.
 - A una persona **interesada** se le contesta con aprobación de Biguá, en el mismo hilo, desde tu
-  buzón. Biguá te avisa de cada interesado y, si conectás tu HubSpot (§7.1), entra solo ahí.
+  buzón. Biguá te avisa de cada interesado y, si conectás tu HubSpot (§7.1) o una planilla de Google
+  Sheets (§7.2), entra solo ahí.
 - **La derivación.** Esa respuesta va con copia a quien toma a los interesados, en su casilla del
   dominio principal («te sumo a Ana, que lleva esto de nuestro lado»). Ana contesta *a todos*
   desde su casilla y la conversación sigue con ella. Desde ahí el SDR no le escribe más a esa
@@ -191,6 +192,30 @@ borra nada.
 Abajo ves cada carga: cargada (con el enlace al contacto), en cola o con un problema. Si cambiás o
 revocás el token, las cargas esperan en cola hasta que cargues uno nuevo. **Pausar** las frena sin
 perderlas.
+
+### 7.2 Sin CRM: una planilla de Google Sheets
+
+Si no usás un CRM y llevás tus contactos en una planilla de Google, cada interesado que Biguá
+aprueba se agrega como una fila al final de la pestaña que elijas: la fecha, la persona, su mail y
+cargo, la empresa, por qué canal vino, qué pide, lo que respondió y la respuesta que le mandamos.
+Nunca se borra ni se cambia una fila que ya estaba. Si tu pestaña ya tiene encabezados (Nombre,
+Email, Empresa…), se usan los tuyos y se agregan al final las columnas que falten.
+
+1. En el panel: **Canales → CRM**, en «Dónde se cargan los positivos» elegí **Una planilla de Google
+   Sheets (sin CRM)**.
+2. En Google Sheets: **Compartir** la planilla como **Editor** con el mail que muestra el panel (el
+   botón **Copiar** lo copia). Es la cuenta con la que escribe el SDR.
+3. Abrí la pestaña donde van los interesados, copiá la URL del navegador (el `#gid=` del final dice
+   qué pestaña es), pegala en el panel y apretá **Conectar planilla**.
+4. El panel te muestra un código. Agregale a la planilla **una pestaña nueva con ese nombre**:
+   puede quedar vacía. Demuestra que la planilla es tuya; hasta entonces el SDR no escribe ni lee
+   nada de ella. Después la podés borrar.
+5. **Probar conexión** tiene que decir «listo»: si la pestaña está vacía, escribe los encabezados.
+6. **Vista previa** te muestra cómo va a quedar la fila de un interesado, sin escribir nada.
+
+Abajo ves cada carga, con el enlace a su fila. Si dejás de compartir la planilla o la borrás, las
+cargas esperan en cola hasta que vuelvas a compartirla. **Pausar** las frena sin perderlas. Si
+después pasás a HubSpot, lo ya cargado queda en la planilla.
 
 ## 8. Cuándo hablar con Biguá
 
