@@ -519,7 +519,7 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
   cliente cambia volumen, buzones, extrapolados y antigüedad del aviso, con las cuentas por día
   hasta el tope. La activación de campañas por el cliente llega con la etapa C.
 
-### 7.2 C1: lo hecho y lo que falta (en pausa desde el 09/11/2026)
+### 7.2 C1: lo hecho y lo que falta
 
 C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review;
 las correcciones entraron con el PR #6 y las reglas, en canario (`2026.11.09-2`). Este es el
@@ -609,9 +609,16 @@ punto donde se retoma.
    las claves de la principal): dice que lo de la principal se edita en Empresa. Los clientes
    nuevos arrancan en el formulario de la transición; pasarlos al de Empresa sola queda para
    después de C1.
-6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
-   abrir la pestaña (paso 5): con la `014`, el formulario de Empresa ya no edita lo de la
-   campaña, y hasta el paso 5 un cliente no tiene dónde editarlo.
+6. ~~**Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
+   abrir la pestaña (paso 5).~~ **Aplicada el 10/11/2026**, después del merge del PR #13. BairesQA:
+   Empresa con nombre, descripción, tono, idioma, firma, exclusiones, objeciones y extrapolados;
+   la «principal» con propuesta, ICP, cargos, señal, ventana del aviso, llamado a la acción y
+   positivos, y 4 cuentas por día. Sus reglas estables (`2026.11.05-6`) siguen recibiendo todo en
+   «Ajustes de este cliente», con lo de la principal. Para volver atrás: Biguá restaura la
+   versión «Antes de la migración 014» del historial de Empresa.
+
+**C1 terminado.** Queda pasar a BairesQA a las reglas que leen la campaña (publicar la versión
+de canario en estable) cuando se decida.
 
 **Pendientes chicos, vistos al construir:**
 
