@@ -805,6 +805,11 @@ export async function pedirAprobacion(clientId, a, meta) {
 // Los mensajes los puede decidir el cliente si su configuración lo deja (aprueba); el resto, sólo
 // Biguá. Con aprueba = 'cliente', Biguá puede rechazar un mensaje pero no aprobarlo.
 export const TIPOS_MENSAJE = ['calibracion_mail', 'respuesta_positivo', 'whatsapp_primero'];
+
+// Una persona que respondió positivo sigue siéndolo cuando el CRM la carga (en_crm): la carga corre
+// sola apenas se aprueba la respuesta, antes de que la respuesta salga. Contestarle pide aprobación
+// en los dos estados, por mail, LinkedIn o WhatsApp (hallazgo de Vercel 01M71WRPJYF9Q1GZATMBZR9R5X).
+export const ESTADOS_POSITIVO = ['positivo', 'en_crm'];
 const SQL_MENSAJE = `a.tipo in ('calibracion_mail', 'respuesta_positivo', 'whatsapp_primero')`;
 const SQL_APRUEBA = `coalesce((select cc.aprueba from sdr.cliente_config cc where cc.client_id = a.client_id), 'bigua')`;
 // Lo que Biguá tiene para decidir (aprobar o rechazar): lo que el orquestador le presenta.
@@ -962,7 +967,7 @@ export async function controlarEnvio(clientId, args, kind) {
       const cal = await enCampana.calibracion(c, clientId, k, cfg);
       if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
-    if (kind === 'reply' && p?.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
+    if (kind === 'reply' && ESTADOS_POSITIVO.includes(p?.estado)) necesita = { tipo: 'respuesta_positivo' };
     const campanaId = k?.id ?? null;
     if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId };
     if (!args.aprobacion_id) {

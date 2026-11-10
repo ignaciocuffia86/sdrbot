@@ -17,7 +17,7 @@
 import crypto from 'node:crypto';
 import { asRole, asOwner } from '../store.mjs';
 import { GatewayError } from '../errors.mjs';
-import { insertarEvento, aplicarEvento, versionActual, errorsSdr, prospectoDe, pedir } from './store.mjs';
+import { insertarEvento, aplicarEvento, versionActual, errorsSdr, prospectoDe, pedir, ESTADOS_POSITIVO } from './store.mjs';
 import * as noContactar from './no_contactar.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
@@ -147,7 +147,7 @@ export async function turno(clientId, a, meta, { azar = Math.random } = {}) {
     // Aprobación: el primer mensaje a cada persona y la respuesta a un positivo.
     const primero = !hist[0].con_chat;
     let necesita = null;
-    if (p.estado === 'positivo') necesita = 'respuesta_positivo';
+    if (ESTADOS_POSITIVO.includes(p.estado)) necesita = 'respuesta_positivo';
     else if (primero && cfg.aprobar_primero) necesita = 'whatsapp_primero';
     let aprobacion = null;
     if (necesita || a.aprobacion_id) {

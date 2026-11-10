@@ -23,7 +23,7 @@ import { GatewayError } from '../errors.mjs';
 import { normalizeLinkedin } from './linkedin.mjs';
 import * as noContactar from './no_contactar.mjs';
 import * as enCampana from './en_campana.mjs';
-import { insertarEvento, aplicarEvento, versionActual, errorsSdr } from './store.mjs';
+import { insertarEvento, aplicarEvento, versionActual, errorsSdr, ESTADOS_POSITIVO } from './store.mjs';
 
 const asClient = (clientId, fn) => asRole('mailgw_app', clientId, fn);
 
@@ -481,7 +481,7 @@ export async function responder(clientId, a, meta) {
       throw new GatewayError('prospecto_respondio', `Esta persona está en estado ${p.estado}: no se le escribe más.`, 409);
     }
     let ap = null;
-    if (p.estado === 'positivo' && !a.aprobacion_id) {
+    if (ESTADOS_POSITIVO.includes(p.estado) && !a.aprobacion_id) {
       throw errorsSdr.aprobacionRequerida('Es la respuesta a un positivo: necesita una aprobación (registro_pedir_aprobacion, tipo ' +
         'respuesta_positivo, con contenido.canal "linkedin" y el texto). Mandala cuando esté aprobada, pasando aprobacion_id.');
     }
