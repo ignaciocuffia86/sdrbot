@@ -11,24 +11,28 @@ de empresas exportadoras (la base que le dio el SAC), una lista de referidos y s
 | Hoy | Falta |
 |---|---|
 | Las cuentas entran al registro solo por el `prospector`, una por una, con `registro_guardar_cuenta` | Cargar de una vez cientos de empresas que el cliente ya tiene identificadas |
-| «No contactar» acepta un CSV pegado, pero solo dominios y mails (`no_contactar.mjs`, tope 5.000) | Que una empresa sea «no la toques vos, la llevo yo» **con nombre y motivo**, sin dominio a mano |
-| Los referidos y la gente conocida del cliente no existen para el bot | Separar lo que va **manual** (referido, conocido, cliente actual) de lo que se automatiza |
+| «No contactar» (`21` §3.3, `no_contactar.mjs`) acepta un CSV pegado con dominio o mail y motivo, y el gateway la hace cumplir en el registro, el envío y Dripify | Cargar ahí **empresas sin dominio** (un referido escrito solo con su nombre) y hacerlo desde el mismo Excel |
 | La campaña de prospección necesita una señal de avisos (`18`) | Una campaña que trabaje **una lista dada**, sin señal |
 
 ## 2. Qué resuelve
 
 Un archivo (Excel o CSV) que el cliente o un operador sube en el panel y que hace, por fila, una
-de cuatro cosas:
+de tres cosas:
 
-| Uso de la fila | Qué queda en el registro | Qué hace el SDR con ella |
+| Uso de la fila | Adónde va | Qué hace el SDR con ella |
 |---|---|---|
-| **`prospectar`** | Cuenta `en_investigacion` en la campaña elegida, con los contactos que traiga la fila | El `prospector` la toma como candidata (salteando la búsqueda en ASCI), completa a quien decide si falta y escribe |
-| **`semilla`** | Cuenta `excluida` con motivo «semilla del ICP» (no se le escribe) | Sirve de modelo para buscar empresas parecidas (`27` §3) |
-| **`manual`** | Cuenta `excluida` con motivo «la lleva el cliente: <motivo>» (referido, conocido, cliente) | Nadie del SDR le escribe, ni a ninguna persona de esa empresa. Si responde alguien de ahí, va a `seguimiento` como siempre |
-| **`no_contactar`** | Lo mismo que la lista de hoy, con dominio o mail | El gateway lo hace cumplir como ya lo hace |
+| **`prospectar`** | Registro: cuenta `en_investigacion` en la campaña elegida, con los contactos que traiga la fila | El `prospector` la toma como candidata (salteando la búsqueda en ASCI), completa a quien decide si falta y escribe |
+| **`semilla`** | Registro: cuenta `excluida` con motivo «semilla del ICP» | No se le escribe; sirve de modelo para buscar empresas parecidas (`27` §3) |
+| **`no_contactar`** | **La lista de no contactar que ya existe** (`sdr.no_contactar`), con el motivo de la fila: «referido de Juan», «cliente», «no quiere saber nada» | Lo de hoy: el gateway rechaza cuentas, personas, mails y cargas en Dripify de esa empresa |
 
-`manual` y `no_contactar` se diferencian en el motivo y en lo que ve el cliente: «la lleva Alberto»
-no es lo mismo que «no quiere saber nada». Las dos cierran la cuenta para el bot.
+**Las exclusiones no son una pieza nueva.** Un referido, un conocido o un cliente actual es una fila
+`no_contactar` con su motivo: para el bot es lo mismo que cualquier otra exclusión, y el cliente
+lo distingue por el motivo en la pestaña «No contactar». El Excel es solo otra forma de cargar esa
+lista, además del CSV pegado de hoy. Lo único que hay que sumarle a la lista es aceptar una empresa
+**por nombre** cuando no tiene dominio (§4.2 y §6.1).
+
+Una semilla queda en el registro y no en la lista porque tiene que llevar su perfil (rubro, tamaño,
+`asci_id`) para que `27` la use; igual no recibe nada.
 
 ## 3. El archivo
 
@@ -51,8 +55,8 @@ no es lo mismo que «no quiere saber nada». Las dos cierran la cuenta para el b
 | Rubro / vertical | No | `cuenta.vertical` | Texto libre del cliente; sirve como pista para `27` |
 | Tamaño | No | `cuenta.tamano` | Texto («200-500», «grande») |
 | RUT / identificador fiscal | No | `cuenta.datos_origen.rut` | No se usa para buscar; queda para el cliente |
-| Uso | No | §2 | `prospectar`, `semilla`, `manual`, `no_contactar`. Si falta, el uso por defecto de la carga |
-| Motivo | No | `estado_motivo` | Para `manual` y `no_contactar` («referido de Juan», «cliente») |
+| Uso | No | §2 | `prospectar`, `semilla` o `no_contactar`. Si falta, el uso por defecto de la carga |
+| Motivo | No | `no_contactar.motivo` | Para `no_contactar` («referido de Juan», «cliente»), hasta 200 caracteres como hoy |
 | Nota para el bot | No | `cuenta.tesis` | Por qué la eligió el cliente («exporta cerezas a China; afectada por la 204»). Máx. 300 caracteres |
 | Contacto: nombre | No | `prospecto.nombre` | Una persona por fila. Para dos personas de la misma empresa, dos filas con la misma empresa |
 | Contacto: cargo | No | `prospecto.cargo` | |
@@ -89,24 +93,33 @@ Por fila, en este orden:
    web, del que sale el dominio.
 3. Ambigua (ASCI trae candidatos): queda **sin dominio y marcada para revisar**; la vista previa
    la muestra con los candidatos para elegir uno o dejarla así.
-4. Sin cuenta en ASCI y sin dominio: entra igual con su nombre. El `prospector` la va a tener que
-   completar (buscar el dominio en `buscar_contactos` con `empresa`, que también resuelve en Apollo)
-   antes de escribirle. Una `manual` o `no_contactar` sin dominio cierra igual la empresa por
-   **nombre normalizado** (§4.3).
+4. Sin cuenta en ASCI y sin dominio: una `prospectar` entra igual con su nombre y el `prospector`
+   la completa (el dominio por `buscar_contactos` con `empresa`, que también resuelve en Apollo)
+   antes de escribirle. Una `no_contactar` sin dominio entra a la lista con **tipo `empresa`** y su
+   nombre normalizado (§6.1).
 
 ### 4.3 Choques con lo que ya hay
 
 | Caso | Qué pasa |
 |---|---|
-| La cuenta ya está en el registro, `en_investigacion` | `prospectar`: se le suman los contactos nuevos y la nota; queda en su campaña. `manual`/`no_contactar`: pasa a `excluida` |
-| Ya está `en_contacto` o `en_pausa` | `prospectar`: no se toca (se informa). `manual`: pasa a `excluida`, **se frena** lo pendiente (mails de la secuencia y Dripify, como una baja de la cuenta) y se avisa al orquestador |
+| La cuenta ya está en el registro, `en_investigacion` | `prospectar`: se le suman los contactos nuevos y la nota; queda en su campaña. `no_contactar`: entra a la lista y la cuenta pasa a `excluida`, como cuando se carga a mano hoy |
+| Ya está `en_contacto` o `en_pausa` | `prospectar`: no se toca (se informa). `no_contactar`: entra a la lista; ver el pendiente de §4.4 |
 | Ya está `excluida` o `descartada` | No se toca; se informa |
-| Está en «No contactar» | `prospectar` y `semilla` quedan `excluida`, como hoy en `guardarCuenta` |
+| Ya está en «No contactar» | `prospectar` y `semilla` quedan `excluida`, como hoy en `guardarCuenta`; una `no_contactar` repetida no se toca (`on conflict do nothing`, como hoy) |
 | Una persona ya existe (mismo mail o LinkedIn) en otra cuenta o campaña | No se mueve (regla «una persona, una campaña», `21` §4.3); se informa |
 | Dos filas de la misma empresa | Una cuenta; cada fila con contacto suma una persona |
-| Filas `manual` sin dominio | Se guarda el nombre normalizado en la exclusión; `registro_guardar_cuenta` compara también por nombre normalizado y rechaza la cuenta con `no_contactar` si coincide |
 
-### 4.4 Los contactos del archivo
+### 4.4 Pendiente de la lista de hoy, que la carga hace más visible
+
+Cargar una empresa en «No contactar» hoy frena lo **nuevo** (el gateway rechaza el próximo mail, la
+próxima persona y la próxima carga en Dripify), pero no lo que ya está en marcha: un prospecto que
+ya está cargado en una campaña de Dripify sigue recibiendo la invitación y los dos mensajes. Con una
+carga de cientos de exclusiones de una vez, el caso es más probable. Propuesta: al agregar a la
+lista (a mano, por CSV o por el Excel), el gateway busca en el registro las cuentas y personas
+activas que coinciden, pausa sus leads en Dripify (como hace con una baja) y le avisa al
+orquestador. Es un arreglo de la lista, no de la carga: sirve igual para las altas de hoy.
+
+### 4.5 Los contactos del archivo
 
 - El mail del cliente entra como `desconocido`: el gateway **no lo trata como verificado**. El
   `prospector` puede usarlo para el primer mail solo si la campaña acepta mails no verificados
@@ -140,8 +153,8 @@ archivo la trae).
   escribir con la nota del cliente como motivo, el resto igual que `diaria`.
 - `orquestador`: una campaña `lista` recibe pedidos como las demás, con su `cuentas_por_dia`, sin
   señal que mirar; si `registro_cuentas_de_lista` devuelve cero, no pide y avisa.
-- `comun.md`: las cuentas con motivo «la lleva el cliente» son del cliente, no del SDR: no se les
-  escribe ni se les revela gente, aunque aparezcan en otra búsqueda.
+- `comun.md` no cambia: las exclusiones del Excel son la lista de no contactar de siempre, y la
+  sección «No contactar» de las reglas ya le dice al bot que no escriba ni revele a nadie de ahí.
 
 ## 6. Cambios técnicos
 
@@ -153,7 +166,7 @@ create table sdr.lote_carga (
   client_id    text not null references mailgw.client on delete cascade,
   campana_id   uuid,                         -- destino de las filas «prospectar»
   archivo      text not null,                -- nombre original, sin la ruta
-  uso_defecto  text not null check (uso_defecto in ('prospectar','semilla','manual','no_contactar')),
+  uso_defecto  text not null check (uso_defecto in ('prospectar','semilla','no_contactar')),
   mapeo        jsonb not null,               -- columna del archivo → campo
   resumen      jsonb not null default '{}',  -- conteos por uso y por resultado
   estado       text not null default 'aplicado' check (estado in ('aplicado','deshecho')),
@@ -165,14 +178,19 @@ create table sdr.lote_carga (
 alter table sdr.cuenta
   add column lote_id      uuid references sdr.lote_carga on delete set null,
   add column origen       text not null default 'bot' check (origen in ('bot','archivo')),
-  add column uso          text check (uso in ('prospectar','semilla','manual','no_contactar')),
-  add column nombre_norm  text,              -- para cerrar empresas sin dominio
+  add column uso          text check (uso in ('prospectar','semilla')),
   add column datos_origen jsonb not null default '{}'::jsonb,
   add column prioridad    int;
-create index cuenta_nombre_norm on sdr.cuenta (client_id, nombre_norm) where nombre_norm is not null;
 create index cuenta_lista on sdr.cuenta (client_id, campana_id, prioridad) where origen = 'archivo' and estado = 'en_investigacion';
 
 alter table sdr.prospecto add column lote_id uuid references sdr.lote_carga on delete set null;
+
+-- La lista de no contactar de siempre suma empresas por nombre (sin dominio) y recuerda de qué lote
+-- vino cada fila, para poder deshacer una carga.
+alter table sdr.no_contactar drop constraint if exists no_contactar_tipo_check;
+alter table sdr.no_contactar add constraint no_contactar_tipo_check check (tipo in ('dominio', 'email', 'empresa'));
+-- el check de «tipo email ⇔ tiene @» sigue valiendo; una 'empresa' guarda el nombre normalizado
+alter table sdr.no_contactar add column lote_id uuid references sdr.lote_carga on delete set null;
 -- email_calidad suma 'del_cliente' (o se reusa 'desconocido'; decidir en §8)
 ```
 
@@ -187,7 +205,8 @@ días).
 | `gateway/src/sdr/carga.mjs` (nuevo) | Leer el archivo (CSV con el lector de `no_contactar.mjs` extendido; `.xlsx` con una dependencia chica y sin macros, p. ej. `read-excel-file`, que no evalúa fórmulas), normalizar, resolver (§4.2), armar la vista previa y aplicar por tandas |
 | `admin/servicio.mjs` y `api.mjs` | `POST /admin/api/clients/:c/cargas/previa` (multipart, hasta 5 MB), `POST …/cargas` (aplica la previa por su id, válida 30 min), `GET …/cargas`, `POST …/cargas/:id/deshacer`. Auditoría `admin.sdr.carga` con conteos, sin contenido |
 | `admin/static/` | Pestaña «Cuentas cargadas» en Empresa: subir, mapear, vista previa, historial de lotes, deshacer |
-| `store.mjs` · `guardarCuenta` | Comparar también por `nombre_norm` contra las cuentas `manual`/`no_contactar` |
+| `no_contactar.mjs` | `coincidencias` compara además el nombre normalizado de la cuenta contra las filas de tipo `empresa`; `leerCsv` acepta un nombre de empresa en la primera columna cuando no es dominio ni mail. Lo usan `guardarCuenta`, el envío y Dripify, sin otros cambios. Más el arreglo de §4.4 al agregar |
+| Pestaña «No contactar» | Muestra las filas de tipo `empresa` y de qué carga vinieron; el CSV pegado de hoy sigue igual |
 | MCP del bot | `registro_cuentas_de_lista(campana, limite)`: las próximas cuentas de la lista sin trabajar, con sus contactos y su nota; `registro_buscar` devuelve `origen` y `uso` |
 | MCP del panel (`24`) | `cargas_listar` de lectura; la subida queda en el panel (un archivo no pasa por el chat) |
 | `ajustes.mjs` | Tipo `lista` en `TIPOS`, `acepta_mails_del_cliente` en la campaña, faltantes para activarla |
@@ -204,10 +223,11 @@ días).
 
 1. `carga.test.mjs`: mapeo propuesto, normalización de dominios y LinkedIn, filas inválidas, celdas
    con fórmula, dos filas de la misma empresa, Latin-1.
-2. Choques de §4.3, uno por caso, incluido «`manual` sobre una cuenta en contacto frena la secuencia
-   y Dripify».
+2. Choques de §4.3, uno por caso. Y el arreglo de §4.4: agregar a la lista una empresa con un lead
+   ya cargado en Dripify lo pausa.
 3. Aislamiento: un usuario de un cliente no ve ni deshace lotes de otro (`aislamiento.test.mjs`).
-4. `guardarCuenta` rechaza por nombre normalizado una cuenta `manual` sin dominio.
+4. Una fila `no_contactar` sin dominio entra como tipo `empresa`, y `guardarCuenta` excluye la cuenta
+   de ese nombre aunque llegue después con dominio.
 5. De punta a punta en BairesQA (canario): subir 20 filas mezcladas, campaña `lista` en
    calibración, el `prospector` toma 4, pide aprobación con la nota del cliente como motivo.
 
@@ -216,16 +236,16 @@ días).
 | # | Pregunta | Propuesta |
 |---|---|---|
 | 1 | ¿El mail del cliente cuenta como verificado? | No: `desconocido`, y la campaña decide si lo usa (`acepta_mails_del_cliente`, sí por defecto) |
-| 2 | ¿Se puede cargar una lista a una campaña de señal, no solo a una `lista`? | No en la primera entrega: una cuenta cargada `prospectar` va a una campaña `lista`. Las de señal la ven solo como exclusión si está `manual` |
+| 2 | ¿Se puede cargar una lista a una campaña de señal, no solo a una `lista`? | No en la primera entrega: una cuenta cargada `prospectar` va a una campaña `lista`. Las demás la ven solo si está en no contactar |
 | 3 | ¿Teléfonos del archivo para WhatsApp de primer contacto? | No: WhatsApp sigue siendo solo de seguimiento (`22`). El teléfono queda guardado |
 | 4 | ¿Quién sube la base del SAC de Alberto? | Biguá en el kickoff, con él en la llamada, para revisar juntos el mapeo y la vista previa |
-| 5 | ¿Actualizar una carga (subir el Excel de nuevo con cambios)? | Primera entrega: cada subida es un lote nuevo; las cuentas que ya están se informan y no se pisan, salvo `manual`, que siempre gana |
+| 5 | ¿Actualizar una carga (subir el Excel de nuevo con cambios)? | Primera entrega: cada subida es un lote nuevo; las cuentas que ya están se informan y no se pisan, salvo una `no_contactar`, que siempre gana |
 
 ## 9. Etapas
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `manual`, `no_contactar` y `semilla`, cierre por nombre | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
+| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
 | **2** | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
 | **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 

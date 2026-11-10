@@ -248,7 +248,7 @@ puntaje legible.
 | Gasto de créditos sin respuesta | `reveals_por_dia`, reveal después de la curación, decisores cacheados primero |
 | Empresas sin dominio | Se completan por Apollo; sin dominio no salen (no hay forma de deduplicar ni de verificar el mail) |
 | El ICP es de corporaciones y Apollo trae pymes | `tamano_min` y el puntaje; el operador cura |
-| Pisar a los referidos y clientes de Alberto | Carga `manual` de `26` antes de activar la campaña; `excluir` en `cuentas_por_perfil` con todo el registro |
+| Pisar a los referidos y clientes de Alberto | Referidos y clientes cargados en no contactar (`26`) antes de activar la campaña; `excluir` en `cuentas_por_perfil` con todo el registro |
 | Depender de ASCI para construir §6 | Mientras tanto, la lista se puede armar desde el chat con `consultar` (administrador de Biguá) y cargarse por `26` como campaña `lista`: el piloto no espera a la herramienta |
 
 ## 9. Etapas
