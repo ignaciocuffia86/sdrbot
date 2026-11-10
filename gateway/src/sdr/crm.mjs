@@ -287,15 +287,17 @@ async function hojaDe(clientId, cx, sh) {
       : `La planilla no tiene una pestaña con gid ${gid}: copiá otra vez la URL desde la pestaña donde van los positivos.`);
   }
   if (hoja.title !== cx.planilla_hoja) await anotar(clientId, { planilla_hoja: hoja.title });
-  return { hoja: hoja.title, titulo: m?.properties?.title ?? null };
+  return { hoja: hoja.title, titulo: m?.properties?.title ?? null, sheetId: hoja.sheetId, columnas: Number(hoja.gridProperties?.columnCount) || null };
 }
 
 // Lee la fila 1 y, si faltan columnas, las agrega al final (en una planilla vacía, todas). Es lo
 // único que se escribe fuera de una fila nueva, y nunca cambia un encabezado que ya estaba.
-async function encabezados(sh, hoja) {
+async function encabezados(sh, { hoja, sheetId, columnas }) {
   const actuales = (await sh.leer(sheets.rango(hoja, '1:1')))[0] ?? [];
   const m = sheets.mapear(actuales);
   if (m.nuevas.length) {
+    // Si a la pestaña no le alcanzan las columnas, se agregan antes: si no, Google rechaza la escritura.
+    if (columnas && m.encabezados.length > columnas) await sh.agrandar(sheetId, m.encabezados.length - columnas);
     const desde = m.encabezados.length - m.nuevas.length + 1;
     await sh.escribir(sheets.rango(hoja, `${sheets.letra(desde)}1:${sheets.letra(m.encabezados.length)}1`), [m.nuevas]);
   }
@@ -334,7 +336,7 @@ async function probarPlanilla(clientId, cx, { fetchImpl } = {}) {
       verificada = true;
     }
     info = await hojaDe(clientId, cx, sh);
-    m = await encabezados(sh, info.hoja);
+    m = await encabezados(sh, info);
   } catch (e) {
     if (!(e instanceof hubspot.CrmError) && !(e instanceof GatewayError)) throw e;
     problemas.push(e.message);
@@ -380,8 +382,9 @@ async function cargarEnPlanilla(clientId, id, carga, cx, d, { fetchImpl, hasta }
   const sh = shDe(cx, fetchImpl, hasta);
   const ids = { ...carga.crm_ids };
   if (!ids.fila) {
-    const { hoja } = await hojaDe(clientId, cx, sh);
-    const m = await encabezados(sh, hoja);
+    const info = await hojaDe(clientId, cx, sh);
+    const { hoja } = info;
+    const m = await encabezados(sh, info);
     const col = sheets.letra(m.indices.registro + 1);
     const registros = await sh.leer(sheets.rango(hoja, `${col}:${col}`));
     const ya = registros.findIndex((r, i) => i > 0 && String(r?.[0] ?? '').trim() === d.p.id);
@@ -391,8 +394,10 @@ async function cargarEnPlanilla(clientId, id, carga, cx, d, { fetchImpl, hasta }
       fila = ya + 1;
       accion = 'ya_estaba';
     } else {
-      const valores = sheets.fila(armarFila(d, cx), m.indices, m.encabezados.length);
-      const r = await sh.agregar(sheets.rango(hoja, `A1:${sheets.letra(m.encabezados.length)}1`), [valores]);
+      // Google pone la fila agregada a partir de la primera columna de la tabla: si la planilla
+      // empieza en B (A vacía), la fila se manda desde B para que cada dato quede bajo su encabezado.
+      const valores = sheets.fila(armarFila(d, cx), m.indices, m.encabezados.length).slice(m.inicio);
+      const r = await sh.agregar(sheets.rango(hoja, `${sheets.letra(m.inicio + 1)}1:${sheets.letra(m.encabezados.length)}1`), [valores]);
       fila = sheets.filaDe(r?.updates?.updatedRange);
       accion = 'agregada';
     }

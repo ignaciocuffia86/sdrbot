@@ -76,7 +76,15 @@ function googleFalso() {
     if (!s.compartida) return json(403, { error: { code: 403, message: 'The caller does not have permission' } });
     const resto = p.slice(pre.length);
     if (req.method === 'GET' && resto === '') {
-      return json(200, { properties: { title: s.planilla.title }, sheets: s.planilla.hojas.map((x) => ({ properties: { sheetId: x.sheetId, title: x.title } })) });
+      return json(200, { properties: { title: s.planilla.title }, sheets: s.planilla.hojas.map((x) => ({
+        properties: { sheetId: x.sheetId, title: x.title, gridProperties: { columnCount: x.columnas ?? 26 } } })) });
+    }
+    if (req.method === 'POST' && resto === ':batchUpdate') {
+      for (const q of JSON.parse(raw).requests) {
+        const h = s.planilla.hojas.find((x) => x.sheetId === q.appendDimension.sheetId);
+        h.columnas = (h.columnas ?? 26) + q.appendDimension.length;
+      }
+      return json(200, {});
     }
     let m;
     if ((m = /^\/values\/(.+?)(:append)?$/.exec(resto))) {
@@ -95,14 +103,21 @@ function googleFalso() {
       const body = JSON.parse(raw);
       if (url.searchParams.get('valueInputOption') !== 'RAW') return json(400, { error: { message: 'se esperaba RAW' } });
       if (req.method === 'PUT') {
+        // Como Google: escribir fuera de la grilla de la pestaña es un 400.
+        if (r.desdeCol + body.values[0].length > (h.columnas ?? 26)) {
+          return json(400, { error: { code: 400, message: `Range (${m[1]}) exceeds grid limits. Max rows: 1000, max columns: ${h.columnas ?? 26}` } });
+        }
         const f = (h.filas[r.fila] ??= []);
         body.values[0].forEach((v, i) => { f[r.desdeCol + i] = v; });
         return json(200, { updatedRange: m[1] });
       }
       if (req.method === 'POST' && m[2]) {
-        h.filas.push([...body.values[0]]);
+        // Como Google: la fila va a partir de la primera columna de la tabla (la primera con datos
+        // en la fila 1), no de la columna del rango pedido.
+        const desde = Math.max(0, (h.filas[0] ?? []).findIndex((x) => String(x ?? '').trim()));
+        h.filas.push([...new Array(desde).fill(''), ...body.values[0]]);
         const n = h.filas.length;
-        return json(200, { updates: { updatedRange: `'${h.title.replace(/'/g, "''")}'!A${n}:${sheets.letra(body.values[0].length)}${n}`, updatedRows: 1 } });
+        return json(200, { updates: { updatedRange: `'${h.title.replace(/'/g, "''")}'!${sheets.letra(desde + 1)}${n}:${sheets.letra(desde + body.values[0].length)}${n}`, updatedRows: 1 } });
       }
     }
     return json(404, { error: { message: `sin ruta ${req.method} ${p}` } });
@@ -311,6 +326,31 @@ test('una planilla con encabezados propios: usa los suyos, agrega los que faltan
   assert.equal(h.filas[2][0], 'tres@empresa-tres.test');
   assert.equal(h.filas[2][1], 'Persona tres');
   assert.equal(h.filas[2][2], '', 'la columna del cliente queda vacía');
+});
+
+test('una tabla que empieza en B y una pestaña angosta: agranda la pestaña y cada dato queda bajo su encabezado', async () => {
+  const h = g.hoja("Leads 'SDR'");
+  // 20 columnas propias desde B, en una pestaña de 22: las 11 que faltan no entran.
+  const propias = Array.from({ length: 20 }, (_, i) => `Propia ${i + 1}`);
+  h.filas = [['', 'Email', ...propias.slice(1)]];
+  h.columnas = 22;
+  const p = await positivo('cinco');
+  await crm.procesarCola();
+  const k = await carga(p.id);
+  assert.equal(k.estado, 'hecha', k.error);
+  assert.ok(h.columnas >= h.filas[0].length, 'agrandó la pestaña');
+  const enc = h.filas[0];
+  const fila = h.filas.at(-1);
+  assert.equal(fila[0] ?? '', '', 'la columna A sigue vacía');
+  assert.equal(fila[enc.indexOf('Email')], 'cinco@empresa-cinco.test');
+  assert.equal(fila[enc.indexOf('ID registro')], p.id, 'el ID registro queda en su columna');
+  assert.equal(k.crm_ids.fila, String(h.filas.length));
+  // Y como quedó en su columna, un reintento no la repite.
+  await sql(`update sdr.crm_carga set estado = 'pendiente', crm_ids = '{}', proximo_intento = now() where prospecto_id = $1`, [p.id]);
+  const n = h.filas.length;
+  await crm.procesarCola();
+  assert.equal(h.filas.length, n);
+  assert.equal((await carga(p.id)).cambios.at(-1).accion, 'ya_estaba');
 });
 
 test('la vista previa arma la fila sin pedirle nada a Google', async () => {

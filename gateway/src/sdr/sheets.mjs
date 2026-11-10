@@ -155,7 +155,10 @@ export function cliente(spreadsheetId, { fetchImpl = fetch, hasta = Infinity } =
   const valores = (r) => `/values/${encodeURIComponent(r)}`;
   return {
     // El título y las pestañas.
-    meta: () => api('GET', '?fields=properties.title,sheets.properties(sheetId,title)'),
+    meta: () => api('GET', '?fields=properties.title,sheets.properties(sheetId,title,gridProperties.columnCount)'),
+    // Suma columnas al final de una pestaña: escribir fuera de la grilla da 400.
+    agrandar: (sheetId, columnas) => api('POST', ':batchUpdate',
+      { requests: [{ appendDimension: { sheetId, dimension: 'COLUMNS', length: columnas } }] }),
     leer: async (r) => (await api('GET', `${valores(r)}?majorDimension=ROWS`))?.values ?? [],
     escribir: (r, filas) => api('PUT', `${valores(r)}?valueInputOption=RAW`, { range: r, majorDimension: 'ROWS', values: filas }),
     // Devuelve el rango donde quedó la fila (updates.updatedRange).
@@ -207,7 +210,9 @@ export function mapear(encabezados) {
     quedan.push(col.titulo);
     nuevas.push(col.titulo);
   }
-  return { indices, encabezados: quedan, nuevas, vacia: ultima === 0 };
+  // Dónde empieza la tabla: Google ubica una fila agregada a partir de la primera columna con datos.
+  const inicio = Math.max(0, quedan.findIndex((x) => String(x).trim()));
+  return { indices, encabezados: quedan, nuevas, vacia: ultima === 0, inicio };
 }
 
 // Texto plano y acotado: sin caracteres de control (salvo el salto de línea) y con un largo máximo.
