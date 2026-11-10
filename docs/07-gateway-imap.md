@@ -4,7 +4,7 @@ El cliente del piloto tiene sus buzones en un servidor IMAP/SMTP genérico, no e
 
 El gateway está construido y probado en este repo (`gateway/`). Falta desplegarlo: necesita el proyecto de Supabase del SDR BOT, que todavía no existe, y un proyecto de Vercel.
 
-> Para clientes con buzones en Microsoft 365 o Google Workspace, ver `08-roadmap-proveedores.md`: el gateway suma un tipo de buzón por proveedor después del piloto.
+> Para clientes con buzones en Microsoft 365 o Google Workspace, ver `08-roadmap-proveedores.md`. Hoy hay dos tipos de buzón: **con contraseña** (IMAP/SMTP, lo de este documento) y **por conector** (el conector de Gmail u Outlook de Grok: el bot manda y lee por ahí, y el gateway reserva cada envío, lo confirma y lo concilia; `08` §7 y §13). El «un clic» con OAuth viene en la etapa F2.
 
 ## 1. Dónde encaja
 

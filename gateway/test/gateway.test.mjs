@@ -332,7 +332,8 @@ test('MCP: sin token 401; listado filtrado por permisos; llamada a una tool', as
   const names = readList.body.result.tools.map((t) => t.name).sort();
   assert.deepEqual(names, ['buscar', 'buzones', 'carpetas', 'leer_mensaje', 'sincronizar', 'verificar_buzon']);
   const fullList = await api.mcp(tok.full, 'tools/list', {}, 3);
-  assert.equal(fullList.body.result.tools.length, 12);
+  // 12 de correo y las 3 del puente por conector que piden send (docs/08 §7); correo_conector_recibido pide sdr.
+  assert.equal(fullList.body.result.tools.length, 15);
 
   const call = await api.mcp(tok.full, 'tools/call', { name: 'sincronizar', arguments: { mailbox: ANA, limit: 1 } }, 4);
   const payload = JSON.parse(call.body.result.content[0].text);

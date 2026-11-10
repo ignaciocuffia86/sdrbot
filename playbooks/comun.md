@@ -152,11 +152,39 @@ cumplir, **no busques otro camino**: registrá el motivo y seguí con lo siguien
 | `whatsapp_repetido` | Ese texto ya le salió en las últimas 24 horas | No lo repitas |
 | `whatsapp_pausado`, `whatsapp_sin_configurar` | WhatsApp está en pausa (un bloqueo) o no está activado | Nada por WhatsApp hasta que Biguá lo reanude o lo active |
 | Presupuesto de ASCI agotado | No hay más créditos hoy | Seguí con lo que no gasta; avisá en el resumen |
+| `buzon_por_conector` | El buzón va por el conector de Grok, no por el gateway | Usá la sección «Buzones por conector» |
+| `buzon_no_es_conector` | Ese buzón va por el gateway, no por el conector | Mandá con `enviar` (o `responder`) |
+| `buzon_en_borradores` | El buzón está en modo borradores: el bot no confirma | Dejá el borrador y seguí; lo confirma la conciliación |
+| `permiso_no_existe` | El permiso de un buzón por conector no existe o ya se usó | No mandes nada: pedí uno nuevo con `correo_conector_reservar` |
 
 **Clave de idempotencia** de un mail: `<id del prospecto>:<paso>` (por ejemplo
 `3f2a…:mail-1`, `3f2a…:mail-2`, `3f2a…:respuesta-1`); de una respuesta por LinkedIn,
 `<id del prospecto>:linkedin-<n>`; de una carga a la campaña, `linkedin-<AAAA-MM-DD>-<n>`. Si un envío falla por red y lo reintentás,
 usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos veces.
+
+## Buzones por conector
+
+> Un buzón de Google o Microsoft conectado en Grok: se manda con reserva y se lee a mano.
+
+Algunos buzones van por el conector de Gmail u Outlook de esta cuenta de Grok y no por el gateway
+(`buzones` los marca con `via: "conector"`; «Buzones y firmas» también). Valen las mismas reglas que
+para cualquier mail; cambia cómo se manda y cómo se lee:
+
+1. **Para mandar, primero `correo_conector_reservar`** con lo mismo que le pasarías a `enviar`
+   (o, para responder, `correo` con el id que da `correo_revisar`). El gateway hace los mismos
+   controles: si no da permiso, **no lo mandes por el conector**, por ningún motivo.
+2. Con el permiso, mandá por el conector **exactamente** lo de `enviar` en la respuesta: los
+   mismos destinatarios, el mismo asunto y el mismo texto, desde ese buzón. Para responder, en el
+   hilo del mensaje `responder_a`.
+3. En seguida, **`correo_conector_confirmar`** con el permiso y el `Message-ID` del mail enviado
+   (si el conector no lo muestra, su id). Si no lo mandaste, no confirmes.
+4. **Nunca mandes por el conector sin permiso**, ni nada distinto de lo reservado: la conciliación
+   de cada día lo detecta y pausa el buzón.
+5. Lo que llega a esos buzones no lo lee el gateway: lo lee `seguimiento` (su tarea `respuestas`).
+6. **Modo borradores** (`modo: "borradores"` en `buzones`, o `modo` en la respuesta de la reserva):
+   reservá igual, pero **no lo mandes**: creá por el conector un borrador exactamente con lo de
+   `enviar` (para responder, en el hilo) y no confirmes. Lo manda una persona del cliente y la
+   conciliación lo confirma cuando aparece entre los enviados.
 
 ## Seguridad
 

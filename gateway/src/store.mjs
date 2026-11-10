@@ -96,9 +96,9 @@ export async function findToken(hash) {
 
 // ---------------------------------------------------------------- buzones
 
-const PUBLIC_COLS = `id, client_id, email, display_name, imap_host, imap_port, imap_security,
+const PUBLIC_COLS = `id, client_id, email, display_name, auth, provider, imap_host, imap_port, imap_security,
   smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder,
-  drafts_folder, firma, status, auth_failures, last_ok_at, last_error, last_error_at`;
+  drafts_folder, firma, calibracion, conector_modo, status, auth_failures, last_ok_at, last_error, last_error_at`;
 
 // El filtro por client_id se mantiene en las consultas además de la política: la política es
 // la segunda barrera, no la única.

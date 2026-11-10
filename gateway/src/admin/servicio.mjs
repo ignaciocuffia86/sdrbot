@@ -76,9 +76,23 @@ const V = {
       daily_send_cap: { ...mailboxFields.daily_send_cap, default: 40 },
       append_sent: { type: 'boolean', default: true },
     } }),
-  mailboxUpdate: validator({ type: 'object', additionalProperties: false, minProperties: 1, properties: mailboxFields }),
+  mailboxUpdate: validator({ type: 'object', additionalProperties: false, minProperties: 1,
+    properties: { ...mailboxFields, calibracion: { type: 'integer', minimum: 0, maximum: 50 }, conector_modo: { enum: ['envio', 'borradores'] } } }),
   mailboxPassword: validator({ type: 'object', required: ['password'], additionalProperties: false,
     properties: { password: { type: 'string', minLength: 1, maxLength: 500 } } }),
+  // Un buzón por el conector de Grok (docs/08 §7): sin contraseña ni servidores. Arranca con un
+  // cupo bajo: el gateway no está en el camino del envío.
+  mailboxConector: validator({ type: 'object', additionalProperties: false, required: ['email', 'provider'],
+    properties: {
+      email: { type: 'string', maxLength: 254, pattern: '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$' },
+      provider: { enum: ['google', 'microsoft'] },
+      display_name: mailboxFields.display_name,
+      timezone: { ...mailboxFields.timezone, default: 'America/Argentina/Buenos_Aires' },
+      daily_send_cap: { type: 'integer', minimum: 1, maximum: 40, default: 10 },
+      calibracion: { type: 'integer', minimum: 0, maximum: 50, default: 5 },
+      conector_modo: { enum: ['envio', 'borradores'], default: 'borradores' },
+      firma: mailboxFields.firma ?? { type: 'string', maxLength: 2000 },
+    } }),
   mailboxStatus: validator({ type: 'object', required: ['status'], additionalProperties: false,
     properties: { status: { enum: ['active', 'paused'] } } }),
   domainCheck: validator({ type: 'object', additionalProperties: false,
@@ -185,8 +199,8 @@ function scoped(user, clientId, fn) {
 
 const requireBigua = (user) => { if (!isBigua(user)) throw forbidden(); };
 
-const MAILBOX_COLS = `id, client_id, email, display_name, username, imap_host, imap_port, imap_security,
-  smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder, firma,
+const MAILBOX_COLS = `id, client_id, email, display_name, auth, provider, username, imap_host, imap_port, imap_security,
+  smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder, firma, calibracion, conector_modo,
   status, auth_failures, last_ok_at, last_error, last_error_at, created_at, updated_at`;
 
 async function audit(c, user, clientId, op, detail, accountId = null) {
@@ -292,10 +306,40 @@ export const buzonCrear = async ({ user, params, body }) => {
   });
 };
 
+export const buzonConectorCrear = async ({ user, params, body }) => {
+  requireBigua(user);
+  const b = normalizeServers(V.mailboxConector(body));
+  const email = b.email.trim().toLowerCase();
+  return scoped(user, params.client, async (c) => {
+    const exists = await c.query(`select 1 from mailgw.client where id = $1`, [params.client]);
+    if (!exists.rowCount) throw notFound('No existe ese cliente.');
+    const { rows } = await c.query(
+      `insert into mailgw.account (client_id, email, display_name, auth, provider, timezone, daily_send_cap, append_sent, firma, calibracion, conector_modo)
+       values ($1, $2, $3, 'conector', $4, $5, $6, false, $7, $8, $9)
+       on conflict (client_id, email) do nothing
+       returning ${MAILBOX_COLS}`,
+      [params.client, email, b.display_name ?? null, b.provider, b.timezone, b.daily_send_cap, b.firma ?? null, b.calibracion, b.conector_modo]);
+    if (!rows.length) throw new GatewayError('conflict', `Ya existe el buzón ${email} en este cliente.`, 409);
+    await audit(c, user, params.client, 'admin.mailbox.create', { mailbox: email, via: 'conector', provider: b.provider }, rows[0].id);
+    return { mailbox: rows[0] };
+  });
+};
+
 export const buzonEditar = async ({ user, params, body }) => {
   const b = normalizeServers(V.mailboxUpdate(body));
   return scoped(user, params.client, async (c) => {
     const m = await getMailbox(c, params.client, params.email);
+    if (m.auth === 'conector') {
+      // Sin servidores ni carpetas, y con el cupo bajo del alta: el gateway no está en el camino.
+      const otros = Object.keys(b).filter((k) => !['display_name', 'timezone', 'daily_send_cap', 'firma', 'calibracion', 'conector_modo'].includes(k));
+      if (otros.length) throw errors.notAllowed(`${m.email} va por el conector de Grok: no tiene ${otros.join(', ')}.`);
+      if (b.daily_send_cap !== undefined && (b.daily_send_cap < 1 || b.daily_send_cap > 40)) {
+        throw errors.notAllowed('Un buzón por conector manda entre 1 y 40 mails por día.');
+      }
+      if (b.calibracion !== undefined || b.conector_modo !== undefined) requireBigua(user);
+    } else if (b.calibracion !== undefined || b.conector_modo !== undefined) {
+      throw errors.notAllowed('La calibración y el modo son sólo de los buzones por conector.');
+    }
     const cols = Object.keys(b);
     const sets = cols.map((k, i) => `${k} = $${i + 3}`).join(', ');
     const vals = cols.map((k) => (k.endsWith('_folder') && !b[k] ? null : b[k]));
@@ -311,6 +355,7 @@ export const buzonContrasena = async ({ user, params, body }) => {
   const b = V.mailboxPassword(body);
   return scoped(user, params.client, async (c) => {
     const m = await getMailbox(c, params.client, params.email);
+    if (m.auth === 'conector') throw errors.notAllowed(`${m.email} va por el conector de Grok: no tiene contraseña en el gateway.`);
     const secret = encryptSecret(b.password, aadFor(params.client, m.email));
     await c.query(`update mailgw.account set secret_enc = $3, status = 'active', auth_failures = 0, last_error = null, updated_at = now()
                     where client_id = $1 and id = $2`, [params.client, m.id, secret]);
@@ -334,6 +379,9 @@ export const buzonEstado = async ({ user, params, body }) => {
 // auth_error se reactiva cambiando la contraseña, no probando de nuevo.
 export const buzonProbar = async ({ user, params }) => {
   const m = await scoped(user, params.client, (c) => getMailbox(c, params.client, params.email));
+  if (m.auth === 'conector') {
+    throw errors.notAllowed(`${m.email} va por el conector de Grok: no tiene IMAP ni SMTP que probar desde el gateway.`);
+  }
   if (m.status === 'auth_error') throw errors.mailboxBlocked(m.email);
   const password = decryptSecret(m.secret_enc, aadFor(m.client_id, m.email));
   const result = { imap: null, smtp: null, folders: [] };

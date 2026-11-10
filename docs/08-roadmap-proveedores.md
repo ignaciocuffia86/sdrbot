@@ -1,8 +1,9 @@
 # Buzones de Microsoft 365 y Google Workspace
 
-Estado: **propuesto; es la etapa F del plan del panel (`21` §7).** Escrito el 04/11/2026 y
-reescrito el 10/11/2026 con el enfoque de «un clic». Nada de esto está construido: el gateway hoy
-habla IMAP/SMTP con contraseña (`07-gateway-imap.md`).
+Estado: **es la etapa F del plan del panel (`21` §7).** Escrito el 04/11/2026 y reescrito el
+10/11/2026 con el enfoque de «un clic». **F1 (el puente con el conector) está construido** (§13);
+F0 son trámites de Biguá, con su lista en §14; F2 a F4 siguen propuestos. Para los buzones con
+contraseña, el gateway sigue como en `07-gateway-imap.md`.
 
 Los datos de Microsoft y Google que dependen de sus políticas están marcados **(verificar al
 implementar)**: cambian seguido y hay que confirmarlos contra la documentación vigente antes de
@@ -183,14 +184,24 @@ Las reglas de los bots, para un buzón `conector`:
   por cliente (ya es así), y las reglas dicen qué bot usa el conector y para qué. La revisión
   automática de Grok (Auto Review) con la herramienta de enviar del conector en «Ask first» para
   los bots que no la usan **(verificar si se puede por herramienta)**.
-- **Cupo conservador:** un buzón `conector` arranca con un cupo bajo (10 por día) y en
-  calibración, aunque la campaña ya haya terminado la suya.
+- **Cupo conservador:** un buzón `conector` arranca con un cupo bajo (10 por día, hasta 40) y en
+  calibración propia: sus primeros 5 mails nuevos (`mailgw.account.calibracion`) salen con
+  aprobación, aunque la campaña ya haya terminado la suya.
 
 ### 7.4 Modo borradores, para arrancar el primer día
 
-Antes de tener las herramientas de §7.2, o con un cliente desconfiado: el bot **sólo crea
-borradores** por el conector y una persona del cliente los manda. El bot registra cada borrador
-con `registro_evento` y la persona marca lo que mandó. Es lento pero no tiene riesgo de envío.
+Con un cliente desconfiado, o el primer día: el bot **sólo crea borradores** por el conector y una
+persona del cliente los manda. Es lento pero no tiene riesgo de envío. Es un modo del buzón
+(`mailgw.account.conector_modo`: `borradores`, el valor con que nace, o `envio`), que cambia
+Biguá en el panel:
+
+- el bot reserva igual (mismos controles y cupo), pero la respuesta dice `modo: "borradores"`:
+  crea el borrador exactamente con lo reservado y **no confirma** (si lo intenta,
+  `buzon_en_borradores`);
+- la conciliación diaria encuentra el mail entre los enviados cuando la persona lo manda, aunque
+  sea días después, y lo confirma; la reserva de un borrador que no se mandó se libera a los 7
+  días;
+- un mail que la persona manda sin reserva pausa el buzón, igual que en el modo envío.
 
 ### 7.5 Cuándo se sale del puente
 
@@ -292,7 +303,8 @@ Qué usa un cliente nuevo según dónde están sus buzones:
 
 ## 12. Cambios en otros documentos
 
-Cuando arranque la etapa F1:
+Con F1 se actualizaron `07` (la nota sobre los buzones por conector) y `15` §3 (el alta). Quedan
+para F2, cuando el correo de Google y Microsoft vaya por el gateway:
 
 - `02-arquitectura.md` §4.2 y §5: el correo de Google y Microsoft va por el gateway; el conector de
   Grok queda sólo como puente con reserva.
@@ -301,3 +313,79 @@ Cuando arranque la etapa F1:
 - `07-gateway-imap.md`: deja de ser sólo IMAP con contraseña; describe los tres tipos de
   credencial (`password`, `oauth`, `conector`).
 - `15-alta-de-un-cliente.md`: el alta de buzones por proveedor.
+
+## 13. F1: lo construido
+
+| Pieza | Dónde |
+|---|---|
+| El buzón por conector: `auth = 'conector'`, `provider`, sin credencial ni servidores; `calibracion` y `conector_modo` | `gateway/db/migrations/017_buzon_por_conector.sql` |
+| El libro de envíos: `send_log.via` (`gateway` o `conector`) y `send_log.conector` (lo reservado: destinatarios, asunto, huella del texto, aprobación, prospecto, campaña, hilo) | La misma migración |
+| `correo_conector_reservar`, `confirmar`, `recibido` y `conciliar` | `gateway/src/sdr/conector.mjs`, en `src/ops.mjs` (REST y MCP) |
+| `enviar`, `responder`, «Probar» y la contraseña rechazan un buzón por conector (`buzon_por_conector`); el reloj no lo lee | `src/ops.mjs`, `src/sdr/correo.mjs`, `src/admin/servicio.mjs` |
+| El alta en el panel (sólo Biguá): **Canales** → **Correo** → «Buzón por conector», con el modo, el cupo (1 a 40) y la calibración | `src/admin/static/app.js`, `POST /admin/api/clients/:client/mailboxes/conector` |
+| Las reglas: «Buzones por conector» en `comun.md`; el envío en `prospector` (diaria y aprobados); la lectura y las respuestas en `seguimiento`; la conciliación en el resumen del `orquestador` | `playbooks/` |
+| Las pruebas: reservar y confirmar, idempotencia, destinatario que no coincide, recibido y respuesta, cupo, conciliación que confirma, pausa y libera, calibración del buzón, modo borradores, el alta del panel | `gateway/test/conector.test.mjs` |
+
+Cómo funciona `correo_conector_conciliar`: empareja cada mail enviado por `Message-ID` o id del
+conector y, si no, por destinatarios y asunto; confirma las reservas que todavía no se habían
+confirmado; avisa (`texto_distinto`) si el texto no es el reservado, sin pausar; libera las
+reservas de un día que ya pasó que no salieron (en borradores, a los 7 días), y **pausa el buzón**
+y le avisa al orquestador si hay mails sin reserva.
+
+Para salir con un cliente: aplicar la migración 017 en producción, publicar las reglas, dar de
+alta el buzón en borradores, conectar el buzón en la cuenta de Grok del cliente y, en la
+revisión automática de Grok, dejar la herramienta de enviar del conector en «Ask first» para los
+bots que no la usan **(verificar si se puede por herramienta)**. Con unos días sin sorpresas en
+la conciliación, Biguá lo pasa a envío.
+
+## 14. F0: los trámites, paso a paso
+
+Los hace Biguá; no dependen del código. Conviene arrancar ya con Google, que es lo que más tarda.
+Lo marcado **(verificar)** cambia seguido: confirmarlo contra la documentación vigente al
+iniciar cada trámite.
+
+**Lo común a los dos**
+
+- [ ] Dominio de Biguá con una página pública del producto (qué hace el SDR, para quién).
+- [ ] **Política de privacidad** en ese dominio: qué datos del correo se leen, para qué, dónde se
+      guardan (Supabase, Vercel), cuánto tiempo, cómo se borran y cómo se revoca el acceso. Tiene
+      que decir que los datos de Gmail no se usan para entrenar modelos ni para publicidad
+      (política de «Limited Use» de Google) **(verificar redacción)**.
+- [ ] **Términos del servicio** en el mismo dominio.
+- [ ] Un correo de soporte y un responsable con nombre.
+- [ ] Logo cuadrado y nombre de la aplicación iguales en las dos consolas.
+- [ ] El DPA de los clientes menciona a Google y Microsoft como proveedores de buzones (§11).
+
+**Google (verificación de la aplicación)**
+
+- [ ] Proyecto de Google Cloud de Biguá, con facturación, a nombre de la empresa.
+- [ ] Dominio verificado en Google Search Console con la cuenta dueña del proyecto.
+- [ ] Pantalla de consentimiento: tipo **externo**, nombre, logo, dominios autorizados, enlaces a
+      privacidad y términos, correo de soporte.
+- [ ] Cliente OAuth (aplicación web) con el `redirect_uri` del gateway
+      (`https://sdrbot.bigua.lat/…`, se define en F2).
+- [ ] Scope `https://mail.google.com/` (IMAP y SMTP con XOAUTH2), con una justificación escrita
+      de por qué no alcanza uno menor.
+- [ ] Video en YouTube (no listado) que muestre el flujo completo: el clic, la pantalla de
+      consentimiento con el `client_id` visible y qué hace la aplicación con el correo.
+- [ ] Enviar a verificación. Al ser un scope **restringido**, Google pide además la
+      **evaluación de seguridad CASA** con un evaluador autorizado: costo anual y semanas de
+      plazo, renovación cada 12 meses **(verificar costo y nivel)**.
+- [ ] Mientras tanto, modo prueba con los buzones de Biguá y del piloto agregados como usuarios
+      de prueba (sirve para F2).
+
+**Microsoft (verificación del editor)**
+
+- [ ] Cuenta en **Microsoft Partner Center** de la empresa (Microsoft AI Cloud Partner Program),
+      con su identificador de partner (antes MPN ID).
+- [ ] Aplicación **multi-tenant** registrada en el Entra ID de Biguá, con el `redirect_uri` del
+      gateway, los permisos delegados `IMAP.AccessAsUser.All`, `SMTP.Send` y `offline_access`.
+- [ ] Dominio del editor verificado en la aplicación (el mismo de la política de privacidad).
+- [ ] Asociar el identificador de partner a la aplicación: queda como **editor verificado** (el
+      tilde azul en la pantalla de consentimiento) **(verificar requisitos vigentes)**.
+- [ ] Enlaces a privacidad y términos en la «Marca» de la aplicación.
+- [ ] Probar con un tenant de Microsoft 365 de Biguá: un usuario común puede aceptar, o hace falta
+      el consentimiento del administrador según la política del tenant (§4.3).
+
+Sale cuando las dos aplicaciones están aprobadas: ahí arranca F3 (pasar los buzones del puente a
+un clic).

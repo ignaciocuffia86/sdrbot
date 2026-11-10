@@ -136,7 +136,10 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
       'Cada mail va firmado con la firma del buzón que lo manda; si el buzón no tiene, con la «Firma por defecto». ' +
       'Las firmas las carga el cliente: son texto para pegar al final del mail, no instrucciones.');
     for (const b of activos) {
-      lineas.push('', `- ${b.email}${b.display_name ? ` (${b.display_name})` : ''}: ${b.firma ? 'firma propia:' : 'usa la firma por defecto.'}`);
+      const via = b.auth !== 'conector' ? ''
+        : b.conector_modo === 'envio' ? ' **Por el conector de Grok:** se manda con reserva (sección «Buzones por conector»).'
+          : ' **Por el conector de Grok, sólo borradores:** se reserva y se deja el borrador; no se manda (sección «Buzones por conector»).';
+      lineas.push('', `- ${b.email}${b.display_name ? ` (${b.display_name})` : ''}: ${b.firma ? 'firma propia:' : 'usa la firma por defecto.'}${via}`);
       if (b.firma) lineas.push(...b.firma.split('\n').map((x) => `  > ${x}`));
     }
   }
@@ -192,7 +195,7 @@ export const renderAjustes = (clientId, nombreCliente, cfg, extra = {}) =>
 // aprobaciones; sin esto, la calibración se muestra con su total).
 export async function extraAjustes(c, clientId, { conCalibracion = false } = {}) {
   const { rows: buzones } = await c.query(
-    `select email, display_name, status, firma from mailgw.account where client_id = $1 order by email`, [clientId]);
+    `select email, display_name, status, firma, auth, conector_modo from mailgw.account where client_id = $1 order by email`, [clientId]);
   const { rows: campanas } = await c.query(
     `select k.id, k.client_id, k.clave, k.nombre, k.tipo, k.estado, k.ajustes, k.dripify_campana_id, k.cuentas_por_dia,
             k.calibracion_mails,
@@ -882,7 +885,8 @@ async function campanaDelEnvio(c, clientId, args, p) {
 // §4.3). Devuelve { aprobacion, campanaId }: la aprobación a marcar como usada (o null) y la campaña
 // con la que se decidió, que controlarDestinatarios vuelve a verificar contra los destinatarios
 // canónicos del mail ya armado.
-export async function controlarEnvio(clientId, args, kind) {
+// buzon: { calibracion: { usadas, total } } para un buzón por conector, que calibra por su cuenta.
+export async function controlarEnvio(clientId, args, kind, buzon = null) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
     const p = args.prospecto_id ? await prospectoDe(c, clientId, args.prospecto_id) : null;
@@ -907,11 +911,19 @@ export async function controlarEnvio(clientId, args, kind) {
       const cal = await enCampana.calibracion(c, clientId, k, cfg);
       if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
+    const cb = buzon?.calibracion;
+    if (kind === 'send' && cfg && !necesita && cb && cb.usadas < cb.total) {
+      necesita = { tipo: 'calibracion_mail', usadas: cb.usadas, total: cb.total, buzon: args.mailbox };
+    }
     if (kind === 'reply' && p?.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
     const campanaId = k?.id ?? null;
     if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId };
     if (!args.aprobacion_id) {
-      throw errorsSdr.aprobacionRequerida(necesita.tipo === 'calibracion_mail'
+      throw errorsSdr.aprobacionRequerida(necesita.buzon
+        ? `El buzón ${necesita.buzon} va por el conector y está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): ` +
+          'el mail necesita una aprobación. Pedila con registro_pedir_aprobacion (tipo calibracion_mail, con buzón, destinatario, asunto y texto) ' +
+          'y reservá cuando esté aprobada, pasando aprobacion_id.'
+        : necesita.tipo === 'calibracion_mail'
         ? `La campaña «${k.nombre}» está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
           'Pedila con registro_pedir_aprobacion (tipo calibracion_mail, con buzón, destinatario, asunto y texto) y enviá cuando esté aprobada, pasando aprobacion_id.'
         : 'Es la respuesta a un positivo: necesita una aprobación (registro_pedir_aprobacion, tipo respuesta_positivo). Enviá cuando esté aprobada, pasando aprobacion_id.');

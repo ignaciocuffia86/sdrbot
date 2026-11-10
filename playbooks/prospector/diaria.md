@@ -111,6 +111,10 @@ persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
 
 > Durante la calibración se aprueba antes; después sale directo.
 
+Si el buzón va **por conector** (`via: "conector"` en `buzones`), en lugar de `enviar` se usa la
+reserva de la sección común «Buzones por conector»: `correo_conector_reservar` con los mismos
+datos, el envío por el conector y `correo_conector_confirmar`.
+
 Cada mail sale por un buzón **de la campaña** de la persona (los de «Campañas de este cliente»;
 el gateway rechaza otro con `buzon_fuera_de_campana`), y sólo con los links que permite la campaña
 (`link_no_permitido`).
