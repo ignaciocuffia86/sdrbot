@@ -750,3 +750,106 @@ test('monitor y WhatsApp en el panel: canales con su modo, lo de hoy y las regla
   assert.equal(res.whatsapp.activo, true);
   assert.equal(res.whatsapp.horario, 'de 9 a 21 h, todos los días');
 });
+
+// ---------------------------------------------------------------- asistentes (docs/27)
+
+test('asistente de alta: el estado sale de los datos, se pausa por paso y por campo, y es sólo de Biguá', async () => {
+  assert.equal((await ctx.bigua.call('POST', '/clients', { id: 'adm-alta', name: 'Cliente Alta' })).status, 200);
+  const ver = async () => {
+    const r = await ctx.bigua.call('GET', '/clients/adm-alta/asistente/alta');
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body.data;
+  };
+  const paso = (d, k) => d.pasos.find((p) => p.clave === k);
+  let d = await ver();
+  assert.equal(d.total, 16);
+  assert.equal(d.listos, 0);
+  assert.equal(paso(d, 'sdr').estado, 'por_hacer');
+  assert.match(paso(d, 'empresa').falta, /activar el SDR/);
+  assert.equal(paso(d, 'buzones').falta, 'Todavía no hay buzones.');
+
+  // Activar el SDR y cargar lo de la empresa deja esos pasos listos solos.
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/sdr/config', { canal: 'estable', bots_activos: ['orquestador', 'prospector', 'seguimiento'] })).status, 200);
+  d = await ver();
+  assert.equal(paso(d, 'sdr').estado, 'listo');
+  assert.equal(paso(d, 'empresa').falta, 'Falta: Nombre comercial, Qué hace la empresa.');
+  assert.equal(paso(d, 'despertadores').falta, 'Falta el de orquestador y seguimiento.');
+  const aj = await ctx.bigua.call('PUT', '/clients/adm-alta/sdr/ajustes', { ajustes: { nombre_comercial: 'Alta SA', descripcion: 'Hacemos QA.' } });
+  assert.equal(aj.status, 200, JSON.stringify(aj.body));
+  assert.equal(paso(await ver(), 'empresa').estado, 'listo');
+
+  // Pausa por campo: el paso queda esperando aunque el resto esté.
+  const campo = await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/campo:responsable_email',
+    { estado: 'esperando', que: 'Quién toma a los interesados en Chile', quien: 'Augusto' });
+  assert.equal(campo.status, 200, JSON.stringify(campo.body));
+  d = await ver();
+  assert.equal(paso(d, 'interesados').estado, 'esperando');
+  assert.deepEqual(paso(d, 'interesados').campos_pendientes,
+    [{ clave: 'responsable_email', titulo: 'Mail de quien toma a los interesados', que: 'Quién toma a los interesados en Chile', quien: 'Augusto' }]);
+  assert.equal(d.esperando, 1);
+
+  // Pausa por paso, no aplica y hecho a mano (sólo los que no se comprueban con datos).
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/linkedin', { estado: 'esperando' })).status, 400, 'hay que decir qué falta');
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/linkedin', { estado: 'esperando', que: 'Si contratan Dripify' })).status, 200);
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/whatsapp', { estado: 'no_aplica' })).status, 200);
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/grok', { estado: 'listo' })).status, 200);
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/buzones', { estado: 'listo' })).status, 400, 'un buzón se comprueba con los datos');
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/campo:tono', { estado: 'no_aplica' })).status, 400);
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/inventado', { estado: 'no_aplica' })).status, 404);
+  d = await ver();
+  assert.deepEqual([paso(d, 'linkedin').estado, paso(d, 'linkedin').que], ['esperando', 'Si contratan Dripify']);
+  assert.equal(paso(d, 'whatsapp').estado, 'no_aplica');
+  assert.equal(paso(d, 'grok').estado, 'listo');
+  assert.equal(d.listos, 4, 'sdr, empresa, whatsapp (no aplica) y grok');
+  assert.equal(d.esperando, 2);
+
+  // Volver a «por hacer».
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-alta/asistente/alta/linkedin', { estado: null })).status, 200);
+  assert.equal(paso(await ver(), 'linkedin').estado, 'por_hacer');
+
+  // El alta es de Biguá: un usuario de cliente no la ve ni la toca, ni en su propio cliente.
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  assert.equal((await cli.call('GET', '/clients/adm-b/asistente/alta')).status, 403);
+  assert.equal((await cli.call('PUT', '/clients/adm-b/asistente/alta/grok', { estado: 'listo' })).status, 403);
+  assert.equal((await cli.call('GET', '/clients/adm-alta/asistente/alta')).status, 403);
+});
+
+test('asistente de campaña: el cliente pausa pasos y campos de sus campañas, nada más', async () => {
+  const lista = (await ctx.bigua.call('GET', '/clients/adm-b/sdr/campanas')).body.data.campanas;
+  const id = lista[0].id;
+  const amb = `campana:${id}`;
+  const cli = await loginCliente('ajustes@cliente-b.test');
+  const p = await cli.call('PUT', `/clients/adm-b/asistente/${amb}/audiencia`, { estado: 'esperando', que: 'Definir los cargos', quien: 'Ventas' });
+  assert.equal(p.status, 200, JSON.stringify(p.body));
+  assert.equal((await cli.call('PUT', `/clients/adm-b/asistente/${amb}/campo:llamado_accion`, { estado: 'esperando', que: '¿Demo o charla?' })).status, 200);
+  const r = await cli.call('GET', `/clients/adm-b/asistente/${amb}`);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.data.pasos.map((x) => [x.paso, x.estado, x.que]),
+    [['audiencia', 'esperando', 'Definir los cargos'], ['campo:llamado_accion', 'esperando', '¿Demo o charla?']]);
+  assert.equal(r.body.data.pasos[0].actualizado_por, 'ajustes@cliente-b.test');
+  // Biguá ve lo mismo.
+  assert.equal((await ctx.bigua.call('GET', `/clients/adm-b/asistente/${amb}`)).body.data.pasos.length, 2);
+
+  // Ni una campaña que no existe, ni las de otro cliente.
+  const nada = `campana:${'0'.repeat(8)}-0000-0000-0000-${'0'.repeat(12)}`;
+  assert.equal((await cli.call('GET', `/clients/adm-b/asistente/${nada}`)).status, 404);
+  const otro = await usuarioDeOtroCliente();
+  assert.equal((await otro.call('GET', `/clients/adm-b/asistente/${amb}`)).status, 404);
+  assert.equal((await otro.call('PUT', `/clients/adm-b/asistente/${amb}/audiencia`, { estado: null })).status, 404);
+  assert.equal((await cli.call('GET', '/clients/adm-b/asistente/cualquiera')).status, 404);
+
+  // Con el rol del portal, la base no deja ver ni escribir el alta, ni filas de otro cliente.
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const c = await pool.connect();
+  try {
+    await c.query('begin');
+    await c.query(`select set_config('role', 'mailgw_portal', true), set_config('mailgw.client_id', 'adm-b', true)`);
+    assert.equal((await c.query(`select count(*)::int as n from mailgw.asistente_paso`)).rows[0].n, 2, 'sólo sus campañas');
+    await assert.rejects(c.query(`insert into mailgw.asistente_paso (client_id, ambito, paso, estado) values ('adm-b', 'alta', 'grok', 'listo')`),
+      /row-level security/);
+    await c.query('rollback');
+  } finally { c.release(); await pool.end(); }
+
+  assert.equal((await cli.call('PUT', `/clients/adm-b/asistente/${amb}/audiencia`, { estado: null })).status, 200);
+  assert.equal((await cli.call('GET', `/clients/adm-b/asistente/${amb}`)).body.data.pasos.length, 1);
+});

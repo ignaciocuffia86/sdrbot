@@ -253,7 +253,7 @@ function newClientDialog() {
       'Minúsculas, números y guiones. No se puede cambiar después.')), {
     submit: async (fd) => {
       const { client } = await api('POST', '/clients', { id: fd.get('id'), name: fd.get('name') });
-      location.hash = `#/c/${enc(client.id)}`;
+      location.hash = `#/c/${enc(client.id)}/alta`;
       return true;
     },
   });
@@ -270,12 +270,12 @@ const TABS = [['resumen', 'Resumen'], ['aprobaciones', 'Aprobaciones'], ['campan
 // §7.2, paso 5). Qué puede tocar cada uno lo decide el gateway (ajustes.mjs).
 const CAMPANAS_PARA_CLIENTES = true;
 
-async function renderClient(clientId, tab, sub) {
+async function renderClient(clientId, tab, sub, resto = []) {
   if (VIEJAS[tab]) [tab, sub = sub] = VIEJAS[tab];
   const data = await api('GET', `/clients/${enc(clientId)}`);
   const bigua = data.can_manage_access;
   const tabs = TABS.filter(([k]) => k !== 'campanas' || bigua || CAMPANAS_PARA_CLIENTES);
-  if (!tabs.some(([k]) => k === tab) && !(bigua && tab === 'admin')) tab = 'resumen';
+  if (!tabs.some(([k]) => k === tab) && !(bigua && (tab === 'admin' || tab === 'alta'))) tab = 'resumen';
   const base = `#/c/${enc(clientId)}`;
   const body = h('div');
   main.replaceChildren(
@@ -284,12 +284,16 @@ async function renderClient(clientId, tab, sub) {
     h('p', { class: 'sub mono' }, data.client.id),
     h('nav', { class: 'tabs' },
       tabs.map(([k, label]) => h('a', { href: `${base}/${k}`, class: k === tab ? 'on' : '' }, label)),
-      bigua ? h('a', { href: `${base}/admin`, class: `gear${tab === 'admin' ? ' on' : ''}` }, '⚙ Administración') : null),
+      bigua ? h('a', { href: `${base}/alta`, class: `gear${tab === 'alta' ? ' on' : ''}` }, 'Alta') : null,
+      bigua ? h('a', { href: `${base}/admin`, class: tab === 'admin' ? 'on' : '' }, '⚙ Administración') : null),
     body);
-  const v = { clientId, data, bigua, base, reload: () => renderClient(clientId, tab, sub) };
+  const v = { clientId, data, bigua, base, reload: () => renderClient(clientId, tab, sub, resto) };
   if (tab === 'resumen') body.append(await resumenView(v));
   if (tab === 'aprobaciones') body.append(await aprobacionesView(v));
-  if (tab === 'campanas') body.append(await (sub ? campanaView(v, sub) : campanasView(v)));
+  if (tab === 'campanas') {
+    body.append(await (!sub ? campanasView(v) : resto[0] === 'asistente' ? campanaAsistenteView(v, sub, resto[1]) : campanaView(v, sub)));
+  }
+  if (tab === 'alta') body.append(await altaView(v, sub));
   if (tab === 'empresa') body.append(await empresaView(v));
   if (tab === 'canales') body.append(await canalesView(v));
   if (tab === 'actividad') body.append(await monitorView(clientId));
@@ -372,9 +376,14 @@ async function aprobacionesView(v) {
 const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
 async function resumenView({ clientId, bigua, base }) {
-  const r = await api('GET', `/clients/${enc(clientId)}/resumen`);
+  const [r, alta] = await Promise.all([api('GET', `/clients/${enc(clientId)}/resumen`),
+    bigua ? api('GET', `/clients/${enc(clientId)}/asistente/alta`) : Promise.resolve(null)]);
   const avisos = [];
   const aviso = (nivel, texto, href, accion) => avisos.push({ nivel, texto, href, accion });
+  if (alta && alta.listos < alta.total) {
+    aviso(alta.esperando ? 'warn' : 'mute', `Alta: ${alta.listos} de ${alta.total} pasos listos` +
+      `${alta.esperando ? ` · ${plural(alta.esperando, 'espera', 'esperan')} una definición` : ''}.`, `${base}/alta`, 'Seguir con el alta');
+  }
   if (!r.sdr_activo) {
     aviso('mute', bigua ? 'El SDR no está activado para este cliente.' : 'El SDR todavía no está activado. Lo activa Biguá.',
       bigua ? `${base}/admin` : null, 'Activar');
@@ -607,7 +616,7 @@ async function campanasView({ clientId, bigua, base, reload }) {
       submitLabel: 'Crear',
       submit: async (fd) => {
         const r = await api('POST', `/clients/${enc(clientId)}/sdr/campanas`, { nombre: fd.get('nombre'), tipo: fd.get('tipo') });
-        location.hash = `${base}/campanas/${r.id}`;
+        location.hash = `${base}/campanas/${r.id}/asistente/objetivo`;
         return true;
       },
     });
@@ -772,6 +781,7 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
       submit: async () => { await api('PUT', path, { estado: 'terminada' }); toast('Campaña terminada.'); reload(); return true; },
     }) }, 'Terminar'));
   }
+  if (k.estado !== 'terminada') acciones.unshift(h('a', { class: 'btn', href: `${base}/campanas/${k.id}/asistente` }, 'Asistente'));
   acciones.push(h('button', { onclick: () => {
     const nombre = h('input', { name: 'nombre', maxlength: 120, value: `${k.nombre} (copia)` });
     openDialog('Duplicar la campaña', h('div', {}, field('Nombre de la copia', nombre),
@@ -2100,6 +2110,456 @@ async function renderTeam() {
     h('table', {}, h('thead', {}, h('tr', {}, ['Usuario', 'Estado', 'Último ingreso', ''].map((t) => h('th', {}, t)))), h('tbody', {}, userRows(users, reload))));
 }
 
+// ---------------------------------------------------------------- asistentes (docs/29)
+//
+// El alta de un cliente (la hace Biguá en la llamada de inicio) y el armado de cada campaña, paso a
+// paso. Cada paso usa los mismos formularios y tarjetas del resto del panel y guarda donde ya se
+// guardaba; el asistente sólo agrega el orden, qué falta y la pausa: un paso o un campo puede quedar
+// «esperando una definición», con qué falta y quién lo define.
+
+const ESTADO_PASO = {
+  listo: ['✓', 'listo', 'b-ok'], esperando: ['◐', 'espera una definición', 'b-warn'],
+  no_aplica: ['–', 'no aplica', 'b-mute'], por_hacer: ['○', 'por hacer', 'b-mute'],
+};
+const pasoBadge = (e) => { const [, t, cls] = ESTADO_PASO[e] ?? ESTADO_PASO.por_hacer; return h('span', { class: `badge ${cls}` }, t); };
+const pasoIcono = (e) => h('span', { class: `paso-ico p-${e}`, 'aria-hidden': 'true' }, (ESTADO_PASO[e] ?? ESTADO_PASO.por_hacer)[0]);
+
+const marcarPaso = (clientId, ambito, paso, body) => api('PUT', `/clients/${enc(clientId)}/asistente/${enc(ambito)}/${enc(paso)}`, body);
+
+// «Lo definimos después»: qué falta y quién lo define. antes() guarda lo que se estaba cargando.
+function pausaDialog(clientId, ambito, paso, titulo, { antes, despues }) {
+  openDialog(`Lo definimos después: ${titulo}`, h('div', {},
+    field('Qué falta definir', h('textarea', { name: 'que', required: true, maxlength: 500, rows: 3,
+      placeholder: 'Por ejemplo: quién toma a los interesados de Chile' })),
+    field('Quién lo define', h('input', { name: 'quien', maxlength: 120, placeholder: 'El cliente, Augusto, Biguá…' })),
+    h('p', { class: 'small muted' }, 'Queda en el resumen del alta (o de la campaña) hasta que se defina. Lo demás se puede seguir cargando.')), {
+    submitLabel: 'Dejarlo pendiente',
+    submit: async (fd) => {
+      if (antes) await antes();
+      await marcarPaso(clientId, ambito, paso, { estado: 'esperando', que: String(fd.get('que')).trim(), quien: String(fd.get('quien')).trim() });
+      toast('Queda pendiente.');
+      despues();
+      return true;
+    },
+  });
+}
+
+const textoPendiente = (x) => `${x.que}${x.quien ? ` · lo define ${x.quien}` : ''}`;
+
+// Un campo con su «lo definimos después» (o su pendiente, si ya lo tiene).
+function campoConPausa(nodo, c, pendiente, { clientId, ambito, antes, despues }) {
+  const pie = pendiente
+    ? h('p', { class: 'note small pendiente' }, h('strong', {}, 'Pendiente: '), textoPendiente(pendiente), ' ',
+      h('button', { type: 'button', class: 'sm link', onclick: async (ev) => {
+        const ok = await busy(ev.currentTarget, async () => { if (antes) await antes(); return marcarPaso(clientId, ambito, `campo:${c.clave}`, { estado: null }); });
+        if (ok) despues();
+      } }, 'Ya está definido'))
+    : h('button', { type: 'button', class: 'sm link pausa', onclick: () => pausaDialog(clientId, ambito, `campo:${c.clave}`, c.titulo, { antes, despues }) },
+      'Lo definimos después');
+  return h('div', { class: `campo-asistente${pendiente ? ' con-pendiente' : ''}` }, nodo, pie);
+}
+
+// La barra de un paso: estado, lo que espera, y las acciones de pausa.
+function cabeceraPaso({ etapa, n, total, titulo, estado, guia, falta, espera, acciones }) {
+  return h('section', { class: 'card paso-cab' },
+    h('div', { class: 'small muted' }, `${etapa} · paso ${n} de ${total}`),
+    h('div', { class: 'row spread' }, h('h2', { class: 'first m0' }, titulo), pasoBadge(estado)),
+    guia ? h('p', { class: 'guia' }, guia) : null,
+    falta && estado !== 'listo' && estado !== 'no_aplica' ? h('p', { class: 'small falta' }, falta) : null,
+    espera ? h('p', { class: 'note' }, h('strong', {}, 'Espera una definición: '), textoPendiente(espera)) : null,
+    acciones?.length ? h('div', { class: 'row' }, acciones) : null);
+}
+
+function pieNavegacion(anterior, siguiente, extra = []) {
+  return h('div', { class: 'row spread asistente-pie' },
+    anterior ? h('a', { class: 'btn', href: anterior }, '← Anterior') : h('span'),
+    h('div', { class: 'row' }, extra, siguiente ? h('a', { class: 'btn primary', href: siguiente.href }, siguiente.label ?? 'Siguiente →') : null));
+}
+
+// ----- el alta de un cliente
+
+// Lo que se habla con el cliente en cada paso.
+const GUIA_ALTA = {
+  sdr: 'Antes de cargar nada: si lo opera Biguá o el cliente, quién aprueba los mensajes y cuántos mails se calibran.',
+  usuario: 'Quién del cliente entra al panel. Recibe un enlace de un solo uso para elegir su contraseña.',
+  empresa: 'Cómo se presenta la empresa y qué hace en general (lo de cada campaña va en su asistente). El tono, el idioma y la firma de los buzones que no tengan una propia.',
+  casos: 'Los resultados que se pueden citar, con su fuente, y las objeciones de siempre con su respuesta. Los bots no citan nada que no esté acá.',
+  interesados: 'A quién se le pasa un interesado: su nombre y su casilla del dominio principal, que va en copia en la respuesta (docs/26), y el link de agenda.',
+  exclusiones: 'Los tipos de empresa y los cargos a evitar en todas las campañas, si se escribe a mails deducidos, y las empresas o personas puntuales a las que no se les escribe nunca.',
+  buzones: 'Las casillas de los dominios secundarios, cada una a nombre de una persona real del equipo del cliente, con su firma. Se prueban acá mismo.',
+  dominios: 'SPF, DKIM y DMARC de cada dominio de envío: deciden si los mails llegan a la bandeja. Si algo está mal, la ayuda dice qué registro cargar.',
+  linkedin: 'Si se suma LinkedIn: la API key de Dripify del cliente, la prueba de conexión y la URL del webhook para su campaña.',
+  whatsapp: 'Sólo para seguir conversaciones con quien ya respondió: número, horario y tope del día.',
+  crm: 'Si los positivos entran solos a HubSpot: el token de la app privada, la propiedad de origen y la vista previa.',
+  asci: 'El usuario de ASCI con el que el prospector busca cuentas y decisores.',
+  token: 'El token con el que la cuenta de Grok del cliente llega al gateway.',
+  grok: 'La cuenta de Grok Bot del cliente: los bots, los conectores y la revisión automática.',
+  routines: 'Las routines de los tres bots, creadas por el orquestador.',
+  despertadores: 'La URL y la clave del webhook de cada routine con despertador, copiadas desde la app de Grok.',
+};
+// Lo que se hace fuera del panel, para tildar.
+const LISTA_ALTA = {
+  asci: [
+    'Desde un cliente MCP conectado a ASCI como administrador, crear_usuario con un email propio del bot (no de una persona), nombre «Bot <Cliente>», rol operador y 365 días.',
+    'La clave se muestra una sola vez: va directo al conector de ASCI en Grok, nunca por chat ni mail.',
+  ],
+  grok: [
+    'Tres bots con estos nombres exactos: orquestador, prospector y seguimiento.',
+    'Conector SDRBOT (https://sdrbot.bigua.lat/mcp, cabecera Authorization: Bearer con el token del paso anterior) en los tres; ASCI (https://mcp.bigua.lat/mcp) en el prospector.',
+    'Revisión automática: Allow para todo SDRBOT salvo registro_aprobar, que va en Ask first, y las herramientas de ASCI que usa el prospector (docs/15 §8).',
+    'Privacy Mode prendido en la cuenta y notificaciones prendidas en el orquestador.',
+  ],
+  routines: [
+    'En el chat del orquestador: «Hacé el alta: pedí tus reglas con reglas_manual (bot orquestador, tarea alta) y seguilas».',
+    'Tienen que quedar siete routines habilitadas, en la zona horaria del cliente (docs/15 §9). Si un bot no contesta, escribile directo.',
+  ],
+};
+// Los pasos que un cliente puede no usar.
+const PUEDE_NO_APLICAR = new Set(['usuario', 'casos', 'exclusiones', 'linkedin', 'whatsapp', 'crm']);
+
+function navAlta(alta, base, actual) {
+  const nav = h('nav', { class: 'sidenav pasos', 'aria-label': 'Pasos del alta' },
+    h('a', { href: `${base}/alta`, class: actual ? '' : 'on' }, 'Resumen del alta'));
+  let etapa = null;
+  for (const p of alta.pasos) {
+    if (p.etapa !== etapa) { etapa = p.etapa; nav.append(h('div', { class: 'etapa' }, etapa)); }
+    nav.append(h('a', { href: `${base}/alta/${p.clave}`, class: p.clave === actual ? 'on' : '' }, pasoIcono(p.estado), p.titulo));
+  }
+  return nav;
+}
+
+function progreso(listos, total, esperando) {
+  // El ancho va por el CSSOM: la política del panel no deja estilos en línea.
+  const barra = h('span');
+  barra.style.width = `${Math.round((listos / Math.max(total, 1)) * 100)}%`;
+  return h('div', { class: 'progreso-wrap' },
+    h('div', { class: 'progreso', role: 'progressbar', 'aria-valuenow': listos, 'aria-valuemin': 0, 'aria-valuemax': total }, barra),
+    h('div', { class: 'small muted' }, `${listos} de ${total} pasos listos`, esperando ? ` · ${plural(esperando, 'espera', 'esperan')} una definición` : ''));
+}
+
+async function altaView(v, sub) {
+  const { clientId, base } = v;
+  const [alta, sdr] = await Promise.all([
+    api('GET', `/clients/${enc(clientId)}/asistente/alta`), api('GET', `/clients/${enc(clientId)}/sdr`)]);
+  const i = alta.pasos.findIndex((p) => p.clave === sub);
+  const contenido = i < 0 ? await altaResumen(v, alta, sdr) : await altaPaso(v, alta, sdr, i);
+  return h('div', { class: 'side asistente' }, navAlta(alta, base, i < 0 ? null : sub), h('div', { class: 'stack' }, contenido));
+}
+
+async function altaResumen({ clientId, base }, alta, sdr) {
+  const esperan = alta.pasos.filter((p) => p.estado === 'esperando');
+  const porHacer = alta.pasos.filter((p) => p.estado === 'por_hacer');
+  const seguir = esperan[0] ?? porHacer[0];
+  const item = (p, texto) => h('li', {}, pasoIcono(p.estado), h('span', { class: 'aviso-texto' }, h('strong', {}, p.titulo), texto ? ` · ${texto}` : ''),
+    h('a', { href: `${base}/alta/${p.clave}` }, 'Ir'));
+  const pendientes = esperan.flatMap((p) => [
+    ...(p.que ? [item(p, textoPendiente(p))] : []),
+    ...p.campos_pendientes.map((x) => item(p, `${x.titulo}: ${textoPendiente(x)}`)),
+  ]);
+  let campana = null;
+  if (!seguir && sdr.activo) {
+    const { campanas } = await api('GET', `/clients/${enc(clientId)}/sdr/campanas`);
+    campana = campanas.find((k) => k.estado === 'borrador') ?? null;
+  }
+  return [
+    h('section', { class: 'card' },
+      h('h2', { class: 'first' }, 'Alta del cliente'),
+      h('p', { class: 'muted small' }, 'Se completa con el cliente en la llamada de inicio. Cada paso guarda donde corresponde (Empresa, Canales, Administración): ',
+        'lo que no se pueda definir en el momento queda pendiente, y se retoma desde acá.'),
+      progreso(alta.listos, alta.total, alta.esperando),
+      h('div', { class: 'row' }, seguir
+        ? h('a', { class: 'btn primary', href: `${base}/alta/${seguir.clave}` }, alta.listos ? `Seguir: ${seguir.titulo}` : 'Empezar')
+        : h('span', { class: 'badge b-ok' }, 'Alta completa'),
+      !seguir && campana ? h('a', { class: 'btn primary', href: `${base}/campanas/${campana.id}/asistente` }, `Armar la campaña «${campana.nombre}»`) : null,
+      !seguir && !campana ? h('a', { class: 'btn', href: `${base}/campanas` }, 'Ir a Campañas') : null)),
+    h('section', { class: 'card' },
+      h('h2', { class: 'first' }, 'Esperan una definición'),
+      pendientes.length ? h('ul', { class: 'avisos' }, pendientes) : h('p', { class: 'muted small' }, 'Nada pendiente de definir.')),
+    porHacer.length ? h('section', { class: 'card' },
+      h('h2', { class: 'first' }, 'Por hacer'),
+      h('ul', { class: 'avisos' }, porHacer.map((p) => item(p, p.falta)))) : null,
+  ];
+}
+
+async function altaPaso(v, alta, sdr, i) {
+  const { clientId, base, reload } = v;
+  const p = alta.pasos[i];
+  const ir = (k) => `${base}/alta/${k}`;
+  const siguiente = i + 1 < alta.pasos.length ? { href: ir(alta.pasos[i + 1].clave) } : { href: `${base}/alta`, label: 'Terminar →' };
+  const accion = (label, body, cls = '') => h('button', { class: `sm ${cls}`, onclick: async (ev) => {
+    const ok = await busy(ev.currentTarget, () => marcarPaso(clientId, 'alta', p.clave, body));
+    if (ok) reload();
+  } }, label);
+  const acciones = [];
+  if (p.estado === 'esperando' && p.que) acciones.push(accion('Ya está definido', { estado: null }));
+  if (p.estado !== 'esperando' && p.estado !== 'no_aplica') {
+    acciones.push(h('button', { class: 'sm', onclick: () => pausaDialog(clientId, 'alta', p.clave, p.titulo, { despues: reload }) }, 'Lo definimos después'));
+  }
+  if (PUEDE_NO_APLICAR.has(p.clave)) acciones.push(p.estado === 'no_aplica' ? accion('Vuelve a aplicar', { estado: null }) : accion('No aplica', { estado: 'no_aplica' }));
+  const total = alta.pasos.length;
+  const cab = cabeceraPaso({ etapa: p.etapa, n: i + 1, total, titulo: p.titulo, estado: p.estado, guia: GUIA_ALTA[p.clave],
+    falta: p.falta, espera: p.que ? p : null, acciones });
+  const extra = [];
+  if (p.manual && !p.campos.length) {
+    extra.push(p.estado === 'listo' ? accion('Desmarcar', { estado: null }) : accion('Marcar hecho', { estado: 'listo' }, 'primary'));
+  }
+  return [cab, await contenidoAlta(v, alta, sdr, p, siguiente), pieNavegacion(i ? ir(alta.pasos[i - 1].clave) : `${base}/alta`, siguiente, extra)];
+}
+
+const faltaSdr = (base) => h('div', { class: 'card empty' }, h('p', {}, 'Primero hay que activar el SDR.'),
+  h('a', { class: 'btn primary', href: `${base}/alta/sdr` }, 'Ir a «Activar el SDR»'));
+
+async function contenidoAlta(v, alta, sdr, p, siguiente) {
+  const { clientId, data, base, reload } = v;
+  if (p.campos.length) {
+    if (!sdr.activo) return faltaSdr(base);
+    const form = camposAlta(v, alta, sdr, p, siguiente);
+    return p.clave === 'exclusiones' ? h('div', { class: 'stack' }, form, await noContactarCard(clientId)) : form;
+  }
+  if (LISTA_ALTA[p.clave]) {
+    return h('section', { class: 'card' }, h('ol', { class: 'lista-alta' }, LISTA_ALTA[p.clave].map((x) => h('li', {}, x))),
+      h('p', { class: 'small muted' }, 'Se hace fuera del panel. Cuando esté, «Marcar hecho».'));
+  }
+  switch (p.clave) {
+    case 'sdr': return sdrTecnico(clientId, sdr, reload);
+    case 'usuario': return h('section', { class: 'card' }, usersView(data, reload));
+    case 'buzones': return h('section', { class: 'card' }, mailboxesView(data, reload));
+    case 'dominios': return h('section', { class: 'card' }, await domainsView(clientId, reload));
+    case 'token':
+      return h('section', { class: 'card' }, h('p', { class: 'small' }, 'Nombre «GrokBot <Cliente>», permisos read, draft, send y sdr (sin manage), 120 días. ',
+        'Se pega directo en el conector de Grok del paso «Cuenta de Grok Bot».'), tokensView(data, reload));
+    case 'linkedin': return sdr.activo ? dripifyCard(clientId, sdr, reload) : faltaSdr(base);
+    case 'whatsapp': {
+      if (!sdr.activo) return faltaSdr(base);
+      const r = await api('GET', `/clients/${enc(clientId)}/resumen`);
+      return whatsappCard(clientId, sdr, r.whatsapp, reload);
+    }
+    case 'crm': return sdr.activo ? crmView(clientId, true, reload) : faltaSdr(base);
+    case 'despertadores': {
+      if (!sdr.activo) return faltaSdr(base);
+      const activos = sdr.tecnico.bots_activos;
+      return h('div', { class: 'stack' },
+        activos.includes('orquestador') ? despertadorCard(clientId, sdr, reload, 'orquestador') : null,
+        activos.includes('seguimiento') ? despertadorCard(clientId, sdr, reload, 'seguimiento') : null);
+    }
+    default: return h('div');
+  }
+}
+
+// Los ajustes de Empresa de un paso, cada uno con su «lo definimos después».
+function camposAlta(v, alta, sdr, p, siguiente) {
+  const { clientId, reload } = v;
+  const campos = sdr.campos.filter((c) => p.campos.includes(c.clave));
+  const pend = new Map(alta.campos_pendientes.map((x) => [x.clave, x]));
+  const err = h('p', { class: 'err', role: 'alert' });
+  const form = h('form', { class: 'card stack' });
+  const guardar = async () => {
+    const r = await api('PUT', `/clients/${enc(clientId)}/sdr/ajustes`, { ajustes: leerCampos(form, campos), nota: `Alta: ${p.titulo}` });
+    return r;
+  };
+  const ctx = { clientId, ambito: 'alta', antes: guardar, despues: reload };
+  form.append(...campos.map((c) => campoConPausa(field(conCandado(c), campoInput(c, sdr.ajustes[c.clave]), c.ayuda), c, pend.get(c.clave), ctx)));
+  const btnGuardar = h('button', { type: 'submit', value: 'guardar' }, 'Guardar');
+  const btnSeguir = h('button', { type: 'submit', value: 'seguir', class: 'primary' }, 'Guardar y seguir');
+  form.append(err, h('div', { class: 'row' }, btnSeguir, btnGuardar));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const seguir = ev.submitter?.value === 'seguir';
+    const r = await busy(seguir ? btnSeguir : btnGuardar, async () => {
+      const x = await guardar();
+      // Un paso sin campos obligatorios (casos, exclusiones) queda listo al guardarlo, salvo que
+      // espere una definición.
+      if (p.manual && !p.que) await marcarPaso(clientId, 'alta', p.clave, { estado: 'listo' });
+      return x;
+    }, err);
+    if (!r) return;
+    toast(r.cambios.length ? 'Guardado.' : 'No había cambios.');
+    if (seguir) location.hash = siguiente.href; else reload();
+  });
+  return form;
+}
+
+// ----- el armado de una campaña
+
+const PASOS_CAMPANA = [
+  { clave: 'objetivo', titulo: 'Objetivo', bloques: ['objetivo'],
+    guia: 'Qué se busca con esta campaña: prospectar por una señal, invitar a un evento o reactivar contactos viejos. El nombre y, si tiene, las fechas.' },
+  { clave: 'audiencia', titulo: 'Para quién', bloques: ['audiencia'],
+    guia: 'A quién se le escribe: país, industrias, tamaño, los cargos y la señal que dispara el primer contacto. Lo que se evita, además de lo de Empresa.' },
+  // Las cuentas que vienen de un archivo (docs/27): en una «Lista del cliente», las que se prospectan
+  // (obligatorio); en las demás, las cuentas modelo del ICP (opcional).
+  { clave: 'cuentas', titulo: 'Cuentas', bloques: ['lista'], archivo: true,
+    guia: 'Las empresas que el cliente ya tiene identificadas, desde un Excel o un CSV.' },
+  { clave: 'propuesta', titulo: 'Qué ofrecemos', bloques: ['propuesta'],
+    guia: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora, y qué casos de Empresa se pueden citar.' },
+  { clave: 'mensajes', titulo: 'Mensaje y llamado a la acción', bloques: ['mensajes'],
+    guia: 'Qué se le pide al prospecto al final del primer mail, qué links pueden ir y si el tono o el idioma cambian para esta campaña.' },
+  { clave: 'respuestas', titulo: 'Respuestas e interesados', bloques: ['respuestas'],
+    guia: 'Qué cuenta como positivo en esta campaña, sus objeciones propias y, si no es el de Empresa, quién toma a los interesados.' },
+  { clave: 'canales', titulo: 'Canales y ritmo', bloques: ['ritmo', 'avanzado'],
+    guia: 'Por qué buzones sale, cuántas cuentas nuevas por día y la campaña de Dripify si va también por LinkedIn.' },
+];
+
+function navCampana(pasos, base, actual, revisar) {
+  return h('nav', { class: 'sidenav pasos', 'aria-label': 'Pasos de la campaña' },
+    pasos.map((p) => h('a', { href: `${base}/${p.clave}`, class: p.clave === actual ? 'on' : '' }, pasoIcono(p.estado), p.titulo)),
+    h('a', { href: `${base}/revisar`, class: actual === 'revisar' ? 'on' : '' }, pasoIcono(revisar), 'Revisar y activar'));
+}
+
+async function campanaAsistenteView(v, id, pasoPedido) {
+  let sub = pasoPedido;
+  const { clientId, bigua, base, reload } = v;
+  const path = `/clients/${enc(clientId)}/sdr/campanas/${enc(id)}`;
+  const ambito = `campana:${id}`;
+  const [d, asis] = await Promise.all([api('GET', path), api('GET', `/clients/${enc(clientId)}/asistente/${enc(ambito)}`)]);
+  const k = d.campana;
+  const baseA = `${base}/campanas/${id}/asistente`;
+  const filas = new Map(asis.pasos.map((r) => [r.paso, r]));
+  const camposDe = (p) => d.campos.filter((c) => p.bloques.includes(c.bloque));
+  const columnasDe = (p) => d.columnas.filter((c) => p.bloques.includes(c.bloque) && c.clave !== 'estado');
+  const esLista = k.tipo === 'lista';
+  const pasos = PASOS_CAMPANA.map((p) => (p.clave !== 'cuentas' ? p : {
+    ...p, titulo: esLista ? 'Lista de cuentas' : 'Cuentas modelo (opcional)',
+    guia: esLista
+      ? 'Las empresas que esta campaña prospecta, en el orden del archivo, con la persona de cada fila si la trae. Sin la lista no se activa.'
+      : 'Si el cliente tiene clientes o empresas ideales para tomar de modelo, se cargan acá como semillas del ICP: el SDR no les escribe.',
+  })).map((p) => {
+    const pendientes = camposDe(p).filter((c) => filas.get(`campo:${c.clave}`)).map((c) => ({ ...filas.get(`campo:${c.clave}`), clave: c.clave, titulo: c.titulo }));
+    const faltan = d.faltantes.filter((f) => p.bloques.includes(f.bloque));
+    const fila = filas.get(p.clave);
+    const estado = fila?.estado === 'esperando' || pendientes.length ? 'esperando' : faltan.length ? 'por_hacer' : fila?.estado === 'listo' ? 'listo' : 'por_hacer';
+    return { ...p, estado, faltan, pendientes, espera: fila?.estado === 'esperando' ? fila : null };
+  });
+  const listos = pasos.filter((p) => p.estado === 'listo').length;
+  const revisar = d.faltantes.length ? 'por_hacer' : k.estado === 'activa' ? 'listo' : 'por_hacer';
+  if (!sub) sub = pasos.find((p) => p.estado !== 'listo')?.clave ?? 'revisar';
+  const i = pasos.findIndex((p) => p.clave === sub);
+  const cabecera = h('div', { class: 'stack' },
+    h('a', { href: `${base}/campanas/${id}`, class: 'small' }, '← Ver la campaña entera'),
+    h('div', { class: 'row spread' }, h('h2', { class: 'first m0' }, k.nombre, ' ', estadoBadge(k.estado)),
+      progreso(listos, pasos.length, pasos.filter((p) => p.estado === 'esperando').length)));
+  let cuerpo;
+  if (sub === 'revisar' || i < 0) cuerpo = campanaRevisar(v, d, pasos, baseA, path);
+  else cuerpo = await campanaPaso(v, d, pasos, i, { baseA, path, ambito, camposDe, columnasDe });
+  return h('div', { class: 'stack' }, cabecera,
+    h('div', { class: 'side asistente' }, navCampana(pasos, baseA, i < 0 ? 'revisar' : sub, revisar), h('div', { class: 'stack' }, cuerpo)));
+}
+
+async function campanaPaso(v, d, pasos, i, { baseA, path, ambito, camposDe, columnasDe }) {
+  const { clientId, reload } = v;
+  const p = pasos[i];
+  const k = d.campana;
+  const siguiente = { href: `${baseA}/${pasos[i + 1]?.clave ?? 'revisar'}` };
+  if (p.archivo) return campanaPasoArchivo(v, d, pasos, i, { baseA, path, ambito, siguiente });
+  const cols = columnasDe(p);
+  // «Acepta los mails del archivo» es sólo de una «Lista del cliente».
+  const campos = camposDe(p).filter((c) => c.clave !== 'acepta_mails_del_cliente' || k.tipo === 'lista');
+  const err = h('p', { class: 'err', role: 'alert' });
+  const form = h('form', { class: 'card stack' });
+  const guardar = () => api('PUT', path, { ...leerColumnas(form, cols), ajustes: leerCampana(form, campos), nota: `Asistente: ${p.titulo}` });
+  const pend = new Map(p.pendientes.map((x) => [x.clave, x]));
+  const ctx = { clientId, ambito, antes: guardar, despues: reload };
+  form.append(
+    ...cols.map((c) => field(conCandado(c), columnaInput(c, k, d), c.clave === 'cuentas_por_dia' && d.tope_cuentas_dia !== null
+      ? `Las demás activas suman ${d.otras_activas}; el tope del cliente es ${d.tope_cuentas_dia}.` : null)),
+    ...campos.map((c) => campoConPausa(campoCampana(c, k.ajustes[c.clave], d), c, pend.get(c.clave), ctx)));
+  if (p.clave === 'canales') {
+    form.append(h('p', { class: 'small muted' }, 'Los buzones se cargan y se prueban en Canales; acá se elige cuáles usa esta campaña.'));
+  }
+  const terminada = k.estado === 'terminada';
+  const btnSeguir = h('button', { type: 'submit', value: 'seguir', class: 'primary' }, 'Guardar y seguir');
+  const btnGuardar = h('button', { type: 'submit', value: 'guardar' }, 'Guardar');
+  if (!terminada) form.append(err, h('div', { class: 'row' }, btnSeguir, btnGuardar));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const seguir = ev.submitter?.value === 'seguir';
+    const r = await busy(seguir ? btnSeguir : btnGuardar, async () => {
+      const x = await guardar();
+      // El paso queda listo cuando no le falta nada; si espera una definición, sigue esperando.
+      if (!p.espera) await marcarPaso(clientId, ambito, p.clave, { estado: 'listo' });
+      return x;
+    }, err);
+    if (!r) return;
+    toast(r.cambios.length ? 'Guardado.' : 'No había cambios.');
+    if (seguir) location.hash = siguiente.href; else reload();
+  });
+  const acciones = [];
+  if (p.espera) {
+    acciones.push(h('button', { class: 'sm', onclick: async (ev) => {
+      if (await busy(ev.currentTarget, () => marcarPaso(clientId, ambito, p.clave, { estado: null }))) reload();
+    } }, 'Ya está definido'));
+  } else if (!terminada) {
+    acciones.push(h('button', { class: 'sm', onclick: () => pausaDialog(clientId, ambito, p.clave, p.titulo, { antes: guardar, despues: reload }) }, 'Lo definimos después'));
+  }
+  const cab = cabeceraPaso({ etapa: 'Campaña', n: i + 1, total: pasos.length + 1, titulo: p.titulo, estado: p.estado, guia: p.guia,
+    falta: p.faltan.map((f) => f.mensaje).join(' ') || null, espera: p.espera, acciones });
+  return [cab, form, pieNavegacion(i ? `${baseA}/${pasos[i - 1].clave}` : null, siguiente)];
+}
+
+// El paso de las cuentas: la misma tarjeta de carga de la campaña (docs/27), y «Listo» a mano porque
+// no hay un formulario que guardar. En una lista, queda por hacer mientras no haya cuentas cargadas.
+async function campanaPasoArchivo(v, d, pasos, i, { baseA, path, ambito, siguiente }) {
+  const { clientId, reload } = v;
+  const p = pasos[i];
+  const k = d.campana;
+  const terminada = k.estado === 'terminada';
+  const acciones = [];
+  if (p.espera) {
+    acciones.push(h('button', { class: 'sm', onclick: async (ev) => {
+      if (await busy(ev.currentTarget, () => marcarPaso(clientId, ambito, p.clave, { estado: null }))) reload();
+    } }, 'Ya está definido'));
+  } else if (!terminada) {
+    acciones.push(h('button', { class: 'sm', onclick: () => pausaDialog(clientId, ambito, p.clave, p.titulo, { despues: reload }) }, 'Lo definimos después'));
+  }
+  const cab = cabeceraPaso({ etapa: 'Campaña', n: i + 1, total: pasos.length + 1, titulo: p.titulo, estado: p.estado, guia: p.guia,
+    falta: p.faltan.map((f) => f.mensaje.replace(' (Subir Excel o CSV, abajo)', '')).join(' ') || null, espera: p.espera, acciones });
+  const listo = terminada ? [] : [h('button', { class: 'primary', onclick: async (ev) => {
+    const ok = await busy(ev.currentTarget, async () => (p.espera ? true : marcarPaso(clientId, ambito, p.clave, { estado: 'listo' })));
+    if (ok) location.hash = siguiente.href;
+  } }, 'Listo, seguir →')];
+  return [cab, await semillasCard({ clientId, path, k, terminada }), pieNavegacion(i ? `${baseA}/${pasos[i - 1].clave}` : null, null, listo)];
+}
+
+function campanaRevisar(v, d, pasos, baseA, path) {
+  const { base, reload } = v;
+  const k = d.campana;
+  const pasoDe = (bloque) => pasos.find((p) => p.bloques.includes(bloque));
+  const errEstado = h('p', { class: 'err', role: 'alert' });
+  const puedeEstado = d.columnas.find((c) => c.clave === 'estado')?.editable;
+  const pendientes = pasos.flatMap((p) => [
+    ...(p.espera ? [{ p, texto: textoPendiente(p.espera) }] : []),
+    ...p.pendientes.map((x) => ({ p, texto: `${x.titulo}: ${textoPendiente(x)}` }))]);
+  const faltan = d.faltantes.length ? h('ul', { class: 'avisos' }, d.faltantes.map((f) => {
+    const p = pasoDe(f.bloque);
+    return h('li', {}, h('span', { class: 'dot d-warn', 'aria-hidden': 'true' }), h('span', { class: 'aviso-texto' }, f.mensaje),
+      f.bloque === 'empresa' ? h('a', { href: `${base}/empresa` }, 'Ir a Empresa') : p ? h('a', { href: `${baseA}/${p.clave}` }, 'Ir') : null);
+  })) : h('p', { class: 'small' }, 'No le falta nada para activarla.');
+  const activar = puedeEstado && ['borrador', 'pausada'].includes(k.estado)
+    ? h('button', { class: 'primary', disabled: d.faltantes.length > 0, onclick: async (ev) => {
+      const r = await busy(ev.currentTarget, () => api('PUT', path, { estado: 'activa' }), errEstado);
+      if (r) { toast('Campaña activada.'); reload(); }
+    } }, 'Activar la campaña') : null;
+  return [
+    cabeceraPaso({ etapa: 'Campaña', n: pasos.length + 1, total: pasos.length + 1, titulo: 'Revisar y activar',
+      estado: d.faltantes.length ? 'por_hacer' : k.estado === 'activa' ? 'listo' : 'por_hacer',
+      guia: 'Cómo la van a leer los bots, lo que falta para activarla y lo que quedó pendiente de definir.' }),
+    h('section', { class: 'card' }, h('h2', { class: 'first' }, 'Para activarla'), faltan,
+      pendientes.length ? h('div', {}, h('h3', {}, 'Esperan una definición'),
+        h('ul', { class: 'avisos' }, pendientes.map((x) => h('li', {}, pasoIcono('esperando'),
+          h('span', { class: 'aviso-texto' }, h('strong', {}, x.p.titulo), ` · ${x.texto}`), h('a', { href: `${baseA}/${x.p.clave}` }, 'Ir'))))) : null,
+      errEstado,
+      h('div', { class: 'row' }, activar,
+        k.estado === 'activa' ? h('span', { class: 'badge b-ok' }, 'Activa') : null,
+        !puedeEstado && k.estado !== 'activa' ? h('span', { class: 'small muted' }, 'La activa Biguá.') : null)),
+    h('section', { class: 'card' },
+      h('h2', { class: 'first' }, 'Así la van a leer los bots'),
+      h('dl', { class: 'efectivos' }, Object.entries(d.efectivos.valores).map(([clave, val]) => [
+        h('dt', {}, d.efectivos.titulos?.[clave] ?? clave, ' ', h('span', { class: 'small muted' }, `(${ORIGEN[d.efectivos.origen[clave]] ?? ''})`)),
+        h('dd', {}, valorTexto(val))]))),
+    pieNavegacion(`${baseA}/${pasos.at(-1).clave}`, null),
+  ];
+}
+
 // ---------------------------------------------------------------- navegación
 
 async function route() {
@@ -2114,7 +2574,7 @@ async function route() {
   for (const a of document.querySelectorAll('nav a')) a.classList.toggle('on', a.dataset.nav === (parts[0] === 'equipo' ? 'equipo' : 'clientes'));
   main.replaceChildren(h('p', { class: 'muted' }, 'Cargando…'));
   try {
-    if (parts[0] === 'c' && parts[1]) await renderClient(parts[1], parts[2], parts[3]);
+    if (parts[0] === 'c' && parts[1]) await renderClient(parts[1], parts[2], parts[3], parts.slice(4));
     else if (parts[0] === 'equipo' && me.role === 'bigua_admin') await renderTeam();
     else await renderClients();
   } catch (e) {

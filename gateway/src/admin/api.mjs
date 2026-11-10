@@ -130,6 +130,8 @@ route('GET', '/clients/:client/resumen', S.resumenVer);
 route('GET', '/clients/:client/domains', S.dominiosVer);
 route('POST', '/clients/:client/domains/check', S.dominiosVerificar);
 route('PUT', '/clients/:client/domains/:domain/selectors', S.dominioSelectores);
+route('GET', '/clients/:client/asistente/:ambito', S.asistenteVer);
+route('PUT', '/clients/:client/asistente/:ambito/:paso', S.asistentePasoGuardar);
 
 // ---------------------------------------------------------------- despacho
 

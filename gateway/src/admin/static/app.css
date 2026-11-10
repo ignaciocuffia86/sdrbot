@@ -51,12 +51,13 @@ legend { font-weight: 600; padding: 0 6px; }
 .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 button, .btn { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 7px 14px;
   border-radius: 6px; font: inherit; cursor: pointer; text-decoration: none; display: inline-block; }
-button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:hover, .btn:hover { border-color: var(--accent); }
+button.primary, .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 button.danger { color: var(--danger); }
 button.link { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }
 button.sm { padding: 3px 10px; font-size: .85rem; }
+button.link.sm { padding: 0; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
   border-radius: var(--radius); overflow: hidden; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -230,6 +231,35 @@ td.num { font-variant-numeric: tabular-nums; }
 .m0 { margin: 0; }
 
 pre.mensaje { white-space: pre-wrap; font: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+
+/* ---- asistentes (docs/29) */
+.asistente { grid-template-columns: 240px minmax(0, 1fr); }
+.pasos a { display: flex; gap: 8px; align-items: center; padding: 6px 10px; }
+.pasos .etapa { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 10px 2px; }
+.paso-ico { width: 18px; height: 18px; flex: none; border-radius: 50%; display: inline-grid; place-items: center;
+  font-size: .7rem; font-weight: 700; border: 1.5px solid var(--line); color: var(--muted); }
+.paso-ico.p-listo { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+.paso-ico.p-esperando { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+.paso-ico.p-no_aplica { background: var(--muted-bg); }
+.avisos .paso-ico { transform: none; }
+.paso-cab { display: flex; flex-direction: column; gap: 8px; }
+.paso-cab .guia { margin: 0; }
+.paso-cab .falta { margin: 0; color: var(--warn); }
+.paso-cab .note { margin: 0; }
+.m0 { margin: 0; }
+.progreso-wrap { display: flex; flex-direction: column; gap: 4px; min-width: 220px; }
+.progreso { height: 8px; border-radius: 999px; background: var(--muted-bg); overflow: hidden; }
+.progreso span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.campo-asistente { display: flex; flex-direction: column; gap: 4px; }
+.campo-asistente .pausa { align-self: flex-start; }
+.campo-asistente .pendiente { margin: 0; }
+.asistente-pie { padding: 4px 0; }
+.lista-alta { margin: 0 0 8px; padding-left: 20px; display: grid; gap: 8px; }
+@media (max-width: 720px) {
+  .asistente { grid-template-columns: 1fr; }
+  /* En el teléfono, sólo el resumen y el paso actual: se avanza con Anterior y Siguiente. */
+  .asistente .pasos .etapa, .asistente .pasos a:not(.on):not(:first-child) { display: none; }
+}
 
 /* carga de un archivo (docs/27) */
 dialog.ancho { width: min(1000px, 96vw); }

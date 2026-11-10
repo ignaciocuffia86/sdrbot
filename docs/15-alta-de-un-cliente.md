@@ -14,6 +14,9 @@ Los tres documentos del alta:
 
 Este documento reemplaza a `13` §2 y, para el SDR v2, al runbook de `03` §3.
 
+> **En el panel:** el alta se recorre con la pestaña **Alta** del cliente, que sigue este orden,
+> guarda cada paso donde corresponde y deja pausar lo que no se defina en la llamada (`29`).
+
 ## Resumen del orden
 
 ```
