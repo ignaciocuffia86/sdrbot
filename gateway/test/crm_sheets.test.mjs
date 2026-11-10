@@ -207,12 +207,14 @@ test('la URL, las columnas y las celdas', () => {
   assert.equal(sheets.celda('x'.repeat(6000)).length, 5000);
 });
 
-test('conectar con la URL: sin compartir, probar lo dice y pausa; compartida, arma los encabezados', async () => {
+test('conectar con la URL: sin compartir lo dice; compartida pero sin verificar no lee ni escribe; verificada, arma los encabezados', async () => {
   await assert.rejects(crm.configurar(C, { proveedor: 'sheets', planilla_url: 'https://docs.google.com/document/d/abc' }), /no es de una planilla/);
   await assert.rejects(crm.configurar(C, { proveedor: 'sheets' }), /Falta la URL/);
   const v = await crm.configurar(C, { proveedor: 'sheets', planilla_url: URL_PLANILLA });
   assert.equal(v.proveedor, 'sheets');
-  assert.equal(v.conectado, true);
+  assert.equal(v.conectado, false, 'sin verificar no cuenta como conectada');
+  assert.equal(v.planilla_verificada, false);
+  assert.match(v.planilla_codigo, /^sdrbot-[0-9a-f]{10}$/);
   assert.equal(v.token, false);
   assert.equal(v.cuenta_google, SA_EMAIL);
   const [fila] = await sql(`select planilla_id, planilla_gid from sdr.crm_conexion where client_id = $1`, [C]);
@@ -223,16 +225,32 @@ test('conectar con la URL: sin compartir, probar lo dice y pausa; compartida, ar
   assert.match(sin.problemas[0], new RegExp(`no está compartida con ${SA_EMAIL.replace(/\./g, '\\.')} como editor`));
   assert.equal((await sql(`select estado from sdr.crm_conexion where client_id = $1`, [C]))[0].estado, 'credencial_vencida');
 
+  // Compartida con la cuenta de servicio, pero sin la pestaña del código: tener la URL no alcanza.
+  // No escribe nada ni devuelve nada de la planilla (ni el título ni los encabezados).
   g.s.compartida = true;
+  const sinVerificar = await crm.probar(C);
+  assert.equal(sinVerificar.listo, false);
+  assert.equal(sinVerificar.verificada, false);
+  assert.match(sinVerificar.problemas[0], new RegExp(`pestaña llamada «${v.planilla_codigo}»`));
+  assert.equal(sinVerificar.planilla, null);
+  assert.deepEqual(sinVerificar.columnas, []);
+  assert.ok(!JSON.stringify(sinVerificar).includes('Gestión comercial'));
+  assert.deepEqual(g.hoja("Leads 'SDR'").filas, []);
+  assert.ok(g.s.pedidos.every((x) => x.method === 'GET' || x.path === '/token'), 'no escribió nada');
+
+  // El dueño agrega la pestaña con el código: queda verificada.
+  g.s.planilla.hojas.push({ sheetId: 999, title: v.planilla_codigo, filas: [] });
   const pr = await crm.probar(C);
+  assert.equal(pr.verificada, true);
   assert.equal(pr.listo, true, JSON.stringify(pr.problemas));
   assert.equal(pr.planilla, 'Gestión comercial');
   assert.equal(pr.hoja, "Leads 'SDR'", 'la pestaña del gid, no la primera');
   assert.match(pr.avisos[0], /estaba vacía/);
   assert.deepEqual(g.hoja("Leads 'SDR'").filas[0], sheets.COLUMNAS.map((c) => c.titulo));
   assert.deepEqual(g.hoja('Resumen').filas, [['no tocar']]);
-  const [cx] = await sql(`select estado, planilla_hoja from sdr.crm_conexion where client_id = $1`, [C]);
-  assert.deepEqual(cx, { estado: 'activa', planilla_hoja: "Leads 'SDR'" });
+  const [cx] = await sql(`select estado, planilla_hoja, planilla_verificada_at is not null as verificada from sdr.crm_conexion where client_id = $1`, [C]);
+  assert.deepEqual(cx, { estado: 'activa', planilla_hoja: "Leads 'SDR'", verificada: true });
+  assert.equal((await store.asOwner((c) => crm.ver(c, C))).conectado, true);
 });
 
 test('positivo aprobado: agrega una fila en RAW, con lo que parece una fórmula como texto', async () => {
@@ -339,18 +357,29 @@ test('panel: el cliente conecta su planilla, no mezcla datos de HubSpot y el alt
   assert.match(paso.titulo, /planilla/);
 });
 
-test('una planilla conectada a un cliente no se puede conectar a otro', async () => {
+test('otro cliente con la URL: no puede usar una planilla verificada por otro ni bloquearle la suya', async () => {
   const OTRO = 'sheets-otro';
   await store.upsertClient(OTRO, 'Otro cliente');
   await sdr.setConfig(OTRO, { calibracion_mails: 0, bots_activos: ['orquestador'] });
-  // La misma planilla, aunque sea con otra pestaña: no.
+  // La planilla que C ya verificó, aunque sea con otra pestaña: no.
   await assert.rejects(crm.configurar(OTRO, { proveedor: 'sheets', planilla_url: `https://docs.google.com/spreadsheets/d/${ID}/edit#gid=0` }),
     /ya está conectada a otro cliente/);
   // Tampoco saltando el chequeo: lo frena la base.
-  await assert.rejects(sql(`insert into sdr.crm_conexion (client_id, proveedor, planilla_id) values ($1, 'sheets', $2)`, [OTRO, ID]), /crm_conexion_planilla_unica/);
+  await assert.rejects(sql(`insert into sdr.crm_conexion (client_id, proveedor, planilla_id, planilla_verificada_at) values ($1, 'sheets', $2, now())`,
+    [OTRO, ID]), /crm_conexion_planilla_unica/);
   assert.equal((await sql(`select count(*)::int as n from sdr.crm_conexion where client_id = $1`, [OTRO]))[0].n, 0);
-  const propia = await crm.configurar(OTRO, { proveedor: 'sheets', planilla_url: 'https://docs.google.com/spreadsheets/d/9ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210_-zz/edit' });
-  assert.equal(propia.conectado, true);
+
+  // Una planilla ajena que todavía nadie verificó: OTRO puede pegar la URL, pero sin la pestaña con su
+  // código (que sólo puede agregar quien edita la planilla) no se verifica, no se lee y no se carga nada.
+  const AJENA = '9ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210_-zz';
+  const pegada = await crm.configurar(OTRO, { proveedor: 'sheets', planilla_url: `https://docs.google.com/spreadsheets/d/${AJENA}/edit` });
+  assert.equal(pegada.conectado, false);
+  // Y eso no le impide a su dueño conectarla: lo que bloquea es sólo una planilla verificada.
+  const DUENO = 'sheets-dueno';
+  await store.upsertClient(DUENO, 'Dueño de la planilla');
+  await sdr.setConfig(DUENO, { calibracion_mails: 0, bots_activos: ['orquestador'] });
+  const delDueno = await crm.configurar(DUENO, { proveedor: 'sheets', planilla_url: `https://docs.google.com/spreadsheets/d/${AJENA}/edit` });
+  assert.notEqual(delDueno.planilla_codigo, pegada.planilla_codigo, 'cada cliente tiene su código');
 });
 
 test('sin la cuenta de servicio en el gateway: se guarda la URL, pero probar dice qué falta y no escribe', async () => {
@@ -367,4 +396,24 @@ test('sin la cuenta de servicio en el gateway: se guarda la URL, pero probar dic
     process.env.MAILGW_GOOGLE_SA = guardada;
     await crm.configurar(C, { estado: 'activa' });
   }
+});
+
+test('otra planilla: código nuevo, hay que verificar de nuevo y la cola espera sin tocar Google', async () => {
+  const antes = await store.asOwner((c) => crm.ver(c, C));
+  const NUEVA = '5QwErTyUiOpAsDfGhJkLzXcVbNm1234567890_-ab';
+  const v = await crm.configurar(C, { proveedor: 'sheets', planilla_url: `https://docs.google.com/spreadsheets/d/${NUEVA}/edit#gid=0` });
+  assert.equal(v.planilla_verificada, false);
+  assert.equal(v.conectado, false);
+  assert.notEqual(v.planilla_codigo, antes.planilla_codigo);
+  const p = await positivo('cuatro');
+  const n = g.s.pedidos.length;
+  assert.deepEqual(await crm.procesarCola(), []);
+  assert.equal((await carga(p.id)).estado, 'pendiente');
+  assert.equal(g.s.pedidos.length, n, 'no le pidió nada a Google');
+  // Por las dudas, aunque la tomara: no carga.
+  const k = await carga(p.id);
+  const r = await crm.cargarUna(C, Number(k.id));
+  assert.equal(r.estado, 'pendiente');
+  assert.match(r.motivo, /Falta verificar la planilla/);
+  assert.equal(g.s.pedidos.length, n);
 });

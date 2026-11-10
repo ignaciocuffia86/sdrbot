@@ -16,6 +16,7 @@
 // Un cliente sin CRM puede usar una planilla de Google Sheets (docs/23 §14, proveedor 'sheets'):
 // la misma cola, pero cada carga agrega una fila (sdr/sheets.mjs) en lugar de los cuatro pasos.
 
+import crypto from 'node:crypto';
 import { asRole, asOwner } from '../store.mjs';
 import { decryptSecret, encryptSecret } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
@@ -51,7 +52,8 @@ async function verEn(c, clientId) {
   if (!r) return null;
   return {
     proveedor: r.proveedor, conectado: conectada(r), token: Boolean(r.token_enc), portal_id: r.portal_id,
-    planilla_url: r.planilla_url, planilla_hoja: r.planilla_hoja, cuenta_google: sheets.emailCuenta(), origen_campo: r.origen_campo,
+    planilla_url: r.planilla_url, planilla_hoja: r.planilla_hoja, cuenta_google: sheets.emailCuenta(),
+    planilla_codigo: r.planilla_codigo, planilla_verificada: Boolean(r.planilla_verificada_at), origen_campo: r.origen_campo,
     origen_valor: r.origen_valor, dueno_defecto: r.dueno_defecto, campos_fijos: r.campos_fijos, estado: r.estado,
     tope_dia: r.tope_dia, ultimo_ok_at: r.ultimo_ok_at, ultimo_error: r.ultimo_error, actualizado_at: r.actualizado_at,
   };
@@ -60,8 +62,8 @@ async function verEn(c, clientId) {
 // Lo que ve el panel: nunca el token.
 export const ver = (c, clientId) => verEn(c, clientId);
 
-// Si la conexión tiene con qué escribir: el token de HubSpot o la planilla.
-export const conectada = (r) => Boolean(r && (r.proveedor === 'sheets' ? r.planilla_id : r.token_enc));
+// Si la conexión tiene con qué escribir: el token de HubSpot o la planilla, verificada.
+export const conectada = (r) => Boolean(r && (r.proveedor === 'sheets' ? r.planilla_id && r.planilla_verificada_at : r.token_enc));
 
 // Guarda la conexión. Si cambia el origen o el dueño, se validan contra el portal del cliente
 // antes de guardar: un valor que HubSpot no acepta bloquearía cada carga.
@@ -124,13 +126,19 @@ async function configurarPlanilla(clientId, d, actual) {
   const cambia = Boolean(destino) && (destino.id !== actual?.planilla_id || destino.gid !== (actual?.planilla_gid === null || actual?.planilla_gid === undefined ? null : Number(actual.planilla_gid)));
   const reconecta = cambia || actual?.proveedor !== 'sheets';
   const planillaId = destino?.id ?? actual.planilla_id;
+  // Otra planilla (o ninguna verificada antes): código nuevo y hay que volver a verificar.
+  const nuevoCodigo = planillaId !== actual?.planilla_id || !actual?.planilla_codigo
+    ? `sdrbot-${crypto.randomBytes(5).toString('hex')}` : null;
   const otro = await asOwner((c) => c.query(
-    `select 1 from sdr.crm_conexion where planilla_id = $1 and proveedor = 'sheets' and client_id <> $2`, [planillaId, clientId]));
+    `select 1 from sdr.crm_conexion where planilla_id = $1 and proveedor = 'sheets' and planilla_verificada_at is not null
+        and client_id <> $2`, [planillaId, clientId]));
   if (otro.rowCount) throw errorsCrm.invalido(PLANILLA_DE_OTRO);
   await asOwner((c) => c.query(
-    `insert into sdr.crm_conexion (client_id, proveedor, planilla_url, planilla_id, planilla_gid, estado, tope_dia)
-     values ($1, 'sheets', $2, $3, $4, coalesce($5, 'activa'), coalesce($6, 50))
+    `insert into sdr.crm_conexion (client_id, proveedor, planilla_url, planilla_id, planilla_gid, estado, tope_dia, planilla_codigo)
+     values ($1, 'sheets', $2, $3, $4, coalesce($5, 'activa'), coalesce($6, 50), $8)
      on conflict (client_id) do update set proveedor = 'sheets',
+       planilla_codigo = coalesce($8, sdr.crm_conexion.planilla_codigo),
+       planilla_verificada_at = case when $8::text is null then sdr.crm_conexion.planilla_verificada_at end,
        planilla_url = coalesce($2, sdr.crm_conexion.planilla_url), planilla_id = coalesce($3, sdr.crm_conexion.planilla_id),
        planilla_gid = case when $3::text is null then sdr.crm_conexion.planilla_gid else $4 end,
        planilla_hoja = case when $7 then null else sdr.crm_conexion.planilla_hoja end,
@@ -138,7 +146,7 @@ async function configurarPlanilla(clientId, d, actual) {
        ultimo_error = case when $7 then null else sdr.crm_conexion.ultimo_error end,
        tope_dia = coalesce($6, sdr.crm_conexion.tope_dia), actualizado_at = now()`,
     [clientId, destino ? String(d.planilla_url).trim() : null, destino?.id ?? null, destino?.gid ?? null,
-      d.estado ?? null, d.tope_dia ?? null, reconecta]).catch((e) => {
+      d.estado ?? null, d.tope_dia ?? null, reconecta, nuevoCodigo]).catch((e) => {
     // Dos altas a la vez con la misma planilla: lo frena el índice único.
     if (e.code === '23505') throw errorsCrm.invalido(PLANILLA_DE_OTRO);
     throw e;
@@ -270,7 +278,10 @@ async function hojaDe(clientId, cx, sh) {
   const m = await sh.meta();
   const hojas = (m?.sheets ?? []).map((x) => x.properties ?? {});
   const gid = cx.planilla_gid === null || cx.planilla_gid === undefined ? null : Number(cx.planilla_gid);
-  const hoja = gid === null ? hojas[0] : hojas.find((x) => Number(x.sheetId) === gid);
+  const hoja = gid === null ? hojas.find((x) => x.title !== cx.planilla_codigo) : hojas.find((x) => Number(x.sheetId) === gid);
+  if (hoja?.title && hoja.title === cx.planilla_codigo) {
+    throw new hubspot.CrmError('rechazo', 'La URL apunta a la pestaña de verificación: copiala desde la pestaña donde van los positivos.');
+  }
   if (!hoja?.title) {
     throw new hubspot.CrmError('permisos', gid === null ? 'La planilla no tiene pestañas.'
       : `La planilla no tiene una pestaña con gid ${gid}: copiá otra vez la URL desde la pestaña donde van los positivos.`);
@@ -298,8 +309,30 @@ async function probarPlanilla(clientId, cx, { fetchImpl } = {}) {
   const cuenta = sheets.emailCuenta();
   let info = null;
   let m = null;
+  let verificada = Boolean(cx.planilla_verificada_at);
   try {
     const sh = shDe(cx, fetchImpl);
+    if (!verificada) {
+      // Antes de verificar no se escribe ni se muestra nada de la planilla: sólo si está la pestaña.
+      const pestanas = ((await sh.meta())?.sheets ?? []).map((x) => x.properties?.title);
+      if (!cx.planilla_codigo || !pestanas.includes(cx.planilla_codigo)) {
+        return {
+          listo: false, verificada: false, proveedor: 'sheets', cuenta_google: cuenta, avisos: [],
+          problemas: [`Falta verificar que la planilla es tuya: agregale una pestaña llamada «${cx.planilla_codigo}» ` +
+            '(puede quedar vacía) y probá otra vez.'],
+          planilla: null, hoja: null, columnas: [], duenos: [], propiedades: [],
+        };
+      }
+      const marcada = await asClient(clientId, (c) => c.query(
+        `update sdr.crm_conexion set planilla_verificada_at = now()
+          where client_id = $1 and planilla_id = $2 and planilla_codigo = $3`, [clientId, cx.planilla_id, cx.planilla_codigo]))
+        .then((r) => r.rowCount === 1, (e) => { if (e.code === '23505') return false; throw e; });
+      if (!marcada) {
+        return { listo: false, verificada: false, proveedor: 'sheets', cuenta_google: cuenta, avisos: [], problemas: [PLANILLA_DE_OTRO],
+          planilla: null, hoja: null, columnas: [], duenos: [], propiedades: [] };
+      }
+      verificada = true;
+    }
     info = await hojaDe(clientId, cx, sh);
     m = await encabezados(sh, info.hoja);
   } catch (e) {
@@ -315,7 +348,7 @@ async function probarPlanilla(clientId, cx, { fetchImpl } = {}) {
     else if (m.nuevas.length) avisos.push(`Se agregaron al final las columnas que faltaban: ${m.nuevas.join(', ')}.`);
   }
   return {
-    listo: problemas.length === 0, problemas, avisos, proveedor: 'sheets', cuenta_google: cuenta,
+    listo: problemas.length === 0, verificada, problemas, avisos, proveedor: 'sheets', cuenta_google: cuenta,
     planilla: info?.titulo ?? null, hoja: info?.hoja ?? cx.planilla_hoja ?? null, columnas: m?.encabezados ?? [],
     duenos: [], propiedades: [],
   };
@@ -584,7 +617,8 @@ export async function procesarCola({ hasta = Date.now() + 15_000, fetchImpl } = 
         where k.id = (
           select k2.id from sdr.crm_carga k2 join sdr.crm_conexion x on x.client_id = k2.client_id
            where x.estado = 'activa'
-             and ((x.proveedor = 'hubspot' and x.token_enc is not null) or (x.proveedor = 'sheets' and x.planilla_id is not null))
+             and ((x.proveedor = 'hubspot' and x.token_enc is not null)
+               or (x.proveedor = 'sheets' and x.planilla_id is not null and x.planilla_verificada_at is not null))
              and ((k2.estado = 'pendiente' and k2.proximo_intento <= now())
                or (k2.estado = 'en_curso' and k2.tomada_at < now() - make_interval(mins => $1)))
            order by k2.proximo_intento, k2.id limit 1 for update of k2 skip locked)
@@ -624,6 +658,7 @@ export async function cargarUna(clientId, id, { fetchImpl, hasta } = {}) {
   if (cx.hechasDia >= cx.tope_dia) return devolver(clientId, id, 60, `Se llegó al tope de ${cx.tope_dia} cargas por día.`);
   try {
     if (cx.proveedor === 'sheets') {
+      if (!cx.planilla_verificada_at) return devolver(clientId, id, 60, 'Falta verificar la planilla (Canales → CRM → Probar conexión).');
       if (d.p.estado === 'baja') throw new Bloqueo('El prospecto pidió la baja: no se carga.');
       const ids = await cargarEnPlanilla(clientId, id, carga, cx, d, { fetchImpl, hasta });
       await terminar(clientId, id, carga, d, { ref: `${ids.hoja}!${ids.fila}`, proveedor: 'sheets', ids });

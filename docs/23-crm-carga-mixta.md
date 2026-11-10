@@ -347,12 +347,19 @@ tope por día, los mismos reintentos y la misma pausa: sólo cambia lo que hace 
   muestra para copiar. El gateway pide el token con un JWT firmado (scope `spreadsheets`) y lo
   reusa hasta que vence. Si la planilla no está compartida o no existe (403 o 404), la conexión
   queda «sin acceso» y las cargas esperan en la cola, como con un token de HubSpot rechazado.
-- **Una planilla, un cliente:** la cuenta de servicio es la misma para todos, así que una planilla
-  conectada a un cliente no se puede conectar a otro (índice único en `planilla_id`). Si no, un
-  cliente podría pegar la URL de la planilla de otro y leer sus encabezados o agregarle filas.
-- **La pestaña:** la de la URL (`#gid=`); sin gid, la primera. Su nombre se anota al probar.
-- **Probar conexión** lee la planilla y deja listos los encabezados: es la prueba de que la cuenta
-  puede escribir.
+- **Que la planilla es del cliente:** la cuenta de servicio es la misma para todos, así que tener
+  la URL no alcanza (un cliente podría pegar la de otro que ya la compartió con Biguá). Al conectar
+  una planilla, el gateway genera un código (`sdrbot-…`, en `planilla_codigo`) y el cliente le
+  agrega a la planilla una pestaña con ese nombre; sólo puede quien la edita. «Probar conexión» la
+  busca y marca `planilla_verificada_at`. Hasta entonces el gateway no escribe nada, no muestra nada
+  de la planilla (ni título ni encabezados) y la cola no carga. Otra planilla, código nuevo.
+- **Una planilla, un cliente:** una planilla verificada por un cliente no se puede verificar para
+  otro (índice único en `planilla_id` sobre las verificadas). Cuenta sólo la verificada: si contara
+  la sólo pegada, cualquiera podría bloquearle a un cliente su propia planilla.
+- **La pestaña:** la de la URL (`#gid=`); sin gid, la primera que no sea la de verificación. Su
+  nombre se anota al probar.
+- **Probar conexión** verifica la planilla (la primera vez), la lee y deja listos los encabezados:
+  es la prueba de que la cuenta puede escribir.
 - **Al terminar:** el evento `crm.cargado` lleva `proveedor: 'sheets'` y el enlace a la fila, y el
   `crm_id` del prospecto queda como `<pestaña>!<fila>`.
 - **Panel:** Canales → CRM, «Dónde se cargan los positivos». Pasar de HubSpot a la planilla (o al

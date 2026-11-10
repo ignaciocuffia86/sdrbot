@@ -359,5 +359,9 @@ escribió el prospecto o redactó un bot no se interpreta como fórmula.
 - **Acceso:** una cuenta de servicio de Google de Biguá con la API de Sheets habilitada. Su clave
   JSON va entera en la variable `MAILGW_GOOGLE_SA` de Vercel (nunca en el repo). El cliente comparte
   su planilla como **Editor** con el mail de esa cuenta, que el panel muestra para copiar.
+- **Que la planilla es suya:** como la cuenta es la misma para todos, tener la URL no alcanza. El
+  panel da un código y el cliente le agrega a la planilla una pestaña con ese nombre; hasta que
+  «Probar conexión» la encuentra, el gateway no lee ni escribe la planilla. Una planilla verificada
+  por un cliente no se puede verificar para otro.
 - **Pruebas:** `test/crm_sheets.test.mjs`, contra un Google simulado (`MAILGW_SHEETS_URL` y
   `MAILGW_GOOGLE_TOKEN_URL`).

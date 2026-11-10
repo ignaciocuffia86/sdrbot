@@ -1584,7 +1584,7 @@ async function datosDelAlta(c, user, clientId) {
   const tokens = (await c.query(
     `select count(*)::int as n from mailgw.token where client_id = $1 and revoked_at is null
         and (expires_at is null or expires_at > now()) and 'sdr' = any(scopes)`, [clientId])).rows[0].n;
-  const crmCx = (await c.query(`select proveedor, estado, token_enc, planilla_id from sdr.crm_conexion where client_id = $1`, [clientId])).rows[0];
+  const crmCx = (await c.query(`select proveedor, estado, token_enc, planilla_id, planilla_verificada_at from sdr.crm_conexion where client_id = $1`, [clientId])).rows[0];
   const titulos = Object.fromEntries(sdr.campos.map((x) => [x.clave, x.titulo]));
   const faltanCampos = (claves) => claves.filter((k) => titulos[k] && vacio(cfg[k])).map((k) => titulos[k]);
   const dominiosBuzones = [...new Set(buzones.map((b) => b.email.split('@')[1]))];
@@ -1609,7 +1609,9 @@ async function datosDelAlta(c, user, clientId) {
     : { hecho: false, falta: !d?.api_key ? 'Sin la API key de Dripify.' : d.ultimo_error ? `Error: ${d.ultimo_error}` : 'Falta probar la conexión.' };
   out.whatsapp = sdr.whatsapp?.activo ? { hecho: true } : { hecho: false, falta: 'WhatsApp no está activado.' };
   out.crm = crm.conectada(crmCx) && crmCx.estado === 'activa' ? { hecho: true }
-    : { hecho: false, falta: !crm.conectada(crmCx) ? 'Ni HubSpot ni una planilla de Google Sheets están conectados.' : `La conexión está ${crmCx.estado}.` };
+    : { hecho: false, falta: crm.conectada(crmCx) ? `La conexión está ${crmCx.estado}.`
+      : crmCx?.proveedor === 'sheets' && crmCx.planilla_id ? 'Falta verificar la planilla: la pestaña con el código que muestra el panel.'
+        : 'Ni HubSpot ni una planilla de Google Sheets están conectados.' };
   out.token = tokens ? { hecho: true } : { hecho: false, falta: 'No hay un token vigente con el permiso sdr.' };
   const conAviso = (sdr.tecnico?.bots_activos ?? []).filter((b) => BOTS_CON_AVISO.includes(b));
   const sinDespertador = conAviso.filter((b) => !sdr.despertadores?.[b]);

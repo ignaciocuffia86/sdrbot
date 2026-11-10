@@ -1295,12 +1295,19 @@ function crmConexionCard(clientId, bigua, cx, reload) {
 
 // La planilla: la URL y el mail de la cuenta de servicio con el que el cliente la comparte.
 function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
-  const conectada = Boolean(cx?.conectado);
-  const estado = badge(conectada ? crmEstado(cx) : ['b-mute', 'sin conectar']);
+  // Guardada: tiene la URL. Verificada: el cliente demostró que es suya (la pestaña con el código).
+  const conectada = Boolean(cx?.planilla_url);
+  const verificada = Boolean(cx?.planilla_verificada);
+  const estado = badge(!conectada ? ['b-mute', 'sin conectar'] : !verificada ? ['b-warn', 'falta verificar'] : crmEstado(cx));
+  const copiable = (valor) => {
+    const input = h('input', { readonly: true, value: valor, class: 'mono' });
+    return h('div', { class: 'secret' }, input, h('button', { type: 'button', onclick: async () => {
+      try { await navigator.clipboard.writeText(valor); toast('Copiado.'); } catch { input.select(); }
+    } }, 'Copiar'));
+  };
   const err = h('p', { class: 'err', role: 'alert' });
   const salida = h('div', {});
   const cuenta = guardado?.cuenta_google ?? null;
-  const mail = cuenta ? h('input', { readonly: true, value: cuenta, class: 'mono' }) : null;
   const form = h('form', { class: 'card' },
     h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Google Sheets'), estado),
     elegir,
@@ -1309,10 +1316,8 @@ function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
       'respondió y la respuesta aprobada. Nunca borra ni cambia una fila que ya estaba. Si la planilla ya tiene encabezados, usa ' +
       'los suyos (Nombre, Email, Empresa…) y agrega al final las columnas que falten.'),
     cuenta
-      ? field('1. Compartí la planilla como Editor con este mail', h('div', { class: 'secret' }, mail,
-        h('button', { type: 'button', onclick: async () => {
-          try { await navigator.clipboard.writeText(cuenta); toast('Copiado.'); } catch { mail.select(); }
-        } }, 'Copiar')), 'En Google Sheets: Compartir → pegar el mail → Editor. Sin esto, el gateway no puede escribir.')
+      ? field('1. Compartí la planilla como Editor con este mail', copiable(cuenta),
+        'En Google Sheets: Compartir → pegar el mail → Editor. Sin esto, el gateway no puede escribir.')
       : h('p', { class: 'small err' }, 'El gateway todavía no tiene la cuenta de servicio de Google. La carga Biguá en Vercel ' +
         '(MAILGW_GOOGLE_SA); hasta entonces la planilla se puede guardar pero no probar.'),
     cx?.ultimo_error ? h('p', { class: 'small err' }, cx.ultimo_error) : null,
@@ -1321,6 +1326,11 @@ function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
       placeholder: 'https://docs.google.com/spreadsheets/d/…/edit#gid=0' }),
     'Copiala del navegador con la pestaña donde van los positivos abierta: el #gid= del final dice cuál es.' +
       (cx?.planilla_hoja ? ` Hoy: pestaña «${cx.planilla_hoja}».` : '')),
+    conectada && !verificada && cx.planilla_codigo
+      ? field('3. Agregale a la planilla una pestaña con este nombre', copiable(cx.planilla_codigo),
+        'Puede quedar vacía. Demuestra que la planilla es de este cliente: hasta que «Probar conexión» la encuentre, el gateway ' +
+        'no escribe ni lee nada de la planilla. Después se puede borrar.')
+      : null,
     conectada && bigua ? field('Tope de cargas por día', h('input', { name: 'tope_dia', type: 'number', min: 1, max: 1000, value: cx.tope_dia }), 'Sólo Biguá.') : null);
 
   const btn = h('button', { type: 'submit', class: 'primary' }, conectada ? 'Guardar' : 'Conectar planilla');
@@ -1329,11 +1339,12 @@ function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
     if (!r) return;
     const e = r.prueba;
     salida.replaceChildren(h('div', { class: 'small' },
-      h('p', {}, e.listo ? badge(['b-ok', 'listo']) : badge(['b-err', 'falta algo']),
+      h('p', {}, e.listo ? badge(['b-ok', 'listo']) : badge(['b-err', e.verificada === false ? 'falta verificar' : 'falta algo']),
         e.planilla ? ` ${e.planilla}${e.hoja ? ` · pestaña «${e.hoja}»` : ''}.` : ''),
       e.problemas?.length ? h('ul', {}, e.problemas.map((x) => h('li', { class: 'err' }, x))) : null,
       e.avisos?.length ? h('ul', {}, e.avisos.map((x) => h('li', { class: 'muted' }, x))) : null,
       e.columnas?.length ? h('p', { class: 'muted' }, `Columnas: ${e.columnas.join(' · ')}`) : null));
+    if (e.verificada && !verificada) { toast('Planilla verificada.'); reload(); }
   } }, 'Probar conexión') : null;
   const vista = conectada ? h('button', { type: 'button', onclick: async (ev) => {
     const r = await busy(ev.currentTarget, () => api('POST', `/clients/${enc(clientId)}/crm/vista-previa`, {}), err);
@@ -1350,7 +1361,11 @@ function crmPlanillaCard(clientId, bigua, cx, guardado, elegir, reload) {
     const body = { proveedor: 'sheets', planilla_url: String(fd.get('planilla_url') ?? '').trim() };
     if (conectada && bigua) body.tope_dia = Number(fd.get('tope_dia'));
     const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/crm`, body), err);
-    if (r) { toast(conectada ? 'Planilla guardada.' : 'Planilla conectada. Compartila con el mail de la cuenta y probá la conexión.'); reload(); }
+    if (r) {
+      toast(r.conexion?.planilla_verificada ? 'Planilla guardada.'
+        : 'Planilla guardada. Compartila con el mail de la cuenta, agregale la pestaña de verificación y probá la conexión.');
+      reload();
+    }
   });
   return form;
 }
@@ -2290,7 +2305,7 @@ const GUIA_ALTA = {
   dominios: 'SPF, DKIM y DMARC de cada dominio de envío: deciden si los mails llegan a la bandeja. Si algo está mal, la ayuda dice qué registro cargar.',
   linkedin: 'Si se suma LinkedIn: la API key de Dripify del cliente, la prueba de conexión y la URL del webhook para su campaña.',
   whatsapp: 'Sólo para seguir conversaciones con quien ya respondió: número, horario y tope del día.',
-  crm: 'Dónde entran solos los positivos: en HubSpot (el token de la app privada, la propiedad de origen y el dueño) o, si no tiene CRM, en una planilla de Google Sheets (la URL, compartida como Editor con el mail de la cuenta de servicio). Después, «Probar conexión» y la vista previa.',
+  crm: 'Dónde entran solos los positivos: en HubSpot (el token de la app privada, la propiedad de origen y el dueño) o, si no tiene CRM, en una planilla de Google Sheets (la URL, compartida como Editor con el mail de la cuenta de servicio y verificada con una pestaña que lleva el código del panel). Después, «Probar conexión» y la vista previa.',
   asci: 'El usuario de ASCI con el que el prospector busca cuentas y decisores.',
   token: 'El token con el que la cuenta de Grok del cliente llega al gateway.',
   grok: 'La cuenta de Grok Bot del cliente: los bots, los conectores y la revisión automática.',

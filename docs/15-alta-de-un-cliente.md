@@ -245,7 +245,8 @@ Sin Dripify, el SDR va sólo por mail: los bots lo ven en `dripify_estado` y no 
 
 **Sin CRM:** si el cliente lleva su gestión en una planilla de Google Sheets, en **Canales → CRM**
 elegir «Una planilla de Google Sheets», compartirla como **Editor** con el mail de la cuenta de
-servicio que muestra el panel, pegar la URL de la pestaña donde van los positivos y **Probar
+servicio que muestra el panel, pegar la URL de la pestaña donde van los positivos, agregarle a la
+planilla una pestaña con el código que muestra el panel (prueba que es del cliente) y **Probar
 conexión** (si la pestaña está vacía, escribe los encabezados). Después, **Vista previa**. Cada
 positivo aprobado agrega una fila (`23` §14).
 
@@ -293,5 +294,5 @@ Con eso el alta está hecha. Lo que sigue (pruebas de arranque, calibración, la
 | 9 | Siete routines creadas y habilitadas | Biguá (con los bots) | ☐ |
 | 10 | Despertadores de seguimiento y del orquestador cargados | Biguá | ☐ |
 | 11 | Con LinkedIn: Dripify cargado, «Probar» listo y webhooks en la campaña | Biguá (con el cliente) | ☐ |
-| 11b | Con CRM: HubSpot conectado, «Probar» listo, origen y dueño elegidos, vista previa revisada. Sin CRM: planilla compartida con la cuenta de servicio, «Probar» listo | Cliente (Biguá revisa) | ☐ |
+| 11b | Con CRM: HubSpot conectado, «Probar» listo, origen y dueño elegidos, vista previa revisada. Sin CRM: planilla compartida con la cuenta de servicio, verificada con la pestaña del código, «Probar» listo | Cliente (Biguá revisa) | ☐ |
 | 12 | Comprobado: agenda sin errores y llamadas en Actividad | Biguá | ☐ |
