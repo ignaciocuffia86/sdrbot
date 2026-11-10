@@ -9,15 +9,23 @@
 import { GatewayError } from '../errors.mjs';
 import { ajustesEfectivos } from './ajustes.mjs';
 
+// El nombre de una campaña lo escribe el cliente: en lo que leen los bots va siempre citado entre
+// «», en una línea y sin lo que Markdown lee como estructura (un «**…**» o un «`…`» suyo no arma
+// una sección ni una regla nueva). Vale también para nombres viejos guardados antes de validarlos.
+export const citaNombre = (n) => `«${String(n ?? '')
+  .replace(/[\u0000-\u001f\u007f\u2028\u2029«»]+/g, ' ')
+  .replace(/[`*<>\[\]\\]+/g, ' ')
+  .replace(/\s+/g, ' ').trim().slice(0, 120)}»`;
+
 export const errorsCampana = {
   noExiste: (clave) => new GatewayError('no_existe', `No existe la campaña «${clave}» para este cliente.`, 404),
   inactiva: (k, que) => new GatewayError('campana_inactiva',
-    `La campaña «${k.nombre}» está ${k.estado}: ${que}. Si tiene que seguir, la activa Biguá en el panel.`, 409),
+    `La campaña ${citaNombre(k.nombre)} está ${k.estado}: ${que}. Si tiene que seguir, la activa Biguá en el panel.`, 409),
   otra: (msg) => new GatewayError('en_otra_campana', msg, 409),
   buzon: (email, k) => new GatewayError('buzon_fuera_de_campana',
-    `El buzón ${email} no es de la campaña «${k.nombre}»: usá uno de sus buzones (los ves en «Buzones y firmas»).`, 422),
+    `El buzón ${email} no es de la campaña ${citaNombre(k.nombre)}: usá uno de sus buzones (los ves en «Buzones y firmas»).`, 422),
   links: (urls, k) => new GatewayError('link_no_permitido',
-    `El mail lleva links que la campaña «${k.nombre}» no permite: ${urls.join(', ')}. Sacalos: sólo van los links ` +
+    `El mail lleva links que la campaña ${citaNombre(k.nombre)} no permite: ${urls.join(', ')}. Sacalos: sólo van los links ` +
     'permitidos de la campaña, el link de agenda (en la respuesta a un positivo) y los de las firmas.', 422),
 };
 
@@ -49,7 +57,7 @@ export async function resolver(c, clientId, { clave, prospecto } = {}) {
     const k = await porClave(c, clientId, clave);
     if (prospecto && prospecto.campana_id && prospecto.campana_id !== k.id) {
       const suya = await porId(c, clientId, prospecto.campana_id);
-      throw errorsCampana.otra(`${prospecto.nombre ?? 'Esta persona'} es de la campaña «${suya.nombre}», no de «${k.nombre}».`);
+      throw errorsCampana.otra(`${prospecto.nombre ?? 'Esta persona'} es de la campaña ${citaNombre(suya.nombre)}, no de ${citaNombre(k.nombre)}.`);
     }
     return k;
   }
@@ -155,8 +163,8 @@ export async function controlarCambio(c, clientId, prospecto, destino) {
   if (!prospecto.campana_id || prospecto.campana_id === destino.id) return;
   const actual = await porId(c, clientId, prospecto.campana_id);
   if (actual.estado === 'activa' && !LIBRES.has(prospecto.estado)) {
-    throw errorsCampana.otra(`${prospecto.nombre ?? 'Esta persona'} ya está en contacto por la campaña «${actual.nombre}» ` +
-      `(estado ${prospecto.estado}): no se la pasa a «${destino.nombre}». Una persona está en una sola campaña activa.`);
+    throw errorsCampana.otra(`${prospecto.nombre ?? 'Esta persona'} ya está en contacto por la campaña ${citaNombre(actual.nombre)} ` +
+      `(estado ${prospecto.estado}): no se la pasa a ${citaNombre(destino.nombre)}. Una persona está en una sola campaña activa.`);
   }
 }
 
@@ -167,7 +175,7 @@ export async function controlarCuenta(c, clientId, cuenta, destino) {
   if (cuenta.estado !== 'en_contacto') return;
   const actual = await porId(c, clientId, cuenta.campana_id);
   if (actual.estado === 'activa' && actual.tipo === 'prospeccion') {
-    throw errorsCampana.otra(`La cuenta ${cuenta.nombre} está en contacto por la campaña «${actual.nombre}»: no entra en ` +
-      `«${destino.nombre}» hasta que esa termine con ella.`);
+    throw errorsCampana.otra(`La cuenta ${cuenta.nombre} está en contacto por la campaña ${citaNombre(actual.nombre)}: no entra en ` +
+      `${citaNombre(destino.nombre)} hasta que esa termine con ella.`);
   }
 }

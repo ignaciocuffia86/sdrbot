@@ -26,7 +26,7 @@ import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/co
 import * as dripify from '../sdr/dripify.mjs';
 import * as crm from '../sdr/crm.mjs';
 import * as campanas from '../sdr/campanas.mjs';
-import { createUser, resetSetup, revocarConexiones } from './auth.mjs';
+import { createUser, resetSetup, revocarConexiones, tomarUsuario } from './auth.mjs';
 
 const ajv = new Ajv({ allErrors: true, useDefaults: true, strict: false });
 const forbidden = () => new GatewayError('forbidden', 'No tenés permiso para esto.', 403);
@@ -1158,6 +1158,9 @@ export const conexionesListar = async ({ user }) => asOwner(async (c) => {
 
 export const conexionRevocar = async ({ user, params }) => asOwner(async (c) => {
   if (!/^[0-9a-f-]{36}$/i.test(String(params.id))) throw notFound('No existe esa conexión.');
+  // Primero el registro del usuario, como en el OAuth: una renovación en curso termina antes y el
+  // update de abajo ve también el par que emitió.
+  await tomarUsuario(c, `select user_id from mailgw.oauth_token where familia = $1`, [params.id], 'no key update');
   const { rows } = await c.query(
     `update mailgw.oauth_token set revoked_at = now()
       where familia = $1 and revoked_at is null and ($2::uuid is null or user_id = $2)

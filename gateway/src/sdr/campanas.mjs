@@ -305,7 +305,11 @@ export async function restaurar(c, clientId, id, historialId, { user, esBigua })
 export async function duplicar(c, clientId, id, { nombre } = {}, { user }) {
   await contexto(c, clientId, { bloquear: true });
   const k = await fila(c, clientId, id);
-  const nuevoNombre = (typeof nombre === 'string' && nombre.trim()) ? nombre.trim().slice(0, 120) : `${k.nombre} (copia)`.slice(0, 120);
+  // El nombre pasa por la misma validación que al crear o editar (una línea, hasta 120): la copia
+  // de un nombre viejo se limpia antes, que no se valide un nombre que no eligió nadie.
+  const propio = typeof nombre === 'string' && nombre.trim();
+  const base = propio ? nombre : `${String(k.nombre).replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim()} (copia)`.slice(0, 120);
+  const { nombre: nuevoNombre } = aplicarColumnasCampana(null, { nombre: base }, { esBigua: true });
   const clave = await claveNueva(c, clientId, nuevoNombre);
   const { rows } = await c.query(
     `insert into sdr.campana (client_id, clave, nombre, tipo, ajustes, cuentas_por_dia, duplicada_de)

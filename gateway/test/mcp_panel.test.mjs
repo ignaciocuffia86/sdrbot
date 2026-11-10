@@ -302,6 +302,59 @@ test('revocar por /oauth/revoke, desactivar al usuario o resetearle la contrase�
   assert.equal((await mcp(c3.access_token, 'tools/list')).status, 401);
 });
 
+test('después de un reset no sirven ni el ingreso firmado ni el código de antes (Vercel #18)', async () => {
+  const temp = await usuario('temp3@mcpp-a.test', 'client_admin', A);
+  const { body: cli } = await registrar();
+  const { resetSetup } = await import('../src/admin/auth.mjs');
+
+  // Un código pedido con la contraseña vieja y todavía sin canjear.
+  const p1 = pkce();
+  const { location } = await autorizar(cli.client_id, temp.email, { challenge: p1.challenge });
+  // Y un ingreso firmado con la contraseña vieja, sin autorizar todavía.
+  const q = new URLSearchParams({ response_type: 'code', client_id: cli.client_id, redirect_uri: RU, state: 's',
+    code_challenge: pkce().challenge, code_challenge_method: 'S256', scope: 'panel offline_access' });
+  const pedido = oculto(await (await fetch(`${base}/oauth/authorize?${q}`)).text(), 'pedido');
+  const login = oculto(await (await post('/oauth/login', { pedido, paso: 'ingresar', email: temp.email, password: PW })).text(), 'login');
+  assert.ok(login);
+
+  await activate(await resetSetup(temp.id), 'otra-contrasena-larga-2');
+
+  const canje = await post('/oauth/token', { grant_type: 'authorization_code', code: location.searchParams.get('code'),
+    code_verifier: p1.verifier, client_id: cli.client_id });
+  assert.equal(canje.status, 400, 'el código de antes del reset quedó sin efecto');
+  const fin = await post('/oauth/login', { pedido, login, paso: 'autorizar' });
+  assert.notEqual(fin.status, 302, 'no redirige con un código');
+  assert.equal(fin.headers.get('location'), null);
+  assert.match(await fin.text(), /La contraseña cambió/);
+  assert.equal((await store.asOwner((c) => c.query(
+    `select count(*)::int as n from mailgw.oauth_code where user_id = $1 and used_at is null`, [temp.id]))).rows[0].n, 0);
+});
+
+test('desconectar mientras se renueva revoca también el par que se está emitiendo (Vercel #19)', async () => {
+  const c0 = await conectar(u.a.email);
+  const fam = (await store.asOwner((c) => c.query(`select familia from mailgw.oauth_token where token_hash = $1`,
+    [crypto.createHash('sha256').update(c0.refresh_token).digest('hex')]))).rows[0].familia;
+  // Una renovación a medio hacer: tomó el usuario (como /oauth/token) y ya insertó un par nuevo.
+  const pool = store.getPool();
+  const ren = await pool.connect();
+  const nuevo = crypto.randomBytes(16).toString('hex');
+  await ren.query('begin');
+  await ren.query(`select 1 from mailgw.admin_user where id = (select user_id from mailgw.oauth_token where familia = $1 limit 1) for no key update`, [fam]);
+  await ren.query(`insert into mailgw.oauth_token (token_hash, tipo, familia, client_id, cliente_nombre, user_id, expires_at)
+    select $1, 'renovacion', familia, client_id, cliente_nombre, user_id, now() + interval '1 day'
+      from mailgw.oauth_token where familia = $2 limit 1`, [nuevo, fam]);
+  // La desconexión llega en el medio: tiene que esperar a la renovación.
+  let termino = false;
+  const desconectar = S.conexionRevocar({ user: { ...u.a }, params: { id: fam } }).then((r) => { termino = true; return r; });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(termino, false, 'la desconexión espera a la renovación en curso');
+  await ren.query('commit');
+  ren.release();
+  await desconectar;
+  const { rows } = await store.asOwner((c) => c.query(`select revoked_at from mailgw.oauth_token where token_hash = $1`, [nuevo]));
+  assert.ok(rows[0].revoked_at, 'el par emitido durante la desconexión también quedó revocado');
+});
+
 test('un token de un MCP no sirve en el otro', async () => {
   const { access_token: at } = await conectar(u.a.email);
   const r = await fetch(`${base}/mcp`, { method: 'POST',
