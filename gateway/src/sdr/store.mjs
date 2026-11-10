@@ -289,19 +289,19 @@ export async function buscar(clientId, q) {
     let aviso;
     const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : '';
     if (digitos.length >= 8) {
-      // Candidatos por los últimos 10 dígitos; el cruce de verdad lo hace mismoWhatsapp.
+      // Un número se compara entero, en su forma internacional: los que vienen sin código de país se
+      // completan con el del cliente (su zona horaria). Por el final no se cruza nunca. La consulta
+      // por los últimos 8 dígitos sólo junta candidatos; el cruce lo hace mismoWhatsapp.
+      const pais = paisDeZona((await configDe(c, clientId))?.zona_horaria);
       const { rows } = await c.query(
         `select p.* from sdr.prospecto p
           where p.client_id = $1 and p.whatsapp is not null
-            and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 10) = right($2, 10)
-          order by p.actualizado_at desc limit 20`, [clientId, digitos]);
-      const exactos = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'exacto');
-      const locales = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos) === 'local');
-      if (exactos.length) prospectos.push(...exactos);
-      else if (locales.length === 1) prospectos.push(...locales);
-      else if (locales.length > 1) {
-        aviso = `El número ${q.whatsapp} no tiene código de país y coincide con ${locales.length} personas: no se elige ninguna. ` +
-          'Buscá con el número completo (con +código de país) o por otro dato.';
+            and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 8) = right($2, 8)
+          order by p.actualizado_at desc limit 50`, [clientId, digitos]);
+      const iguales = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos, pais));
+      if (iguales.length === 1) prospectos.push(...iguales);
+      else if (iguales.length > 1) {
+        aviso = `El número ${q.whatsapp} está cargado en ${iguales.length} personas: no se elige ninguna. Buscá por otro dato.`;
       }
     }
     const vistos = new Set();
@@ -310,25 +310,39 @@ export async function buscar(clientId, q) {
   });
 }
 
-// Un número de WhatsApp en dígitos, con las formas equivalentes unificadas: el 9 de los celulares de
-// Argentina («+54 9 11…» es «+54 11…») y el 1 viejo de los de México («+52 1 55…» es «+52 55…»).
-export function canonWhatsapp(n) {
-  let d = String(n ?? '').replace(/\D/g, '').replace(/^00/, '');
+// El código de país de un cliente, por su zona horaria: con él se completan los números locales.
+const PAIS_POR_ZONA = [
+  [/^America\/Argentina\//, '54'], [/^America\/Santiago$/, '56'], [/^America\/Montevideo$/, '598'],
+  [/^America\/Asuncion$/, '595'], [/^America\/Bogota$/, '57'], [/^America\/Lima$/, '51'],
+  [/^America\/(Mexico_City|Monterrey|Merida|Cancun|Tijuana|Hermosillo|Chihuahua|Mazatlan)$/, '52'],
+  [/^America\/(Sao_Paulo|Bahia|Fortaleza|Recife|Manaus|Belem)$/, '55'], [/^Europe\/Madrid$/, '34'],
+];
+export const paisDeZona = (zona) => PAIS_POR_ZONA.find(([re]) => re.test(zona ?? ''))?.[1] ?? null;
+
+// Un número de WhatsApp en su forma internacional, en dígitos. Uno que viene sin código de país (10
+// dígitos o menos, sin «+» ni «00») se completa con el país del cliente, sin el 0 de larga
+// distancia; sin país conocido queda como vino y sólo coincide con uno escrito igual. Se unifican el
+// 9 de los celulares de Argentina («+54 9 11…» es «+54 11…») y el 1 viejo de México («+52 1 55…»).
+export function canonWhatsapp(n, pais = null) {
+  const crudo = String(n ?? '').trim();
+  let d = crudo.replace(/\D/g, '');
+  const internacional = crudo.startsWith('+') || d.startsWith('00');
+  d = d.replace(/^00/, '');
+  if (!internacional && pais) {
+    const nacional = d.replace(/^0+/, '');
+    if (nacional.length <= 10) d = `${pais}${nacional}`;
+  }
   if (d.length === 13 && d.startsWith('549')) d = `54${d.slice(3)}`;
   if (d.length === 13 && d.startsWith('521')) d = `52${d.slice(3)}`;
   return d;
 }
 
-// 'exacto': el mismo número. 'local': uno de los dos no trae código de país (10 dígitos o menos) y
-// los últimos 10 coinciden; sirve sólo si hay un único candidato. null: no es el mismo (dos números
-// con código de país distinto no se igualan por el final, aunque los últimos 10 coincidan).
-export function mismoWhatsapp(a, b) {
-  const x = canonWhatsapp(a);
-  const y = canonWhatsapp(b);
-  if (!x || !y) return null;
-  if (x === y) return 'exacto';
-  if (x.length > 10 && y.length > 10) return null;
-  return x.slice(-10) === y.slice(-10) && Math.min(x.length, y.length) >= 8 ? 'local' : null;
+// Si dos números son el mismo: enteros, en su forma internacional. Nunca por el final: dos números
+// de países distintos con los mismos últimos dígitos son personas distintas.
+export function mismoWhatsapp(a, b, pais = null) {
+  const x = canonWhatsapp(a, pais);
+  const y = canonWhatsapp(b, pais);
+  return x.length >= 8 && x === y;
 }
 
 const CAMPOS_CUENTA = ['asci_id', 'nombre', 'dominio', 'pais', 'vertical', 'tamano', 'senales', 'tesis', 'estado', 'estado_motivo', 'pausa_hasta',
