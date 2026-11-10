@@ -1,6 +1,6 @@
 # Roadmap: buzones en Microsoft 365 y Google Workspace
 
-Estado: **propuesto, para después del piloto de BairesQA.** Escrito el 04/11/2026. Nada de esto
+Estado: **propuesto; es la etapa F del plan del panel (`21` §7).** Escrito el 04/11/2026, revisado el 10/11 (§8). Nada de esto
 está construido; el gateway hoy habla sólo IMAP/SMTP con contraseña (`07-gateway-imap.md`).
 
 Este documento dice qué hacer cuando entre un cliente con los buzones en Microsoft 365 (Office
@@ -296,7 +296,25 @@ Mientras una etapa no esté, el camino para un cliente nuevo es:
 | Quién configura del lado del cliente | El administrador del cliente solo, con el asistente, o en videollamada con Biguá | Videollamada las primeras veces; el asistente después | Biguá |
 | Verificación de Google | Necesaria sólo si Biguá ofrece una aplicación OAuth propia a clientes externos | Evitarla: cliente OAuth interno en el proyecto del cliente | Biguá |
 
-## 8. Cambios en otros documentos
+## 8. Lo que cambió desde el 04/11 (revisión del 10/11/2026)
+
+El plan sigue en pie. Lo que se construyó después lo afecta así:
+
+- **Memoria del correo (`006`) y el reloj** (`src/sdr/correo.mjs`): `sdr.correo` y el cursor por
+  buzón guardan `uid` y `last_uid` de IMAP, y el reloj lee los buzones con `withImap`. La etapa 1
+  los pasa al `id` y al cursor opacos de §2.3, con `uid` como compatibilidad para IMAP.
+- **Reglas de `seguimiento`:** responden con `folder` y `uid` de `datos`. Cuando haya buzones que
+  no son IMAP, pasan a `id` (y se publica una versión nueva de las reglas).
+- **Campañas (`012`):** los buzones de una campaña son filas de `mailgw.account`; un buzón de
+  Graph o de Gmail entra igual en `sdr.campana_buzon`. No cambia nada del modelo de campañas.
+- **Fechas de Microsoft:** este documento daba el apagado de SMTP AUTH con contraseña para
+  marzo–abril de 2026, que ya pasó. Con más razón no hay puente IMAP para Microsoft 365: hasta la
+  etapa 2, un cliente de Microsoft 365 entra sólo con el conector de Outlook y en borradores.
+- **La etapa 1 no necesita un cliente:** es la base común con IMAP detrás y sin cambio visible.
+  Se puede hacer antes de que aparezca el primer cliente de Microsoft o Google, para que la etapa
+  2 o la 3 arranquen directo por el adaptador.
+
+## 9. Cambios en otros documentos
 
 Cuando arranque la etapa 1:
 
