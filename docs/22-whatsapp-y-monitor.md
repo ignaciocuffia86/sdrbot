@@ -53,7 +53,7 @@ respuestas por WhatsApp las registra el bot con `registro_evento` tipo `respuest
    `whatsapp_*` en «Allow». La sesión de WhatsApp Web se abre con el QR del número del cliente en el
    navegador del asiento (videollamada con el cliente, `09` §9).
 2. Panel → **⚙ Administración → Operación**: sumar `whatsapp` a los bots activos.
-3. Panel → **Canales → WhatsApp**: activarlo, el número (sólo para mostrar) y, si hace falta, el
+3. Panel → **⚙ Administración → LinkedIn y WhatsApp**: activarlo, el número (sólo para mostrar) y, si hace falta, el
    horario, la pausa y los topes.
 4. Que el bot cree su routine (`reglas_alta`, como los demás).
 
@@ -69,7 +69,7 @@ actualiza solo cada 30 segundos):
   Respuesta a interesados. **Supervisado** quiere decir que sale con el OK del operador (calibración
   en curso, primer WhatsApp, siempre la respuesta a un interesado); **autónomo**, que sale solo.
   Sólo muestra: el modo se cambia donde siempre (calibración en Administración, primer WhatsApp en
-  Canales).
+  Administración → LinkedIn y WhatsApp).
 - **Derecha, lo que pasó hoy** en la zona horaria del cliente, en orden: hora, estado (✓ ejecutado,
   ◐ esperando OK, ✕ error), canal y qué pasó. Sale de la línea de tiempo del registro (sin lo
   interno de los bots) y de lo que se hizo en el panel.

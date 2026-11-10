@@ -410,10 +410,10 @@ async function resumenView({ clientId, bigua, base }) {
     }
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
-    if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, `${base}/canales`, 'Ver');
+    if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, bigua ? `${base}/admin/integraciones` : `${base}/canales`, 'Ver');
     if (r.crm?.estado === 'credencial_vencida') aviso('err', `CRM: HubSpot rechazó el token. Las cargas esperan en cola.${r.crm.ultimo_error ? ` ${r.crm.ultimo_error}` : ''}`, `${base}/canales`, 'Reconectar');
     if (r.crm?.con_problema) aviso('err', `${plural(r.crm.con_problema, 'positivo no se pudo', 'positivos no se pudieron')} cargar en el CRM.`, `${base}/canales`, 'Ver');
-    if (r.whatsapp?.pausado) aviso('err', `WhatsApp en pausa: ${r.whatsapp.pausa_motivo ?? 'bloqueo'}.`, `${base}/canales`, bigua ? 'Revisar y reanudar' : 'Ver');
+    if (r.whatsapp?.pausado) aviso('err', `WhatsApp en pausa: ${r.whatsapp.pausa_motivo ?? 'bloqueo'}.`, bigua ? `${base}/admin/integraciones` : `${base}/canales`, bigua ? 'Revisar y reanudar' : 'Ver');
     for (const [bot, d] of Object.entries(r.despertadores ?? {})) {
       if (!d) aviso('mute', `El despertador de ${bot} no está cargado: el bot corre sólo en su horario.`, `${base}/admin/bots`, 'Cargarlo');
       else if (d.fallas) aviso('err', `El despertador de ${bot} falla (${d.fallas})${d.ultimo_error ? `: ${d.ultimo_error}` : ''}.`, `${base}/admin/bots`, 'Ver');
@@ -1217,40 +1217,39 @@ async function noContactarCard(clientId) {
 
 // ----- canales
 
-async function canalesView({ clientId, data, bigua, reload }) {
-  const [resumen, sdr] = await Promise.all([
-    api('GET', `/clients/${enc(clientId)}/resumen`),
-    bigua ? api('GET', `/clients/${enc(clientId)}/sdr`) : Promise.resolve(null),
-  ]);
+// Canales (docs/29 §Pestañas): lo que el cliente conecta y ve. El correo y el CRM se cargan acá; de
+// LinkedIn y WhatsApp se ve el estado, y su configuración técnica es de Biguá (Administración).
+async function canalesView({ clientId, data, bigua, base, reload }) {
+  const resumen = await api('GET', `/clients/${enc(clientId)}/resumen`);
+  const configurar = bigua ? h('a', { class: 'btn', href: `${base}/admin/integraciones` }, 'Configurar') : null;
   const d = resumen.dripify;
-  const linkedin = bigua && sdr?.activo
-    ? dripifyCard(clientId, sdr, reload)
-    : h('section', { class: 'card' },
-      h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'LinkedIn · Dripify'),
-        !d?.cargado ? h('span', { class: 'badge b-mute' }, 'sin cargar') : d.ultimo_error ? h('span', { class: 'badge b-err' }, 'con error')
-          : h('span', { class: 'badge b-ok' }, 'cargado')),
-      h('p', { class: 'small muted' }, 'La cuenta de Dripify del cliente y su campaña. La conecta Biguá: si querés sumar LinkedIn, pedíselo.'),
-      d?.ultimo_error ? h('p', { class: 'small err' }, d.ultimo_error) : null);
+  const linkedin = h('section', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'LinkedIn · Dripify'),
+      h('div', { class: 'row' }, !d?.cargado ? h('span', { class: 'badge b-mute' }, 'sin cargar') : d.ultimo_error ? h('span', { class: 'badge b-err' }, 'con error')
+        : h('span', { class: 'badge b-ok' }, 'cargado'), configurar)),
+    h('p', { class: 'small muted' }, bigua
+      ? 'La cuenta de Dripify del cliente y su campaña: la API key, la campaña y el webhook se configuran en Administración.'
+      : 'La cuenta de Dripify del cliente y su campaña. La conecta Biguá: si querés sumar LinkedIn, pedíselo.'),
+    d?.ultimo_ok_at ? h('p', { class: 'small' }, `Última respuesta buena de Dripify: ${fmtDate(d.ultimo_ok_at)}`) : null,
+    d?.ultimo_error ? h('p', { class: 'small err' }, d.ultimo_error) : null);
   const pronto = (titulo, texto) => h('div', { class: 'card' },
     h('div', { class: 'row spread' }, h('strong', {}, titulo), h('span', { class: 'badge b-mute' }, 'próximamente')),
     h('p', { class: 'small muted' }, texto));
   const w = resumen.whatsapp;
-  const wa = bigua && sdr?.activo
-    ? whatsappCard(clientId, sdr, w, reload)
-    : h('section', { class: 'card' },
-      h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'WhatsApp'), whatsappBadge(w)),
-      h('p', { class: 'small muted' }, 'Sólo para seguir una conversación con quien ya respondió o ya tiene chat con nosotros: nunca a números fríos. ' +
-        'Lo activa Biguá.'),
-      w?.activo ? h('p', { class: 'small' }, `Horario ${w.horario} · ${w.hoy.enviados} de ${w.hoy.tope_dia} mensajes hoy`) : null,
-      w?.pausado ? h('p', { class: 'small err' }, w.pausa_motivo ?? 'En pausa.') : null);
+  const wa = h('section', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'WhatsApp'), h('div', { class: 'row' }, whatsappBadge(w), configurar?.cloneNode(true) ?? null)),
+    h('p', { class: 'small muted' }, 'Sólo para seguir una conversación con quien ya respondió o ya tiene chat con nosotros: nunca a números fríos. ' +
+      (bigua ? 'El horario, las pausas y los topes se configuran en Administración.' : 'Lo activa Biguá.')),
+    w?.activo ? h('p', { class: 'small' }, `Horario ${w.horario} · ${w.hoy.enviados} de ${w.hoy.tope_dia} mensajes hoy`) : null,
+    w?.pausado ? h('p', { class: 'small err' }, w.pausa_motivo ?? 'En pausa.') : null);
   return h('div', { class: 'stack' },
     h('section', { class: 'stack' }, h('h2', { class: 'first' }, 'Correo'), mailboxesView(data, reload),
       h('h3', {}, 'Dominios'), await domainsView(clientId, reload)),
-    h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
-    h('section', { class: 'stack' }, h('h2', {}, 'WhatsApp'), wa),
     h('section', { class: 'stack' }, h('h2', {}, 'CRM'), resumen.sdr_activo
       ? await crmView(clientId, bigua, reload)
-      : pronto('CRM · HubSpot', 'Se conecta cuando el SDR esté activado: los positivos aprobados se cargan solos.')));
+      : pronto('CRM · HubSpot', 'Se conecta cuando el SDR esté activado: los positivos aprobados se cargan solos.')),
+    h('section', { class: 'stack' }, h('h2', {}, 'LinkedIn'), linkedin),
+    h('section', { class: 'stack' }, h('h2', {}, 'WhatsApp'), wa));
 }
 
 // ----- CRM (docs/23): la conexión con HubSpot, la cola de cargas y la vista previa.
@@ -1640,7 +1639,7 @@ function dripifyCard(clientId, sdr, reload) {
   return form;
 }
 
-const ADMIN = [['operacion', 'Operación'], ['bots', 'Bots y despertadores'], ['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']];
+const ADMIN = [['operacion', 'Operación'], ['bots', 'Bots y despertadores'], ['integraciones', 'LinkedIn y WhatsApp'], ['usuarios', 'Usuarios'], ['tokens', 'Tokens de Grok Bot']];
 
 async function adminView({ clientId, data, base, reload }, sub) {
   if (!ADMIN.some(([k]) => k === sub)) sub = 'operacion';
@@ -1656,7 +1655,14 @@ async function adminView({ clientId, data, base, reload }, sub) {
         sdr.activo ? null : h('p', { class: 'muted' }, 'Este cliente no tiene el SDR activado. Elegí la configuración y activalo; después cargá los ajustes en Empresa.'),
         sdrTecnico(clientId, sdr, reload));
     } else if (!sdr.activo) {
-      contenido = h('div', { class: 'card empty' }, 'Activá el SDR en Operación para configurar los bots.');
+      contenido = h('div', { class: 'card empty' }, sub === 'integraciones'
+        ? 'Activá el SDR en Operación para configurar LinkedIn y WhatsApp.' : 'Activá el SDR en Operación para configurar los bots.');
+    } else if (sub === 'integraciones') {
+      // Lo técnico de los canales que opera Biguá (docs/29 §Pestañas); el cliente ve su estado en Canales.
+      const r = await api('GET', `/clients/${enc(clientId)}/resumen`);
+      contenido = h('div', { class: 'stack' },
+        h('p', { class: 'small muted' }, 'La configuración técnica de LinkedIn y WhatsApp. El cliente ve el estado de cada uno en Canales.'),
+        dripifyCard(clientId, sdr, reload), whatsappCard(clientId, sdr, r.whatsapp, reload));
     } else {
       const activos = sdr.tecnico.bots_activos;
       contenido = h('div', { class: 'stack' },
