@@ -561,14 +561,22 @@ punto donde se retoma.
    - **Aprobaciones y calibración:** las aprobaciones quedan en la campaña de la persona, y la
      calibración se cuenta por campaña. La «principal» sigue con el número de Administración.
    - **Clientes sin el SDR** (sólo el gateway de correo): no tienen campañas ni estos controles.
-2. **Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).
-   - `reglas_manual` arma dos secciones, «Empresa» y «Campaña: <nombre>», con
-     `ajustesEfectivos`.
-   - El orquestador recibe «Campañas activas» con sus cuentas por día y reparte el pedido diario
-     por campaña (decisión 12).
-   - El prospector toma la campaña del pedido.
-   - `seguimiento` lee la campaña del prospecto.
-   - Se publica una versión de las reglas en canario.
+2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho; falta publicar
+   las reglas en canario cuando el código esté en producción.
+   - `reglas_manual` arma, al final del índice, «Ajustes de este cliente: Empresa»
+     (`ajustes-cliente`), «Campañas de este cliente» (`campanas`: clave, id, estado, cuentas por
+     día, calibración y buzones de cada una) y una «Campaña: <nombre>» (`campana-<clave>`) por
+     campaña activa, pausada o terminada. Los borradores no aparecen.
+   - **Transición de la «principal»:** mientras Empresa tenga sus claves (hasta la `014`), la
+     principal las toma de ahí, que es lo que edita el formulario de Empresa (`oferta` es su
+     `propuesta`, y `cuentas_por_dia` de Empresa, sus cuentas por día). Lo calcula
+     `en_campana.efectivos`, el mismo para las reglas, para los links que permite el gateway y
+     para la pestaña Campañas. Cuando la `014` saque esas claves, vale lo de la campaña sin
+     tocar el código.
+   - El orquestador hace un pedido por campaña activa, con sus cuentas por día (decisión 12).
+   - El prospector trabaja cada pedido con la campaña del pedido, guarda con `campana` y carga
+     LinkedIn de a una campaña por vez.
+   - `seguimiento` lee la sección de la campaña del prospecto.
 3. **`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).
 4. **Migración `014`** (§6.2, paso 3):
    - `descripcion` de Empresa;

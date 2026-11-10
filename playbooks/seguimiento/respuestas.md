@@ -22,6 +22,10 @@
 3. Para cada ítem con prospecto, `registro_historia(prospecto_id)`: qué le mandamos, qué pasó
    antes. Si no tiene prospecto (tipo `de_cuenta`), mirá la cuenta y buscá a la persona con
    `registro_buscar(email)`.
+   Leé la sección de **su campaña** (`campana-<clave>`, según el `campana_id` del prospecto, con
+   la clave de «Campañas de este cliente»): de ahí salen qué es positivo, la propuesta, las
+   objeciones, quién toma a los interesados y el link de agenda. Una respuesta se contesta aunque
+   la campaña esté pausada o terminada, desde el buzón que la recibió.
 4. Si quedan más que los que trae (`total`), hacé esta tanda y dejá el resto para la próxima.
 
 ## Decidir qué sigue
@@ -31,7 +35,7 @@
 | Qué llegó | Qué registrar | Qué sigue |
 |---|---|---|
 | **Positivo** (ver «Qué es un positivo») | `registro_evento` tipo `positivo` con un resumen de lo que pide | Escribí la respuesta (sección «Responder») y pedí la aprobación (`respuesta_positivo`). El gateway le avisa al orquestador: no hace falta que le escribas |
-| Pregunta u objeción, sin interés claro todavía | Estado `respondio` (ya lo puso el gateway) | Contestá en el hilo con lo que dicen los ajustes (oferta, objeciones). Durante la calibración, pedí aprobación tipo `otro` en vez de mandarla |
+| Pregunta u objeción, sin interés claro todavía | Estado `respondio` (ya lo puso el gateway) | Contestá en el hilo con lo que dice la campaña de la persona (propuesta, objeciones). Durante la calibración de su campaña, pedí aprobación tipo `otro` en vez de mandarla |
 | «Ahora no, más adelante» | Estado `en_pausa`, `proximo_fecha` en la fecha que dijo (o a 90 días), `proximo_canal: "mail"`, `proximo_paso` con lo que dijo | Una línea cordial si hace falta, sin vender |
 | Derivó a otra persona | Estado `derivo` | `registro_pedir` al `prospector` con nombre, cargo y email de la persona derivada, el `prospecto_id` y qué dijo. Si la derivada ya está en copia, avisalo |
 | No le interesa | Estado `negativo` con el motivo en `proximo_paso` | No contestes, salvo que haya preguntado algo |

@@ -90,10 +90,21 @@ test('sin configuración del cliente las reglas avisan que no prospecte; la CLI 
   };
   const out = await runCli(['sdr-config', A], JSON.stringify(cfg));
   assert.equal(out.status, 0, out.stderr);
+  // Empresa tiene lo común (la firma); a quién se le escribe, lo positivo y la calibración son de la
+  // campaña. La «principal» los toma de Empresa mientras sigan ahí (hasta la migración 014).
   const con = await ok(tok.a, 'reglas_manual', { bot: 'prospector', tarea: 'diaria', seccion: 'ajustes-cliente' });
-  assert.match(con.contenido, /Empresas de software de Argentina/);
-  assert.match(con.contenido, /primeros 2 mails nuevos necesitan aprobación/);
-  assert.match(con.contenido, /- pide reunión/);
+  assert.equal(con.titulo, 'Ajustes de este cliente: Empresa');
+  assert.match(con.contenido, /> Carla, Cliente SDR A/);
+  assert.doesNotMatch(con.contenido, /Empresas de software de Argentina/);
+  const lista = await ok(tok.a, 'reglas_manual', { bot: 'prospector', tarea: 'diaria', seccion: 'campanas' });
+  assert.match(lista.contenido, /### Principal\n\n- Clave `principal`, id `[0-9a-f-]{36}`\. Tipo: prospeccion\. Estado: \*\*activa\*\*/);
+  assert.match(lista.contenido, /Calibración: faltan 2 de 2 mails nuevos/);
+  const k = await ok(tok.a, 'reglas_manual', { bot: 'prospector', tarea: 'diaria', seccion: 'campana-principal' });
+  assert.equal(k.titulo, 'Campaña: Principal');
+  assert.match(k.contenido, /### A quién le venden\n\n> Empresas de software de Argentina/);
+  assert.match(k.contenido, /> - pide reunión/);
+  assert.match(k.contenido, /### Qué le pedimos al prospecto\n\n/, 'el llamado a la acción del tipo, si la campaña no dice');
+  assert.doesNotMatch(k.contenido, /Carla, Cliente SDR A/, 'la firma es de Empresa y del buzón');
 });
 
 test('reglas_manual: índice con comunes, bot, tarea y cliente; secciones de a una', async () => {
@@ -102,7 +113,9 @@ test('reglas_manual: índice con comunes, bot, tarea y cliente; secciones de a u
   const alcances = new Set(idx.indice.map((s) => s.alcance));
   assert.deepEqual([...alcances].sort(), ['bot', 'cliente', 'comun', 'tarea']);
   assert.equal(idx.indice[0].seccion, 'quienes-somos', 'primero lo común');
-  assert.equal(idx.indice.at(-1).seccion, 'ajustes-cliente', 'último lo del cliente');
+  assert.deepEqual(idx.indice.filter((s) => s.alcance === 'cliente').map((s) => s.seccion),
+    ['ajustes-cliente', 'campanas', 'campana-principal'], 'al final lo del cliente: Empresa, campañas y cada campaña');
+  assert.equal(idx.indice.at(-1).seccion, 'campana-principal');
   assert.ok(idx.indice.every((s) => s.titulo && s.resumen));
   assert.ok(!idx.indice.some((s) => s.seccion === 'plantilla'), 'la plantilla de routines no es parte del manual');
 
