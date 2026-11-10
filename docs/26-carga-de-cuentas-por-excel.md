@@ -1,10 +1,38 @@
 # Carga de cuentas y contactos por Excel
 
-Estado: **diseño, 10/11/2026.** Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+Estado: **etapa 1 construida, 10/11/2026** (ver §0: lo que cambió respecto del diseño original);
+las etapas 2 y 3 siguen en diseño. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
 `27` (la campaña por ICP, que usa esta carga como semilla).
+
+## 0. Lo construido en la etapa 1, y lo que cambió del diseño
+
+Al construir la etapa 1 se tomaron estas decisiones, que mandan sobre lo que dicen las secciones de
+abajo:
+
+| Tema | Diseño original | Cómo quedó |
+|---|---|---|
+| Dónde se sube | Una pestaña «Cuentas cargadas» con una columna «Uso» que mezclaba los tres usos | **Dos entradas con el mismo lector:** las cuentas son **de una campaña** (vista de la campaña → «Semillas del ICP» → Subir Excel o CSV) y las exclusiones son **de la empresa** (Empresa → No contactar → Subir Excel o CSV). No hay columna «Uso»: el destino lo da dónde se sube |
+| Usos de la etapa 1 | `prospectar`, `semilla`, `no_contactar` | `semilla` (en la campaña) y `no_contactar` (en la empresa). `prospectar` llega con la campaña de tipo `lista` (etapa 2); la migración ya deja las columnas listas |
+| Resolución sin dominio (§4.2) | El gateway llama a `resolver_cuentas` de ASCI | **Sin ASCI en la etapa 1**: el gateway no tiene cliente de ASCI. Una fila sin sitio web entra por su nombre; para prospectar, el `prospector` la completará con `resolver_cuentas` (etapa 2) |
+| Comparar por nombre | «Nombre normalizado» | Una clave que calcula la base, `sdr.empresa_clave(nombre)`: minúsculas, sin tildes ni puntuación y sin la forma societaria del final («Agrícola Ortiz y Cía. Ltda.» → `agricola ortiz`). `sdr.cuenta.nombre_clave` es una columna generada con esa clave, así el registro, la carga y los controles dicen lo mismo |
+| Subida del archivo | Multipart de hasta 5 MB, previa guardada 30 minutos | El gateway sólo recibe JSON: el archivo va **en base64**, hasta **3 MB** (las rutas de carga aceptan cuerpos de 4,4 MB; Vercel corta en 4,5). **No se guarda nada entre la vista previa y la confirmación:** el panel vuelve a mandar el archivo con la **huella** de la vista previa (archivo, hoja, destino y mapeo); si algo cambió, responde `carga_cambio` (409) y hay que volver a verla |
+| Lector de `.xlsx` | Una dependencia (`read-excel-file`) | **Lector propio** (`sdr/carga.mjs`): abre el zip con `zlib` de Node y lee los XML. Sólo valores: de una fórmula queda su último valor como texto; no se evalúa nada, ni macros ni vínculos. Topes de tamaño descomprimido contra archivos bomba |
+| Freno de §4.4 | Propuesta | **Construido** para cualquier alta en la lista (a mano, CSV pegado o archivo): las cuentas en investigación de esa empresa quedan `excluidas` con su motivo y las personas cargadas en Dripify se marcan para frenar en la próxima vuelta del reloj (`frenarPendientes`, como una baja). Si el alta la hizo el cliente y tocó algo en marcha, se le avisa al orquestador |
+| Una semilla | Excluida | Excluida, y además el gateway no deja que el bot la reabra ni la mueva de campaña (error `cuenta_semilla`, en `comun.md`) |
+| Migración | `017_carga_de_cuentas.sql` | `018_carga_de_cuentas.sql` (la 017 ya era la de aprobaciones del cliente) |
+
+**Piezas:** `db/migrations/018_carga_de_cuentas.sql`; `gateway/src/sdr/carga.mjs` (lectura, mapeo,
+plan); `no_contactar.mjs` (empresas por nombre, coincidencias por cuenta y por nombre);
+`store.mjs` (`aplicarNoContactar`, la protección de las semillas); `admin/servicio.mjs` y
+`admin/api.mjs` (`POST …/no-contactar/cargas/previa`, `POST …/no-contactar/cargas`,
+`POST …/sdr/campanas/:id/cargas/previa`, `POST …/sdr/campanas/:id/cargas`, `GET …/cargas`, auditoría
+`admin.sdr.carga` con conteos); el panel (`static/app.js`); y `test/carga.test.mjs`.
+
+**Quedan para la etapa 3:** deshacer un lote, el informe descargable por renglón, el mapeo
+guardado por cliente y `cargas_listar` en el MCP del panel.
 
 ## 1. El problema
 
@@ -158,7 +186,7 @@ archivo la trae).
 
 ## 6. Cambios técnicos
 
-### 6.1 Base (migración `017_carga_de_cuentas.sql`)
+### 6.1 Base (migración `018_carga_de_cuentas.sql`; lo construido en §0)
 
 ```sql
 create table sdr.lote_carga (
@@ -245,7 +273,7 @@ días).
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **1** | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
+| **1** (construida) | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
 | **2** | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
 | **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 
