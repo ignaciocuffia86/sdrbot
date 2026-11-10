@@ -384,7 +384,7 @@ test('Biguá borra un buzón; el correo del servidor no se toca', async () => {
 
 // ---------------------------------------------------------------- ajustes del SDR
 
-test('SDR: Biguá lo activa; el cliente edita su oferta y su tono, no lo técnico; queda historial y aviso', async () => {
+test('SDR: Biguá lo activa; el cliente edita lo de su empresa y su tono, no lo técnico; queda historial y aviso', async () => {
   const sin = await ctx.bigua.call('GET', '/clients/adm-b/sdr');
   assert.equal(sin.status, 200);
   assert.equal(sin.body.data.activo, false);
@@ -395,33 +395,34 @@ test('SDR: Biguá lo activa; el cliente edita su oferta y su tono, no lo técnic
   assert.equal(act.body.data.sdr.tecnico.calibracion_mails, 20);
   const malZona = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/config', { zona_horaria: 'Marte/Olimpo' });
   assert.equal(malZona.status, 400);
-  // Un cliente nuevo arranca con el formulario de Empresa sola (migración 015). Estas pruebas cubren
-  // el de la transición, el de un cliente de antes de la 014, que sigue andando.
-  assert.equal((await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data.formulario, 'empresa');
-  await store.asOwner((c) => c.query(`update sdr.cliente_config set formulario = 'transicion' where client_id = 'adm-b'`));
+  // Un solo formulario de Empresa (migración 022): lo de cada campaña no se carga acá.
+  const soloEmpresa = (await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data;
+  assert.equal(soloEmpresa.formulario, undefined);
+  assert.ok(!soloEmpresa.campos.some((c) => ['oferta', 'icp', 'cuentas_por_dia', 'buzones'].includes(c.clave)));
+  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { oferta: 'QA' } })).status, 400, 'la oferta es de la campaña');
 
-  const op = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 5, oferta: 'QA tercerizado.' } });
+  const op = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { acepta_mails_extrapolados: true, descripcion: 'QA tercerizado.' } });
   assert.equal(op.status, 200, JSON.stringify(op.body));
-  assert.deepEqual(op.body.data.cambios.sort(), ['cuentas_por_dia', 'oferta']);
+  assert.deepEqual(op.body.data.cambios.sort(), ['acepta_mails_extrapolados', 'descripcion']);
 
   const created = await ctx.bigua.call('POST', '/clients/adm-b/users', { email: 'ajustes@cliente-b.test', name: 'Ajustes B' });
   const cli = await activateAndLogin(created.body.data.setup_token, 'ajustes@cliente-b.test', PW.cliente);
   const vista = await cli.call('GET', '/clients/adm-b/sdr');
   assert.equal(vista.status, 200);
   assert.equal(vista.body.data.tecnico, undefined, 'el cliente no ve lo técnico');
-  assert.equal(vista.body.data.campos.find((c) => c.clave === 'cuentas_por_dia').editable, false);
+  assert.equal(vista.body.data.campos.find((c) => c.clave === 'acepta_mails_extrapolados').editable, false, 'operado: lo decide Biguá');
   assert.equal(vista.body.data.campos.find((c) => c.clave === 'tono').editable, true);
 
   const guardado = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', {
-    ajustes: { oferta: 'QA funcional y automatizado como servicio.', tono: 'directo', objeciones: ['«Ya tenemos QA»: cubrimos picos', ''],
-      cuentas_por_dia: 5 },
+    ajustes: { descripcion: 'QA funcional y automatizado como servicio.', tono: 'directo', objeciones: ['«Ya tenemos QA»: cubrimos picos', ''],
+      acepta_mails_extrapolados: true },
     nota: 'Ajuste de la oferta',
   });
   assert.equal(guardado.status, 200, JSON.stringify(guardado.body));
-  assert.deepEqual(guardado.body.data.cambios.sort(), ['objeciones', 'oferta', 'tono'], 'el valor técnico sin cambios se ignora');
+  assert.deepEqual(guardado.body.data.cambios.sort(), ['descripcion', 'objeciones', 'tono'], 'el valor técnico sin cambios se ignora');
   assert.match(guardado.body.data.sdr.vista_previa, /QA funcional y automatizado/);
   assert.match(guardado.body.data.sdr.vista_previa, /- «Ya tenemos QA»: cubrimos picos/);
-  const tecnico = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 50 } });
+  const tecnico = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { acepta_mails_extrapolados: false } });
   assert.equal(tecnico.status, 403);
   const config = await cli.call('PUT', '/clients/adm-b/sdr/config', { calibracion_mails: 0 });
   assert.equal(config.status, 403);
@@ -437,7 +438,7 @@ test('SDR: Biguá lo activa; el cliente edita su oferta y su tono, no lo técnic
   const pend = await sdr.pendientes('adm-b', 'orquestador');
   const aviso = pend.pedidos.find((p) => p.de_bot === 'panel');
   assert.ok(aviso, 'el orquestador recibe el aviso del cambio');
-  assert.match(aviso.que, /Oferta, Tono, Objeciones|Oferta/);
+  assert.match(aviso.que, /Qué hace la empresa/);
   assert.match(aviso.que, /Ajuste de la oferta/);
 
   // Historial y volver atrás.
@@ -446,9 +447,9 @@ test('SDR: Biguá lo activa; el cliente edita su oferta y su tono, no lo técnic
   assert.equal(h.length, 2);
   const vuelta = await cli.call('POST', `/clients/adm-b/sdr/historial/${h[1].id}/restaurar`);
   assert.equal(vuelta.status, 200, JSON.stringify(vuelta.body));
-  assert.equal(vuelta.body.data.sdr.ajustes.oferta, 'QA tercerizado.');
+  assert.equal(vuelta.body.data.sdr.ajustes.descripcion, 'QA tercerizado.');
   assert.equal(vuelta.body.data.sdr.ajustes.tono, undefined);
-  assert.equal(vuelta.body.data.sdr.ajustes.cuentas_por_dia, 5);
+  assert.equal(vuelta.body.data.sdr.ajustes.acepta_mails_extrapolados, true);
 
   const act2 = await ctx.bigua.call('GET', '/clients/adm-b/activity');
   assert.ok(act2.body.data.activity.some((a) => a.op === 'admin.sdr.ajustes'));
@@ -549,7 +550,7 @@ async function loginCliente(email) {
   return b;
 }
 
-test('SDR: en modo autogestionado el cliente decide el volumen hasta el tope que fija Biguá', async () => {
+test('SDR: en modo autogestionado el cliente decide lo suyo de Empresa; el volumen va en cada campaña', async () => {
   const cli = await loginCliente('ajustes@cliente-b.test');
   assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/config', { modo: 'autogestionado' })).status, 403, 'el modo lo fija Biguá');
 
@@ -561,38 +562,23 @@ test('SDR: en modo autogestionado el cliente decide el volumen hasta el tope que
   const vista = (await cli.call('GET', '/clients/adm-b/sdr')).body.data;
   assert.equal(vista.modo, 'autogestionado');
   assert.equal(vista.tope_cuentas_dia, 10);
-  assert.equal(vista.campos.find((c) => c.clave === 'cuentas_por_dia').editable, true);
-  assert.equal(vista.campos.find((c) => c.clave === 'senal_avisos').editable, false, 'la señal de ASCI sigue siendo de Biguá');
-  assert.deepEqual(vista.bloques.map((b) => b.clave), ['identidad', 'audiencia', 'conversacion', 'operacion']);
+  assert.equal(vista.campos.find((c) => c.clave === 'acepta_mails_extrapolados').editable, true, 'autogestionado: lo decide el cliente');
+  assert.deepEqual(vista.bloques.map((b) => b.clave), ['identidad', 'voz', 'exclusiones', 'prueba', 'conversacion', 'operacion']);
 
-  const ok = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 8, acepta_mails_extrapolados: false } });
+  const ok = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { acepta_mails_extrapolados: false } });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
-  assert.equal(ok.body.data.sdr.ajustes.cuentas_por_dia, 8);
-  const pasado = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 11 } });
-  assert.equal(pasado.status, 400);
-  assert.match(pasado.body.error.message, /hasta 10/);
-  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { senal_avisos: 'texto: qa' } })).status, 403);
-  // Vacío, el orquestador usaría 10 por defecto: el cliente no lo puede dejar vacío con tope.
-  const vacio = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: null } });
-  assert.equal(vacio.status, 400);
-  assert.match(vacio.body.error.message, /no puede quedar vacío/);
-  // Volver a una versión con un valor por arriba del tope tampoco lo saltea.
-  const versiones = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.historial;
-  const conCinco = versiones.find((v) => v.cambios.includes('cuentas_por_dia') && v.id !== versiones[0].id);
-  await store.asOwner((c) => c.query(`update sdr.ajustes_historial set ajustes = jsonb_set(ajustes, '{cuentas_por_dia}', '50') where id = $1`, [conCinco.id]));
-  const vuelta = await cli.call('POST', `/clients/adm-b/sdr/historial/${conCinco.id}/restaurar`);
-  assert.equal(vuelta.status, 400, JSON.stringify(vuelta.body));
-  assert.match(vuelta.body.error.message, /hasta 10/);
-  assert.equal((await cli.call('GET', '/clients/adm-b/sdr')).body.data.ajustes.cuentas_por_dia, 8);
-  assert.equal((await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 30 } })).status, 200,
-    'Biguá no tiene tope');
+  assert.equal(ok.body.data.sdr.ajustes.acepta_mails_extrapolados, false);
+  // El volumen y la señal son de cada campaña: no se cargan en Empresa.
+  for (const ajustes of [{ cuentas_por_dia: 8 }, { senal_avisos: 'texto: qa' }, { llamado_accion: 'Una charla' }]) {
+    assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes })).status, 400, JSON.stringify(ajustes));
+  }
 
-  // Los campos nuevos de la conversación.
+  // Los campos de la conversación.
   const mal = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { link_agenda: 'http://agenda.test/ana' } });
   assert.equal(mal.status, 400);
   const nuevos = await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: {
-    link_agenda: 'https://agenda.test/ana', llamado_accion: 'Una charla de 20 minutos esta semana',
-    responsable_positivos: 'Ana Pérez, ana@cliente.test', prueba_social: ['Banca: regresión de 5 días a 6 horas (caso publicado)'],
+    link_agenda: 'https://agenda.test/ana', responsable_positivos: 'Ana Pérez', responsable_email: 'ana@cliente.test',
+    prueba_social: ['Banca: regresión de 5 días a 6 horas (caso publicado)'],
   } });
   assert.equal(nuevos.status, 200, JSON.stringify(nuevos.body));
   assert.match(nuevos.body.data.sdr.vista_previa, /### Link de agenda\n\n> https:\/\/agenda\.test\/ana/);
@@ -606,9 +592,14 @@ test('SDR: en modo autogestionado el cliente decide el volumen hasta el tope que
   assert.match(v, /### Tono\n\n> Cercano\.\n> \n> ### Calibración\n> \n> Terminada: mandá todo sin aprobación\./);
   assert.doesNotMatch(v, /^### Calibración$/m);
 
-  // Vuelto a operado, el volumen es otra vez de Biguá.
+  // Volver a una versión: lo que el cliente no edita en operado queda como está.
   await ctx.bigua.call('PUT', '/clients/adm-b/sdr/config', { modo: 'operado', tope_cuentas_dia: null });
-  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 6 } })).status, 403);
+  assert.equal((await cli.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { acepta_mails_extrapolados: true } })).status, 403);
+  const versiones = (await cli.call('GET', '/clients/adm-b/sdr')).body.data.historial;
+  const antes = versiones.find((x) => x.cambios.includes('acepta_mails_extrapolados') && x.id !== versiones[0].id);
+  assert.ok(antes);
+  assert.equal((await cli.call('POST', `/clients/adm-b/sdr/historial/${antes.id}/restaurar`)).status, 200);
+  assert.equal((await cli.call('GET', '/clients/adm-b/sdr')).body.data.ajustes.acepta_mails_extrapolados, false);
   const cfg = (await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data.tecnico;
   assert.equal(cfg.tope_cuentas_dia, null);
 });

@@ -16,7 +16,7 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
-import { diferencias, editable, formularioEmpresa, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
+import { diferencias, editable, FORMULARIO_EMPRESA, tieneLegado, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as registro from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
@@ -508,7 +508,7 @@ async function leerSdr(c, user, clientId) {
       where client_id = $1 and campana_id is null order by id desc limit 30`,
     [clientId])).rows;
   const permiso = { esBigua: isBigua(user), autogestion: cfg?.modo === 'autogestionado' };
-  const form = formularioEmpresa(cfg);
+  const form = FORMULARIO_EMPRESA;
   const out = {
     activo: Boolean(cfg),
     modo: cfg?.modo ?? 'operado',
@@ -516,8 +516,6 @@ async function leerSdr(c, user, clientId) {
     ajustes: cfg?.ajustes ?? {},
     bloques: form.bloques,
     campos: form.campos.map((x) => ({ ...x, editable: editable(x, permiso) })),
-    // Con la 014 aplicada, lo de cada campaña (a quién, la propuesta, el volumen) se edita en su campaña.
-    formulario: form.transicion ? 'transicion' : 'empresa',
     vista_previa: cfg ? renderAjustes(clientId, client.name, cfg, await extraAjustes(c, clientId)) : null,
     historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloDe) })),
     actualizado_at: cfg?.actualizado_at ?? null,
@@ -547,8 +545,7 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
     const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
     const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
-    // select *: la columna formulario existe desde la 014; antes vale la transición.
-    const form = formularioEmpresa(cfg);
+    const form = FORMULARIO_EMPRESA;
     let nuevo;
     if (restaurado && !isBigua(user)) {
       // Volver atrás no puede tocar lo que el cliente no edita, y lo que sí edita pasa por las
@@ -561,20 +558,19 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
       }
       nuevo = form.aplicar(cfg.ajustes, vuelta, permiso);
     } else {
-      // Biguá vuelve a la versión tal cual. Una de antes de la 014 devuelve a Empresa las claves de
-      // la campaña: es la vuelta atrás de la migración (la «principal» vuelve a leerlas de Empresa).
+      // Biguá vuelve a la versión tal cual.
       nuevo = restaurado ? { ...cambios } : form.aplicar(cfg.ajustes, cambios, permiso);
     }
     const cambiados = diferencias(cfg.ajustes, nuevo);
     if (!cambiados.length) return { cambios: [] };
-    if (cambiados.includes('cuentas_por_dia')) {
-      await campanas.cuentasDeLaPrincipal(c, clientId, nuevo.cuentas_por_dia, { tope: cfg.tope_cuentas_dia, esBigua: isBigua(user) });
-    }
     await c.query(`update sdr.cliente_config set ajustes = $2, actualizado_at = now() where client_id = $1`,
       [clientId, JSON.stringify(nuevo)]);
     await c.query(
       `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_email, por_rol, nota) values ($1, $2, $3, $4, $5, $6)`,
       [clientId, JSON.stringify(nuevo), cambiados, user.email, user.role, nota ?? null]);
+    // Una versión de antes de la 014 trae lo de la campaña a Empresa: pasa a la «principal», como en
+    // la migración (Empresa gana). Empresa nunca guarda lo de la campaña (migración 022).
+    if (tieneLegado(nuevo)) await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
     await audit(c, user, clientId, restaurado ? 'admin.sdr.restaurar' : 'admin.sdr.ajustes', { campos: cambiados });
     return { cambios: cambiados };
   });
