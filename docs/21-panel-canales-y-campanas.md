@@ -519,7 +519,7 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
   cliente cambia volumen, buzones, extrapolados y antigüedad del aviso, con las cuentas por día
   hasta el tope. La activación de campañas por el cliente llega con la etapa C.
 
-### 7.2 C1: lo hecho y lo que falta (en pausa desde el 09/11/2026)
+### 7.2 C1: lo hecho y lo que falta
 
 C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review;
 las correcciones entraron con el PR #6 y las reglas, en canario (`2026.11.09-2`). Este es el
@@ -562,8 +562,8 @@ punto donde se retoma.
      calibración se cuenta por campaña. La «principal» sigue con el número de Administración.
    - **Clientes sin el SDR** (sólo el gateway de correo): no tienen campañas ni estos controles.
 2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho (PR #9) y
-   publicado en canario como `2026.11.10-1`. Estable sigue en `2026.11.05-6` hasta pasar a
-   BairesQA a las reglas nuevas.
+   publicado en canario como `2026.11.10-1` (y después `2026.11.10-2`, paso 3). El 10/11 pasó a
+   estable (ver «Primera versión», abajo).
    - `reglas_manual` arma, al final del índice, «Ajustes de este cliente: Empresa»
      (`ajustes-cliente`), «Campañas de este cliente» (`campanas`: clave, id, estado, cuentas por
      día, calibración y buzones de cada una) y una «Campaña: <nombre>» (`campana-<clave>`) por
@@ -604,11 +604,38 @@ punto donde se retoma.
    - Vuelta atrás: Biguá restaura la versión «Antes de la migración 014»; Empresa recupera las
      claves y el panel vuelve al formulario de la transición.
    - El historial de Empresa ya no muestra ni restaura versiones de una campaña.
-5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
-   transición.
-6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
-   abrir la pestaña (paso 5): con la `014`, el formulario de Empresa ya no edita lo de la
-   campaña, y hasta el paso 5 un cliente no tiene dónde editarlo.
+5. ~~**Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
+   transición.~~ Hecho. El aviso queda sólo para un cliente que todavía no migró (Empresa con
+   las claves de la principal): dice que lo de la principal se edita en Empresa. Los clientes
+   nuevos arrancan en el formulario de la transición; pasarlos al de Empresa sola queda para
+   después de C1.
+6. ~~**Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
+   abrir la pestaña (paso 5).~~ **Aplicada el 10/11/2026**, después del merge del PR #13. BairesQA:
+   Empresa con nombre, descripción, tono, idioma, firma, exclusiones, objeciones y extrapolados;
+   la «principal» con propuesta, ICP, cargos, señal, ventana del aviso, llamado a la acción y
+   positivos, y 4 cuentas por día. Para volver atrás: Biguá restaura la versión «Antes de la
+   migración 014» del historial de Empresa.
+
+**C1 terminado.**
+
+### 7.3 Primera versión (10/11/2026)
+
+Todo quedó nivelado como punto de partida:
+
+- **Reglas:** `estable` y `canario` en `2026.11.10-2` (48 secciones, 8 routines), igual a
+  `playbooks/` en `main`.
+- **Base:** migraciones `001` a `014` aplicadas, las mismas que hay en `gateway/db/migrations`.
+- **Gateway:** producción corre `main`.
+- **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
+
+**Lo que existe pero no se probó todavía**, porque hasta ahora no hubo un cliente real:
+
+- El circuito canario → estable con un cliente en canario: hasta hoy las versiones se
+  publicaron en canario sin ningún cliente ahí.
+- La vuelta atrás de la `014` (restaurar «Antes de la migración 014»): cubierta por las pruebas,
+  no ejercitada en producción.
+- La sección única de las reglas viejas (`seccionesCliente` con `porCampana: false`): ya no la usa
+  ninguna versión publicada en un canal; queda para un cliente con versión fija vieja.
 
 **Pendientes chicos, vistos al construir:**
 
