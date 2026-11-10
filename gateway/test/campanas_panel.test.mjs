@@ -356,3 +356,49 @@ test('migración 014: lo de la campaña pasa a la «principal», Empresa se qued
     await q(`delete from mailgw.client where id = $1`, [M]);
   }
 });
+
+test('campañas: volver a una versión anterior del historial, con los mismos permisos que un cambio a mano', async () => {
+  const lista = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas`));
+  const creada = ok(await u.a.call('POST', `/clients/${A}/sdr/campanas`, { nombre: 'Para restaurar', tipo: 'prospeccion',
+    ajustes: { propuesta: 'Versión uno', icp: 'Software' } }));
+  const path = `/clients/${A}/sdr/campanas/${creada.campana.id}`;
+  ok(await u.a.call('PUT', path, { ajustes: { propuesta: 'Versión dos', icp: 'Bancos' } }));
+  ok(await u.bigua.call('PUT', path, { ajustes: { senal_avisos: 'texto: qa' } }));
+  let v = ok(await u.a.call('GET', path));
+  const primera = v.historial.at(-1);
+  assert.deepEqual(primera.cambios.slice(0, 1), ['creada']);
+
+  // El cliente vuelve a la primera: lo suyo vuelve; la señal, que es de Biguá, queda como está.
+  const r = ok(await u.a.call('POST', `${path}/historial/${primera.id}/restaurar`));
+  assert.deepEqual(r.cambios.sort(), ['icp', 'propuesta']);
+  assert.equal(r.campana.ajustes.propuesta, 'Versión uno');
+  assert.equal(r.campana.ajustes.senal_avisos, 'texto: qa');
+  assert.match(r.historial[0].nota, /^Vuelta a la versión del /);
+  // Biguá sí la vuelve entera.
+  const rb = ok(await u.bigua.call('POST', `${path}/historial/${primera.id}/restaurar`));
+  assert.deepEqual(rb.cambios, ['senal_avisos']);
+
+  // Una versión de otra campaña, o de Empresa, no sirve acá; ni una de otro cliente.
+  const otra = lista.campanas.find((x) => x.clave === 'principal');
+  const deOtra = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${otra.id}`)).historial[0];
+  assert.equal((await u.a.call('POST', `${path}/historial/${deOtra.id}/restaurar`)).status, 404);
+  assert.equal((await u.b.call('POST', `${path}/historial/${primera.id}/restaurar`)).status, 404);
+});
+
+test('clientes nuevos: arrancan con el formulario de Empresa sola, y lo de la campaña que trae la CLI va a la principal', async () => {
+  const N = 'cp-n';
+  await store.upsertClient(N, 'Campañas N');
+  try {
+    const sdr = await import('../src/sdr/store.mjs');
+    await sdr.setConfig(N, { ajustes: { nombre_comercial: 'N SA', oferta: 'Datos', icp: 'Retail', cuentas_por_dia: 3 } });
+    const cfg = (await q(`select formulario, ajustes from sdr.cliente_config where client_id = $1`, [N])).rows[0];
+    assert.equal(cfg.formulario, 'empresa');
+    assert.deepEqual(Object.keys(cfg.ajustes).sort(), ['descripcion', 'nombre_comercial']);
+    const k = (await q(`select ajustes, cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal'`, [N])).rows[0];
+    assert.equal(k.ajustes.icp, 'Retail');
+    assert.equal(k.ajustes.propuesta, 'Datos');
+    assert.equal(k.cuentas_por_dia, 3);
+  } finally {
+    await q(`delete from mailgw.client where id = $1`, [N]);
+  }
+});

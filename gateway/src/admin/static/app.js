@@ -707,11 +707,27 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
     h('dl', { class: 'efectivos' }, Object.entries(d.efectivos.valores).map(([clave, v]) => [
       h('dt', {}, d.efectivos.titulos?.[clave] ?? clave, ' ', h('span', { class: 'small muted' }, `(${ORIGEN[d.efectivos.origen[clave]] ?? ''})`)),
       h('dd', {}, valorTexto(v))])));
+  const volver = (v) => (ev) => {
+    const b = ev.currentTarget;
+    openDialog('Volver a esta versión', h('p', {}, `Los ajustes de la campaña vuelven a como estaban el ${fmtDate(v.at)}. ` +
+      'El estado, el volumen y los buzones no cambian. Queda en el historial y se puede deshacer.'), {
+      submitLabel: 'Volver a esta versión',
+      submit: async () => {
+        const r = await api('POST', `${path}/historial/${v.id}/restaurar`);
+        toast(r.cambios.length ? 'Listo: campaña restaurada.' : 'Ya estaba así.');
+        reload();
+        return true;
+      },
+    });
+    b.blur();
+  };
   const historial = d.historial.length
-    ? h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota'].map((x) => h('th', {}, x)))),
-      h('tbody', {}, d.historial.map((v) => h('tr', {}, h('td', { class: 'small' }, fmtDate(v.at)),
-        h('td', { class: 'small' }, v.por_email ?? '—'), h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
-        h('td', { class: 'small' }, v.nota ?? '')))))
+    ? h('table', {}, h('thead', {}, h('tr', {}, ['Cuándo', 'Quién', 'Qué cambió', 'Nota', ''].map((x) => h('th', {}, x)))),
+      h('tbody', {}, d.historial.map((v, i) => h('tr', {}, h('td', { class: 'small' }, fmtDate(v.at)),
+        h('td', { class: 'small' }, v.por_email ?? (v.por_rol === 'cli' ? 'CLI de Biguá' : '—')), h('td', { class: 'small' }, v.cambios_titulos.join(', ') || '—'),
+        h('td', { class: 'small' }, v.nota ?? ''),
+        h('td', {}, i === 0 ? h('span', { class: 'badge b-ok' }, 'vigente')
+          : terminada ? null : h('button', { class: 'sm', onclick: volver(v) }, 'Volver a esta'))))))
     : h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
 
   return h('div', { class: 'stack' },

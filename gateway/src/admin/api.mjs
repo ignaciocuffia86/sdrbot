@@ -828,6 +828,22 @@ route('PUT', '/clients/:client/sdr/campanas/:id', async ({ user, params, body })
   return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
 });
 
+route('POST', '/clients/:client/sdr/campanas/:id/historial/:hid/restaurar', async ({ user, params }) => {
+  const hid = Number(params.hid);
+  if (!Number.isInteger(hid) || hid < 1) throw notFound('No existe esa versión de la campaña.');
+  const r = await scoped(user, params.client, async (c) => {
+    await clienteExiste(c, params.client);
+    const x = await campanas.restaurar(c, params.client, params.id, hid, { user, esBigua: isBigua(user) });
+    if (x.cambios.length) await audit(c, user, params.client, 'admin.sdr.campana.restaurar', { campana: params.id, campos: x.cambios });
+    return x;
+  });
+  if (r.cambios.length) {
+    await avisarCampana(user, params.client, params.id,
+      `El cliente volvió la campaña ${citaCliente(r.nombre)} a una versión anterior desde el panel (${r.cambios.map(tituloCampana).join(', ')}).`);
+  }
+  return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
+});
+
 route('POST', '/clients/:client/sdr/campanas/:id/duplicar', async ({ user, params, body }) => {
   const r = await scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);

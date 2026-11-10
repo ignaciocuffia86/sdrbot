@@ -622,26 +622,42 @@ punto donde se retoma.
 
 Todo quedó nivelado como punto de partida:
 
-- **Reglas:** `estable` y `canario` en `2026.11.10-2` (48 secciones, 8 routines), igual a
-  `playbooks/` en `main`.
-- **Base:** migraciones `001` a `014` aplicadas, las mismas que hay en `gateway/db/migrations`.
+- **Reglas:** `estable` y `canario` en `2026.11.10-3` (48 secciones, 8 routines; la `-3` suma el
+  recorte en proporción y el reparto de los publicantes), igual a `playbooks/` en `main`.
+- **Base:** migraciones `001` a `015` aplicadas. Hay dos `015`: `015_clientes_nuevos_formulario_empresa`
+  (de `main`) y `015_crm`, que aplicó la rama del CRM (`claude/gallant-mccarthy-nb9k81`) antes de
+  mergearse. El registro usa el nombre entero, así que no chocan; la del CRM entra a `main` con
+  esa rama.
 - **Gateway:** producción corre `main`.
 - **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
 
-**Lo que existe pero no se probó todavía**, porque hasta ahora no hubo un cliente real:
+**Probado en producción con BairesQA** (10/11, cliente de prueba):
 
-- El circuito canario → estable con un cliente en canario: hasta hoy las versiones se
-  publicaron en canario sin ningún cliente ahí.
-- La vuelta atrás de la `014` (restaurar «Antes de la migración 014»): cubierta por las pruebas,
-  no ejercitada en producción.
-- La sección única de las reglas viejas (`seccionesCliente` con `porCampana: false`): ya no la usa
-  ninguna versión publicada en un canal; queda para un cliente con versión fija vieja.
+- **Canario → estable con un cliente en canario:** BairesQA pasó a `canario`, se publicó
+  `2026.11.10-3` ahí (BairesQA la leía y `estable` seguía en `-2`), se pasó `estable` a `-3` y
+  BairesQA volvió a `estable`.
+- **Vuelta atrás de la `014`:** Empresa volvió a la versión «Antes de la migración 014» (Empresa
+  recupera lo de la campaña y el panel muestra el formulario de la transición) y
+  `sdr.migrar_empresa_014` la volvió a migrar: quedó igual que antes del ensayo, con las dos vueltas
+  en el historial.
+
+**Sin uso todavía:** la sección única de las reglas viejas (`seccionesCliente` con
+`porCampana: false`). Ya no la usa ninguna versión publicada en un canal; queda para un cliente
+con versión fija vieja.
 
 **Pendientes chicos, vistos al construir:**
 
 - ~~Un buzón dado de alta después de la `012` no entraba en ninguna campaña.~~ La migración `013`
   lo suma solo a la «principal»; de las demás campañas lo saca o lo suma el panel.
-- Volver una campaña a una versión anterior del historial, como en Empresa.
+- ~~Volver una campaña a una versión anterior del historial, como en Empresa.~~ Hecho: «Volver a
+  esta» en el historial de la campaña, con los permisos de un cambio a mano. Vuelven los ajustes;
+  el estado, el volumen y los buzones no.
+- ~~Los clientes nuevos arrancaban en el formulario de la transición.~~ La migración `015` los
+  pone en el de Empresa sola (y a los que no tenían claves de campaña en Empresa). Si la CLI carga
+  claves de campaña, `setConfig` las pasa a la «principal» con `sdr.migrar_empresa_014`.
+- ~~El recorte en proporción y el reparto de ASCI (decisión 12) no estaban en las reglas.~~ El
+  orquestador recorta todas las campañas en proporción si los buzones no dan y lo anota en la
+  bitácora, y reparte los 3 publicantes del día en proporción a las cuentas de cada pedido.
 
 **Después de C1:** C2, con varios perfiles de LinkedIn (§6.1), y D, con los tipos Evento y
 Reactivación y la cadencia configurable.
