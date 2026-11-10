@@ -588,14 +588,27 @@ punto donde se retoma.
    - El panel muestra en Resumen la tabla «Campañas · últimos 7 días» (activas y en pausa), por
      ahora sólo a Biguá, como la pestaña Campañas.
    - El orquestador cuenta los números por campaña en el resumen del día.
-4. **Migración `014`** (§6.2, paso 3):
-   - `descripcion` de Empresa;
-   - borrar de Empresa las claves que pasaron a la campaña, salvo `acepta_mails_extrapolados`;
-   - sacar `ajustes.buzones`;
-   - el formulario de Empresa pasa a `CAMPOS_EMPRESA`.
+4. ~~**Migración `014`** (§6.2, paso 3).~~ Escrita (`014_empresa_sin_claves_de_campana.sql`); se
+   aplica en el paso 6. Por cliente (`sdr.migrar_empresa_014`, idempotente):
+   - la «principal» toma los valores de Empresa de hoy (Empresa gana: es lo que se siguió
+     editando después de la `012`), `oferta` como `propuesta` y las cuentas por día en su
+     columna; deja su copia de `acepta_mails_extrapolados`, que hereda de Empresa;
+   - Empresa estrena `descripcion` (copia de `oferta`) y pierde esas claves, `cuentas_por_dia` y
+     `buzones`. Antes, una foto «Antes de la migración 014» en el historial;
+   - `sdr.cliente_config.formulario` pasa a `empresa`: el panel muestra `CAMPOS_EMPRESA`. Los
+     clientes nuevos siguen en `transicion` hasta el paso 5.
+   - El Resumen pide «Revisar la descripción de la empresa» mientras sea igual a la propuesta de
+     la principal.
+   - Las reglas de antes de las campañas (las estables de hoy) siguen recibiendo todo en
+     «Ajustes de este cliente», con lo de la principal y sus nombres de antes.
+   - Vuelta atrás: Biguá restaura la versión «Antes de la migración 014»; Empresa recupera las
+     claves y el panel vuelve al formulario de la transición.
+   - El historial de Empresa ya no muestra ni restaura versiones de una campaña.
 5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
    transición.
-6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña.
+6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
+   abrir la pestaña (paso 5): con la `014`, el formulario de Empresa ya no edita lo de la
+   campaña, y hasta el paso 5 un cliente no tiene dónde editarlo.
 
 **Pendientes chicos, vistos al construir:**
 

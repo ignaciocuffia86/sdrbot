@@ -97,8 +97,18 @@ test('una versión de las reglas que no conoce las campañas recibe todo en una 
   // el cliente pase a las reglas nuevas, siguen ahí (la «principal» no se parte).
   const s = seccionesCliente('cr', 'Cliente R', cfg, extra, { porCampana: false });
   assert.deepEqual(s.map((x) => x.seccion), ['ajustes-cliente']);
-  assert.match(s[0].contenido, /### Cuentas nuevas por día\n\n> 6/);
+  assert.match(s[0].contenido, /### Cuentas nuevas por día\n\n> 4/, 'las de la columna de la principal, las que suma el tope');
   assert.match(s[0].contenido, /> Software en Argentina/);
+});
+
+test('después de la 014, las reglas de antes siguen recibiendo lo de la principal con sus nombres de antes', () => {
+  const migrado = { ...cfg, ajustes: { nombre_comercial: 'Cliente R', descripcion: 'QA tercerizado', firma: 'Equipo R', tono: 'cercano' } };
+  const k = { ...principal, ajustes: { propuesta: 'QA tercerizado', icp: 'Software en Argentina', positivos: ['pide reunión'], roles_objetivo: ['CTO'] } };
+  const [s] = seccionesCliente('cr', 'Cliente R', migrado, { ...extra, campanas: [k] }, { porCampana: false });
+  assert.match(s.contenido, /### Oferta\n\n> QA tercerizado/);
+  assert.match(s.contenido, /### A quién le venden\n\n> Software en Argentina/);
+  assert.match(s.contenido, /### Cuentas nuevas por día\n\n> 4/);
+  assert.match(s.contenido, /> - pide reunión/);
 });
 
 test('un borrador no aparece en las reglas', () => {
