@@ -57,11 +57,18 @@ export const CAMPOS_DE = {
 const normalizarEncabezado = (s) => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
   .replace(/[^a-z0-9]+/g, ' ').trim();
 
-export function proponerMapeo(encabezados, destino) {
+// guardado: { campo: encabezado } de la última carga del cliente (docs/27 §9, etapa 3): si el
+// archivo trae ese encabezado, va primero; lo demás, por los nombres de siempre.
+export function proponerMapeo(encabezados, destino, guardado = {}) {
   const campos = CAMPOS_DE[destino];
   const norm = encabezados.map(normalizarEncabezado);
   const usadas = new Set();
   const mapeo = {};
+  for (const [campo, h] of Object.entries(guardado ?? {})) {
+    if (!campos.includes(campo) || typeof h !== 'string') continue;
+    const i = norm.findIndex((x, j) => !usadas.has(j) && x && x === normalizarEncabezado(h));
+    if (i >= 0) { mapeo[campo] = i; usadas.add(i); }
+  }
   // Primero las coincidencias exactas, después las parciales («Razón social de la exportadora»).
   for (const exacta of [true, false]) {
     for (const campo of campos) {
@@ -485,10 +492,10 @@ export function huella({ archivo, hoja, destino, campanaId, mapeo }) {
 
 // Lee el archivo y arma las filas del destino. Devuelve también lo que el panel necesita para el
 // paso de mapeo: hojas, encabezados, el mapeo usado y una muestra de los primeros renglones.
-export function prepararFilas({ archivo, hoja, mapeo, destino, campanaId }) {
+export function prepararFilas({ archivo, hoja, mapeo, destino, campanaId, mapeoGuardado }) {
   const buf = Buffer.from(String(archivo ?? ''), 'base64');
   const libro = leerArchivo(buf, { hoja });
-  const usado = validarMapeo(mapeo ?? proponerMapeo(libro.encabezados, destino), destino, libro.encabezados.length);
+  const usado = validarMapeo(mapeo ?? proponerMapeo(libro.encabezados, destino, mapeoGuardado), destino, libro.encabezados.length);
   const filas = libro.filas.map((f) => normalizarFila(f, usado, libro.encabezados, destino));
   return {
     hojas: libro.hojas, hoja: libro.hoja, encabezados: libro.encabezados, mapeo: usado,
@@ -496,7 +503,52 @@ export function prepararFilas({ archivo, hoja, mapeo, destino, campanaId }) {
     muestra: libro.filas.slice(0, 5).map((f) => f.celdas),
     filas,
     huella: huella({ archivo: String(archivo), hoja: libro.hoja, destino, campanaId, mapeo: usado }),
+    // Para guardar con el lote: qué encabezado fue a cada campo.
+    mapeo_nombres: Object.fromEntries(Object.entries(usado).map(([k, i]) => [k, String(libro.encabezados[i]).slice(0, 120)])),
   };
+}
+
+// ---------------------------------------------------------------- informe
+
+const TEXTO_RESULTADO = {
+  nueva: 'entra', ya_estaba: 'ya estaba en la lista', repetida: 'repetida en el archivo', ya_en_registro: 'ya estaba en el registro: no se tocó',
+  ya_era_semilla: 'ya era semilla', suma_contacto: 'otra persona de la misma empresa', suma_a_existente: 'ya estaba en investigación: suma sus contactos',
+  ya_existe: 'ya estaba en el registro', no_contactar: 'está en no contactar', suprimida: 'pidió la baja o rebotó antes',
+};
+const textoResultado = (r) => TEXTO_RESULTADO[r] ?? r ?? '';
+const MAX_INFORME = MAX_FILAS + 50;
+
+// El informe de una carga: una fila por renglón del archivo, con lo que pasó. Se guarda con el lote
+// (30 días) y se descarga como CSV.
+export function informeNoContactar(filas) {
+  return {
+    columnas: ['Renglón', 'Empresa', 'Entra como', 'Resultado', 'Motivo', 'Avisos'],
+    filas: filas.slice(0, MAX_INFORME).map((f) => [f.renglon, f.empresa ?? '',
+      (f.entradas ?? []).map((e) => `${e.tipo === 'empresa' ? 'nombre' : e.tipo}: ${e.valor}`).join(' | '),
+      f.error ? `error: ${f.error}` : (f.entradas ?? []).map((e) => textoResultado(e.resultado)).join(' | '),
+      f.motivo ?? '', (f.avisos ?? []).join(' | ')]),
+  };
+}
+
+export function informeCampana(filas) {
+  return {
+    columnas: ['Renglón', 'Empresa', 'Dominio', 'Uso', 'Resultado', 'Contacto', 'Resultado del contacto', 'Avisos'],
+    filas: filas.slice(0, MAX_INFORME).map((f) => [f.renglon, f.empresa ?? '', f.dominio ?? '', f.uso ?? '',
+      f.error ? `error: ${f.error}` : `${textoResultado(f.resultado)}${f.en_no_contactar ? ' (en no contactar)' : ''}`,
+      f.persona ? [f.persona.nombre, f.persona.email, f.persona.linkedin_url].filter(Boolean).join(' · ') : '',
+      f.persona ? textoResultado(f.persona.resultado) : '', (f.avisos ?? []).join(' | ')]),
+  };
+}
+
+// CSV para Excel en español: punto y coma, UTF-8 con BOM. Una celda que Excel tomaría como fórmula
+// (empieza con = + - @, tabulación o retorno) va con un apóstrofo adelante: se ve como texto.
+export function csvDeInforme(informe) {
+  const celda = (v) => {
+    let x = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(x)) x = `'${x}`;
+    return /[";\n\r]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x;
+  };
+  return `\uFEFF${[informe.columnas, ...informe.filas].map((r) => r.map(celda).join(';')).join('\r\n')}\r\n`;
 }
 
 // ---------------------------------------------------------------- no contactar

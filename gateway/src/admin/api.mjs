@@ -124,6 +124,8 @@ route('POST', '/clients/:client/sdr/campanas/:id/cargas/previa', S.campanaCargaP
 route('POST', '/clients/:client/sdr/campanas/:id/cargas', S.campanaCargaAplicar);
 route('GET', '/clients/:client/sdr/campanas/:id/lista', S.campanaListaVer);
 route('GET', '/clients/:client/cargas', S.cargasListar);
+route('GET', '/clients/:client/cargas/:id/informe', S.cargaInforme);
+route('POST', '/clients/:client/cargas/:id/deshacer', S.cargaDeshacer);
 route('GET', '/clients/:client/resumen', S.resumenVer);
 route('GET', '/clients/:client/domains', S.dominiosVer);
 route('POST', '/clients/:client/domains/check', S.dominiosVerificar);

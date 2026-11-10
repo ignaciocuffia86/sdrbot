@@ -856,6 +856,60 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
 // Las cuentas de la campaña que vienen de un archivo (docs/27): en una «Lista del cliente», las que
 // el SDR prospecta en el orden del archivo; en cualquier campaña, las semillas del ICP (empresas
 // modelo que no reciben nada).
+// Las cargas de un destino, con su informe (30 días) y el botón para deshacerlas (docs/27 §4.1).
+function resumenCarga(x) {
+  const r = x.resumen ?? {};
+  if (x.destino === 'no_contactar') {
+    return [plural(r.nuevas ?? 0, 'fila nueva en la lista', 'filas nuevas en la lista'),
+      r.ya_estaban ? `${plural(r.ya_estaban, 'ya estaba', 'ya estaban')}` : null].filter(Boolean).join(', ');
+  }
+  return [r.prospectar ? plural(r.prospectar, 'cuenta para prospectar', 'cuentas para prospectar') : null,
+    semillasDe(r) ? plural(semillasDe(r), 'semilla', 'semillas') : null,
+    r.personas ? plural(r.personas, 'persona', 'personas') : null,
+    r.ya_en_registro ? `${plural(r.ya_en_registro, 'ya estaba', 'ya estaban')} en el registro` : null]
+    .filter(Boolean).join(', ') || 'nada nuevo';
+}
+
+function tablaCargas(clientId, cargas, { vacio, alDeshacer }) {
+  if (!cargas.length) return h('p', { class: 'muted small' }, vacio);
+  const informe = (x) => async (ev) => {
+    const r = await busy(ev.currentTarget, () => api('GET', `/clients/${enc(clientId)}/cargas/${enc(x.id)}/informe`));
+    if (!r) return;
+    const url = URL.createObjectURL(new Blob([r.csv], { type: 'text/csv;charset=utf-8' }));
+    const a = h('a', { href: url, download: r.nombre });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  const deshacer = (x) => () => openDialog('Deshacer la carga', h('div', {},
+    h('p', {}, x.destino === 'no_contactar'
+      ? `Las filas que «${x.archivo}» agregó a No contactar salen de la lista. Lo que ya hicieron (cuentas excluidas, LinkedIn frenado) no vuelve atrás.`
+      : `Las cuentas y personas que creó «${x.archivo}» salen del registro. Sólo se puede mientras nadie las haya trabajado ` +
+        '(ningún mail, LinkedIn, aprobación ni próximo paso).'),
+    h('p', { class: 'small muted' }, 'No se puede volver a hacer: para cargarlas de nuevo, se sube el archivo otra vez.')), {
+    submitLabel: 'Deshacer', danger: true,
+    submit: async () => {
+      const r = await api('POST', `/clients/${enc(clientId)}/cargas/${enc(x.id)}/deshacer`);
+      const d = r.deshecho;
+      toast(d.destino === 'no_contactar' ? `Listo: ${plural(d.filas, 'fila salió', 'filas salieron')} de la lista.`
+        : `Listo: ${plural(d.cuentas, 'cuenta salió', 'cuentas salieron')} del registro.`);
+      alDeshacer?.(r);
+      return true;
+    },
+  });
+  return h('table', {}, h('thead', {}, h('tr', {}, ['Archivo', 'Cuándo', 'Quién', 'Resultado', ''].map((t) => h('th', {}, t)))),
+    h('tbody', {}, cargas.map((x) => h('tr', {},
+      h('td', {}, x.archivo, x.hoja ? h('div', { class: 'small muted' }, `hoja «${x.hoja}»`) : null),
+      h('td', { class: 'small' }, fmtDate(x.creado_at)), h('td', { class: 'small' }, x.por_email),
+      h('td', { class: 'small' }, x.estado === 'deshecho'
+        ? [h('span', { class: 'badge b-mute' }, 'deshecha'), h('div', { class: 'muted' }, `${fmtDate(x.deshecho_at)}${x.deshecho_por ? ` · ${x.deshecho_por}` : ''}`)]
+        : resumenCarga(x)),
+      h('td', { class: 'acciones-carga' },
+        x.tiene_informe ? h('button', { class: 'sm', type: 'button', onclick: informe(x) }, 'Informe') : null,
+        x.estado === 'deshecho' ? null : h('button', { class: 'sm', type: 'button', onclick: deshacer(x) }, 'Deshacer'))))));
+}
+
 // Los lotes de la etapa 1 sólo traían semillas, contadas en «nuevas».
 const semillasDe = (r) => r.semillas ?? (r.prospectar === undefined ? r.nuevas ?? 0 : 0);
 
@@ -876,17 +930,9 @@ async function semillasCard({ clientId, path, k, terminada }) {
   };
   const pintarLotes = async () => {
     const { cargas } = await api('GET', `/clients/${enc(clientId)}/cargas`);
-    const deEsta = cargas.filter((x) => x.campana_id === k.id);
-    lista.replaceChildren(deEsta.length
-      ? h('table', {}, h('thead', {}, h('tr', {}, ['Archivo', 'Cuándo', 'Quién', 'Resultado'].map((x) => h('th', {}, x)))),
-        h('tbody', {}, deEsta.map((x) => h('tr', {}, h('td', {}, x.archivo, x.hoja ? h('div', { class: 'small muted' }, `hoja «${x.hoja}»`) : null),
-          h('td', { class: 'small' }, fmtDate(x.creado_at)), h('td', { class: 'small' }, x.por_email),
-          h('td', { class: 'small' }, [x.resumen.prospectar ? plural(x.resumen.prospectar, 'cuenta para prospectar', 'cuentas para prospectar') : null,
-            semillasDe(x.resumen) ? plural(semillasDe(x.resumen), 'semilla', 'semillas') : null,
-            x.resumen.personas ? plural(x.resumen.personas, 'persona', 'personas') : null,
-            x.resumen.ya_en_registro ? `${plural(x.resumen.ya_en_registro, 'ya estaba', 'ya estaban')} en el registro` : null]
-            .filter(Boolean).join(', ') || 'nada nuevo')))))
-      : h('p', { class: 'muted small' }, 'Todavía no se cargó ningún archivo en esta campaña.'));
+    lista.replaceChildren(tablaCargas(clientId, cargas.filter((x) => x.campana_id === k.id), {
+      vacio: 'Todavía no se cargó ningún archivo en esta campaña.', alDeshacer: () => { pintarLotes(); pintarEstado(); },
+    }));
   };
   const subir = h('button', { type: 'button', disabled: terminada || null, onclick: () => cargaArchivoDialog({
     titulo: esLista ? `Subir cuentas a «${k.nombre}»` : `Subir semillas a «${k.nombre}»`, path: `${path}/cargas`, destino: 'campana',
@@ -1125,11 +1171,18 @@ async function noContactarCard(clientId) {
     const r = await busy(agregar, () => api('POST', path, { valor: valor.value, ...(motivo.value.trim() ? { motivo: motivo.value.trim() } : {}) }), err);
     if (r) { pintar(r); informar(r); informarEfecto(r.efecto); valor.value = ''; motivo.value = ''; valor.focus(); }
   });
+  const lotes = h('div');
+  const pintarLotes = async () => {
+    const { cargas } = await api('GET', `/clients/${enc(clientId)}/cargas`);
+    const deLista = cargas.filter((x) => x.destino === 'no_contactar');
+    lotes.replaceChildren(...(deLista.length ? [h('details', {}, h('summary', { class: 'small' }, `Cargas desde archivo (${deLista.length})`),
+      tablaCargas(clientId, deLista, { alDeshacer: async () => { pintar(await api('GET', path)); pintarLotes(); } }))] : []));
+  };
   const subir = h('button', { type: 'button', onclick: () => cargaArchivoDialog({
     titulo: 'Subir un Excel a no contactar', path: `${path}/cargas`, destino: 'no_contactar',
     ayuda: 'Clientes, referidos, partners: cada fila es una empresa que el SDR no toca en ninguna campaña. Con sitio web entra por dominio; ' +
       'sin sitio, por el nombre (sin importar la forma societaria). El motivo queda a la vista en la lista. Nada se guarda hasta confirmar.',
-    alTerminar: (r) => { pintar(r); informarEfecto(r.efecto); },
+    alTerminar: (r) => { pintar(r); informarEfecto(r.efecto); pintarLotes(); },
   }) }, 'Subir Excel o CSV');
   const pegar = h('button', { type: 'button', onclick: () => openDialog('Pegar una lista', h('div', {},
     h('p', { class: 'small muted' }, 'Un dominio, un mail o el nombre de una empresa por renglón. Después de una coma, el motivo (opcional).'),
@@ -1146,8 +1199,9 @@ async function noContactarCard(clientId) {
     alta, err,
     h('div', { class: 'row' }, subir, pegar,
       h('span', { class: 'small muted' }, 'Un Excel con la columna de la empresa (y, si hay, sitio web, motivo y mail del contacto).')),
-    salida, filtro, cuerpo);
+    salida, lotes, filtro, cuerpo);
   pintar(await api('GET', path));
+  await pintarLotes();
   return card;
 }
 

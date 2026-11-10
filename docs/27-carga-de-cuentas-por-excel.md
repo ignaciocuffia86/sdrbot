@@ -1,7 +1,7 @@
 # Carga de cuentas y contactos por Excel
 
-Estado: **etapas 1 y 2 construidas, 10/11/2026** (ver §0: lo que cambió respecto del diseño
-original); la etapa 3 sigue en diseño. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+Estado: **etapas 1, 2 y 3 construidas, 10/11/2026** (ver §0: lo que cambió respecto del diseño
+original). Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
@@ -44,8 +44,15 @@ plan); `no_contactar.mjs` (empresas por nombre, coincidencias por cuenta y por n
 | Reglas | `prospector/lista.md` (tomar, completar dominio y decisor, escribir con la nota del cliente, descartar si no hay a quién); `prospector/diaria.md` deriva ahí; `orquestador/diaria.md` pide como a las demás y avisa cuando la lista se termina; `comun.md` suma `campana_no_es_lista`. La sección de cada campaña lista se lo dice al bot |
 | Panel | En una campaña lista, la tarjeta «Cuentas de la lista» con cuántas quedan sin trabajar, en curso y cerradas (`GET …/sdr/campanas/:id/lista`), y la vista previa con el uso y el contacto de cada fila |
 
-**Quedan para la etapa 3:** deshacer un lote, el informe descargable por renglón, el mapeo
-guardado por cliente y `cargas_listar` en el MCP del panel.
+### Etapa 3: deshacer, informe, mapeo guardado y MCP
+
+| Tema | Cómo quedó |
+|---|---|
+| Deshacer un lote | `sdr.deshacer_lote` en la base (migración `021_carga_etapa3.sql`), con el cliente fijado por el gateway: la aplicación no gana permiso de borrar. **Campaña:** borra las cuentas que creó el lote (con lo que cuelga de ellas) y las personas que sumó a cuentas que ya estaban; no se deshace (`carga_en_uso`, 409) si alguna de esas personas tuvo un toque, un próximo paso, Dripify o una aprobación, o una cuenta está en contacto o en pausa. **No contactar:** saca de la lista las filas del lote; lo que ya hicieron (cuentas excluidas, Dripify frenado) no vuelve atrás. El lote queda `deshecho`, con quién y cuándo, y deja de contar para activar una lista |
+| Informe | Una fila por renglón del archivo con lo que pasó (y sus avisos), guardado con el lote y **borrado a los 30 días** (se vacía al listar las cargas). Se baja como CSV para Excel (punto y coma, UTF-8 con BOM); una celda que Excel tomaría como fórmula va con un apóstrofo adelante |
+| Mapeo guardado | El lote guarda qué encabezado fue a cada campo (`mapeo_nombres`); la próxima carga del mismo destino propone ese mapeo si el archivo trae esos encabezados, y completa el resto por los nombres de siempre |
+| Panel | La tabla de cargas (en la campaña y, plegada, en No contactar) con «Informe» y «Deshacer» |
+| MCP del panel | `cargas_listar`, de lectura (docs/24): subir, deshacer y bajar el informe quedan en el panel |
 
 ## 1. El problema
 
@@ -288,7 +295,7 @@ días).
 |---|---|---|
 | **1** (construida) | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
 | **2** (construida) | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
-| **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
+| **3** (construida) | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 
 La etapa 1 es lo que hace falta antes del kickoff con Alberto; la 2, antes de que salga su primer
 mail.

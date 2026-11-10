@@ -534,6 +534,97 @@ test('lista: se carga con sus contactos, no se activa vacía y el prospector la 
   assert.match(seccion.contenido, /reglas_manual\(prospector, lista\)/);
 });
 
+// ---------------------------------------------------------------- etapa 3: informe, mapeo guardado y deshacer
+
+test('etapa 3: el informe se baja como CSV seguro y vence a los 30 días; el mapeo se recuerda', async () => {
+  const path = `/clients/${A}/no-contactar/cargas`;
+  const raro = (filas) => b64(Buffer.from(['Razón social del exportador;Página institucional;Por qué', ...filas].join('\n')));
+  const archivo = raro(['=HYPERLINK("http://x");;Fórmula', 'Exportadora Informe;informe.test;Cliente']);
+  // Con estos encabezados el mapeo propuesto no encuentra el sitio: se corrige a mano.
+  const pv = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'raro.csv' }));
+  assert.equal(pv.mapeo.dominio, undefined);
+  const mapeo = { empresa: 0, dominio: 1, motivo: 2 };
+  const pv2 = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'raro.csv', mapeo }));
+  const ap = ok(await u.a.call('POST', path, { archivo, nombre: 'raro.csv', mapeo, huella: pv2.huella }));
+
+  // La próxima carga con esas columnas ya viene con el mapeo de la última.
+  const otra = ok(await u.a.call('POST', `${path}/previa`, { archivo: raro(['Otra;otra-informe.test;x']), nombre: 'raro2.csv' }));
+  assert.deepEqual(otra.mapeo, mapeo);
+
+  const cargas = ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas;
+  const lote = cargas.find((x) => x.id === ap.lote.id);
+  assert.equal(lote.tiene_informe, true);
+  const inf = ok(await u.a.call('GET', `/clients/${A}/cargas/${lote.id}/informe`));
+  assert.equal(inf.nombre, 'informe-raro.csv');
+  assert.ok(inf.csv.startsWith('﻿Renglón;Empresa;Entra como;Resultado;Motivo;Avisos\r\n'), inf.csv.slice(0, 80));
+  assert.ok(inf.csv.includes('\r\n2;"\'=HYPERLINK(""http://x"")";"nombre: =HYPERLINK'), 'la fórmula va como texto');
+  assert.match(inf.csv, /\r\n3;Exportadora Informe;dominio: informe\.test;entra;Cliente;\r\n/);
+  // A los 30 días el informe ya no está.
+  await q(`update sdr.lote_carga set creado_at = now() - interval '31 days' where id = $1`, [lote.id]);
+  const vencido = await u.a.call('GET', `/clients/${A}/cargas/${lote.id}/informe`);
+  assert.equal(vencido.status, 404);
+  assert.match(vencido.body.error.message, /30 días/);
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas.find((x) => x.id === lote.id).tiene_informe, false);
+  assert.equal((await q(`select informe from sdr.lote_carga where id = $1`, [lote.id])).rows[0].informe, null);
+});
+
+test('etapa 3: deshacer saca lo que creó la carga mientras nadie lo trabajó, y nada más', async () => {
+  // No contactar: las filas del lote salen de la lista; la cuenta que excluyó sigue excluida.
+  const k = (await sdr.guardarCuenta(A, { nombre: 'Para Deshacer', dominio: 'deshacer.test' }, meta)).cuenta;
+  const archivo = b64(Buffer.from('empresa,web\nPara Deshacer,deshacer.test\nOtra Más,otra-mas.test\n'));
+  const pv = ok(await u.a.call('POST', `/clients/${A}/no-contactar/cargas/previa`, { archivo, nombre: 'quitar.csv' }));
+  const ap = ok(await u.a.call('POST', `/clients/${A}/no-contactar/cargas`, { archivo, nombre: 'quitar.csv', huella: pv.huella }));
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [k.id])).rows[0].estado, 'excluida');
+  // Otro cliente no lo ve ni lo deshace.
+  assert.equal((await u.b.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`)).status, 404);
+  assert.equal((await u.b.call('POST', `/clients/${B}/cargas/${ap.lote.id}/deshacer`)).status, 404);
+  assert.equal((await u.b.call('GET', `/clients/${B}/cargas/${ap.lote.id}/informe`)).status, 404);
+  const d = ok(await u.a.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`));
+  assert.deepEqual(d.deshecho, { cuentas: 0, personas: 0, filas: 2, destino: 'no_contactar' });
+  const lista = ok(await u.a.call('GET', `/clients/${A}/no-contactar`)).no_contactar;
+  assert.ok(!lista.some((x) => x.valor === 'deshacer.test' || x.valor === 'otra-mas.test'));
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [k.id])).rows[0].estado, 'excluida', 'lo hecho no vuelve atrás');
+  assert.equal((await u.a.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`)).status, 400, 'una vez');
+
+  // Una lista: con una persona trabajada no se deshace; sin, salen sus cuentas y personas (también la
+  // que sumó a una cuenta que ya estaba) y la cuenta que ya estaba sigue.
+  const camp = ok(await u.bigua.call('POST', `/clients/${A}/sdr/campanas`, {
+    nombre: 'Para deshacer', tipo: 'lista', cuentas_por_dia: 1, ajustes: { propuesta: 'x', roles_objetivo: ['CEO'] } })).campana;
+  const previa = await sdr.guardarCuenta(A, { nombre: 'Ya Estaba Deshacer', dominio: 'ya-deshacer.test' }, meta);
+  const cuentasCsv = b64(Buffer.from('empresa,web,contacto,mail\nNueva Uno,nueva-uno.test,Uno,uno@nueva-uno.test\n' +
+    'Nueva Dos,nueva-dos.test,Dos,dos@nueva-dos.test\nYa Estaba Deshacer,ya-deshacer.test,Tres,tres@ya-deshacer.test\n'));
+  const cpath = `/clients/${A}/sdr/campanas/${camp.id}/cargas`;
+  const cpv = ok(await u.a.call('POST', `${cpath}/previa`, { archivo: cuentasCsv, nombre: 'cuentas.csv' }));
+  const cap = ok(await u.a.call('POST', cpath, { archivo: cuentasCsv, nombre: 'cuentas.csv', huella: cpv.huella }));
+  assert.equal(cap.lote.resumen.personas, 3);
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${camp.id}`)).campana.cuentas_de_lista, 2);
+
+  const uno = (await q(`select id from sdr.prospecto where client_id = $1 and email = 'uno@nueva-uno.test'`, [A])).rows[0];
+  await sdr.guardarProspecto(A, { id: uno.id, proximo_paso: 'enviar mail 1 cuando se apruebe' }, meta);
+  const enUso = await u.a.call('POST', `/clients/${A}/cargas/${cap.lote.id}/deshacer`);
+  assert.equal(enUso.status, 409);
+  assert.equal(enUso.body.error.code, 'carga_en_uso');
+  assert.equal((await q(`select count(*)::int as n from sdr.cuenta where lote_id = $1`, [cap.lote.id])).rows[0].n, 2, 'no tocó nada');
+
+  await q(`update sdr.prospecto set proximo_paso = null where id = $1`, [uno.id]);
+  const dd = ok(await u.a.call('POST', `/clients/${A}/cargas/${cap.lote.id}/deshacer`));
+  assert.deepEqual(dd.deshecho, { cuentas: 2, personas: 3, filas: 0, destino: 'campana' });
+  assert.equal((await q(`select count(*)::int as n from sdr.cuenta where client_id = $1 and dominio in ('nueva-uno.test', 'nueva-dos.test')`, [A])).rows[0].n, 0);
+  assert.equal((await q(`select count(*)::int as n from sdr.prospecto where client_id = $1 and email = 'tres@ya-deshacer.test'`, [A])).rows[0].n, 0);
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [previa.cuenta.id])).rows[0].estado, 'en_investigacion');
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${camp.id}`)).campana.cuentas_de_lista, 0, 'una carga deshecha no cuenta');
+  const c = ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas.find((x) => x.id === cap.lote.id);
+  assert.equal(c.estado, 'deshecho');
+  assert.equal(c.deshecho_por, 'usuario@carga-a.test');
+  const act = ok(await u.bigua.call('GET', `/clients/${A}/activity`)).activity;
+  assert.ok(act.some((x) => x.op === 'admin.sdr.carga.deshacer'));
+
+  // La función no deja deshacer sin cliente fijado, ni un lote de otro cliente aunque se sepa el id.
+  await assert.rejects(store.asRole('mailgw_app', B, (c2) => c2.query(`select sdr.deshacer_lote($1, 'x') as r`, [ap.lote.id]))
+    .then(({ rows }) => { if (rows[0].r.error !== 'no_existe') throw new Error('debía ser no_existe'); throw new Error('ok'); }), /^Error: ok$/);
+  await assert.rejects(store.asRole('mailgw_portal', A, (c2) => c2.query(`select sdr.deshacer_lote($1, 'x')`, [ap.lote.id])), /permission denied/);
+});
+
 // ---------------------------------------------------------------- aislamiento
 
 test('aislamiento: un cliente no sube, no previsualiza ni ve las cargas de otro', async () => {

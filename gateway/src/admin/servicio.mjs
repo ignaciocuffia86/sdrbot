@@ -861,7 +861,7 @@ const OPS_PANEL = {
   'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida', 'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
-  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.sdr.carga': 'carga de un archivo', 'admin.conexion.revocar': 'conexión de Claude desconectada',
+  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.sdr.carga': 'carga de un archivo', 'admin.sdr.carga.deshacer': 'carga deshecha', 'admin.conexion.revocar': 'conexión de Claude desconectada',
 };
 
 export const monitorVer = async ({ user, params }) => {
@@ -1000,12 +1000,21 @@ function exigirHuella(b, prep) {
   }
 }
 
+// El mapeo de la última carga aplicada de ese destino (etapa 3): con qué encabezado fue cada campo.
+async function mapeoGuardado(c, clientId, destino) {
+  const { rows } = await c.query(
+    `select mapeo_nombres from sdr.lote_carga where client_id = $1 and destino = $2 and estado = 'aplicado'
+      order by creado_at desc limit 1`, [clientId, destino]);
+  return rows[0]?.mapeo_nombres ?? {};
+}
+
 async function noContactarDeArchivo(user, clientId, b) {
-  const prep = carga.prepararFilas({ ...b, destino: 'no_contactar' });
-  const plan = await scoped(user, clientId, async (c) => {
+  const guardado = await scoped(user, clientId, async (c) => {
     await clienteExiste(c, clientId);
-    return carga.planNoContactar(c, clientId, prep.filas);
+    return mapeoGuardado(c, clientId, 'no_contactar');
   });
+  const prep = carga.prepararFilas({ ...b, destino: 'no_contactar', mapeoGuardado: guardado });
+  const plan = await scoped(user, clientId, (c) => carga.planNoContactar(c, clientId, prep.filas));
   const porRenglon = new Map();
   for (const e of plan.entradas) {
     const x = porRenglon.get(e.renglon) ?? [];
@@ -1040,14 +1049,15 @@ export const noContactarCargaPrevia = async ({ user, params, body }) => {
 
 export const noContactarCargaAplicar = async ({ user, params, body }) => {
   const b = V.carga(body);
-  const { prep, plan, totales } = await noContactarDeArchivo(user, params.client, b);
+  const { prep, plan, filas, totales } = await noContactarDeArchivo(user, params.client, b);
   exigirHuella(b, prep);
   if (!plan.nuevas.length && !totales.ya_estaban) throw errors.invalid('El archivo no tiene ninguna fila para cargar.');
   const r = await scoped(user, params.client, async (c) => {
     const { rows: [lote] } = await c.query(
-      `insert into sdr.lote_carga (client_id, destino, archivo, hoja, mapeo, resumen, por_email)
-       values ($1, 'no_contactar', $2, $3, $4, $5, $6) returning id, archivo, creado_at`,
-      [params.client, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, totales, user.email]);
+      `insert into sdr.lote_carga (client_id, destino, archivo, hoja, mapeo, mapeo_nombres, resumen, informe, por_email)
+       values ($1, 'no_contactar', $2, $3, $4, $5, $6, $7, $8) returning id, archivo, creado_at`,
+      [params.client, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, prep.mapeo_nombres, totales,
+        JSON.stringify(carga.informeNoContactar(filas)), user.email]);
     const nuevas = await carga.insertarEnTandas(plan.nuevas, (t) => insertarNoContactar(c, params.client, t, user.email, lote.id));
     // Entre la vista previa y acá otra persona pudo cargar la misma fila: el resumen dice lo que entró.
     const resumen = { ...totales, nuevas: nuevas.length, ya_estaban: totales.ya_estaban + (plan.nuevas.length - nuevas.length) };
@@ -1070,8 +1080,11 @@ async function campanaDeCarga(c, clientId, id) {
 }
 
 async function cuentasDeArchivo(user, clientId, campanaId, b) {
-  await scoped(user, clientId, (c) => clienteExiste(c, clientId));
-  return carga.prepararFilas({ ...b, destino: 'campana', campanaId });
+  const guardado = await scoped(user, clientId, async (c) => {
+    await clienteExiste(c, clientId);
+    return mapeoGuardado(c, clientId, 'campana');
+  });
+  return carga.prepararFilas({ ...b, destino: 'campana', campanaId, mapeoGuardado: guardado });
 }
 
 const totalesCampana = (filas) => {
@@ -1122,9 +1135,10 @@ export const campanaCargaAplicar = async ({ user, params, body }) => {
     }
     const totales = totalesCampana(prep.filas);
     const { rows: [lote] } = await c.query(
-      `insert into sdr.lote_carga (client_id, destino, campana_id, archivo, hoja, mapeo, resumen, por_email)
-       values ($1, 'campana', $2, $3, $4, $5, $6, $7) returning id, archivo, creado_at`,
-      [params.client, k.id, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, totales, user.email]);
+      `insert into sdr.lote_carga (client_id, destino, campana_id, archivo, hoja, mapeo, mapeo_nombres, resumen, informe, por_email)
+       values ($1, 'campana', $2, $3, $4, $5, $6, $7, $8, $9) returning id, archivo, creado_at`,
+      [params.client, k.id, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, prep.mapeo_nombres, totales,
+        JSON.stringify(carga.informeCampana(prep.filas)), user.email]);
     const hecho = await carga.aplicarCampana(c, params.client, k, plan, {
       loteId: lote.id,
       motivoSemilla: `Semilla del ICP de la campaña ${citaCliente(k.nombre, 120)}: no se le escribe.`,
@@ -1165,14 +1179,61 @@ export const campanaListaVer = async ({ user, params }) => {
   });
 };
 
+// El informe de cada carga vive 30 días; el archivo, nunca.
+const DIAS_INFORME = 30;
+const vaciarInformesVencidos = (c, clientId) => c.query(
+  `update sdr.lote_carga set informe = null
+    where client_id = $1 and informe is not null and creado_at < now() - make_interval(days => $2)`, [clientId, DIAS_INFORME]);
+
 export const cargasListar = async ({ user, params }) => scoped(user, params.client, async (c) => {
   await clienteExiste(c, params.client);
+  await vaciarInformesVencidos(c, params.client);
   const { rows } = await c.query(
-    `select l.id, l.destino, l.campana_id, k.nombre as campana, l.archivo, l.hoja, l.resumen, l.estado, l.por_email, l.creado_at
+    `select l.id, l.destino, l.campana_id, k.nombre as campana, l.archivo, l.hoja, l.resumen, l.estado, l.por_email, l.creado_at,
+            l.deshecho_at, l.deshecho_por, (l.informe is not null) as tiene_informe
        from sdr.lote_carga l left join sdr.campana k on k.id = l.campana_id and k.client_id = l.client_id
       where l.client_id = $1 order by l.creado_at desc limit 100`, [params.client]);
-  return { cargas: rows };
+  return { cargas: rows, dias_informe: DIAS_INFORME };
 });
+
+export const cargaInforme = async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  if (!UUID.test(String(params.id))) throw notFound('No existe esa carga.');
+  await vaciarInformesVencidos(c, params.client);
+  const { rows } = await c.query(`select archivo, creado_at, informe from sdr.lote_carga where client_id = $1 and id = $2`,
+    [params.client, params.id]);
+  if (!rows.length) throw notFound('No existe esa carga.');
+  if (!rows[0].informe) throw notFound(`El informe de esa carga ya no está: se borra a los ${DIAS_INFORME} días.`);
+  const base = rows[0].archivo.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[^\p{L}\p{N} ._-]+/gu, '_').slice(0, 80) || 'carga';
+  return { nombre: `informe-${base}.csv`, csv: carga.csvDeInforme(rows[0].informe), filas: rows[0].informe.filas.length };
+});
+
+// Deshacer una carga (docs/27 §4.1, paso 5): lo hace sdr.deshacer_lote en la base, con el cliente
+// fijado, después de comprobar que la persona ve este cliente.
+export const cargaDeshacer = async ({ user, params }) => {
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  if (!UUID.test(String(params.id))) throw notFound('No existe esa carga.');
+  const r = await asRole('mailgw_app', params.client, async (c) => {
+    const { rows: [x] } = await c.query(`select sdr.deshacer_lote($1, $2) as r`, [params.id, user.email]);
+    const { rows: [l] } = await c.query(`select destino, campana_id, archivo from sdr.lote_carga where client_id = $1 and id = $2`,
+      [params.client, params.id]);
+    return { ...x.r, lote: l ?? null };
+  });
+  if (r.error === 'no_existe') throw notFound('No existe esa carga.');
+  if (r.error === 'ya_deshecho') throw errors.invalid('Esa carga ya se deshizo.');
+  if (r.error === 'en_uso') {
+    throw new GatewayError('carga_en_uso', `No se puede deshacer: ${r.en_uso} persona(s) o cuenta(s) de esta carga ya se están trabajando ` +
+      '(un mail, LinkedIn, una aprobación o un próximo paso). Para sacar una cuenta, descartala; para que el SDR no toque a una empresa, ' +
+      'va a No contactar.', 409);
+  }
+  await scoped(user, params.client, (c) => audit(c, user, params.client, 'admin.sdr.carga.deshacer',
+    { lote: params.id, destino: r.lote.destino, cuentas: r.cuentas, personas: r.personas, filas: r.filas }));
+  if (r.lote.destino === 'campana' && r.cuentas) {
+    await avisarCampana(user, params.client, r.lote.campana_id,
+      `El cliente deshizo la carga ${citaCliente(r.lote.archivo)}: salieron ${r.cuentas} cuenta(s) y ${r.personas} persona(s) que nadie había trabajado.`);
+  }
+  return { deshecho: { cuentas: r.cuentas, personas: r.personas, filas: r.filas, destino: r.lote.destino } };
+};
 
 // ----- resumen: lo que necesita atención, para la primera pantalla del cliente
 
