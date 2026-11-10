@@ -270,8 +270,8 @@ reintentos, la idempotencia de cada paso y el aislamiento por cliente de las dos
 ## 12. Abierto
 
 - ~~¿Disparar al aprobar o al enviar la respuesta?~~ **Al aprobar** (decidido el 09/11/2026).
-- **Clientes sin CRM** (Excel o Google Sheets): la misma cola admite un adaptador de planilla que
-  sólo agrega filas. No entra en estas etapas.
+- ~~**Clientes sin CRM** (Excel o Google Sheets)~~: **Google Sheets**, hecho (§14). Excel queda
+  afuera: se puede subir a Google Drive y abrir como planilla.
 - Si la reunión agendada actualiza el CRM (`11` §10): sería un motivo más de la capa 1.
 - Los scopes exactos de la app privada de HubSpot y el rol de Dynamics se cierran al implementar
   (`11` §6.4).
@@ -321,3 +321,42 @@ scopes:
 «Probar conexión» verifica las lecturas. Los permisos de escritura se confirman con la primera
 carga: si falta uno, la conexión queda en «token rechazado» con el scope que falta, y la carga
 espera en la cola hasta que se corrija.
+
+## 14. Clientes sin CRM: una planilla de Google Sheets
+
+Para el cliente que no tiene CRM y lleva su gestión en una planilla. Usa la misma cola, el mismo
+tope por día, los mismos reintentos y la misma pausa: sólo cambia lo que hace cada carga.
+`sdr.crm_conexion.proveedor` vale `sheets`, y el adaptador es `gateway/src/sdr/sheets.mjs`.
+
+- **Qué se escribe:** una fila por positivo, al final de la pestaña: Fecha, Nombre, Email, Cargo,
+  Empresa, Dominio, Canal, Qué pide, Lo que respondió, Respuesta aprobada, Por qué lo contactamos,
+  Origen («SDR Bot Biguá») e ID registro. No hay nota, tarea, dueño, propiedad de origen ni campos
+  fijos: son de HubSpot.
+- **Encabezados del cliente:** si la fila 1 ya tiene títulos, cada dato va a la columna que se
+  llame como él o como un sinónimo (Mail, Correo, Nombre y apellido, Compañía…), sin importar
+  mayúsculas ni acentos. Los que no tienen columna se agregan al final de la fila 1. En una pestaña
+  vacía se escriben todos. Nunca se cambia un encabezado ni una fila que ya estaba.
+- **Sin duplicar:** el ID registro es el id del prospecto. Antes de agregar la fila se lee esa
+  columna; si ya está (una carga que se cortó después de escribir), se usa esa fila. Por eso, a
+  diferencia de HubSpot, un prospecto sin email se carga igual.
+- **Lo que pasa por una IA:** la fila lleva lo que escribió el prospecto y lo que redactó un bot.
+  Se escribe con `valueInputOption=RAW`, así un texto que empieza con `=` queda como texto y no
+  como fórmula. Las celdas van sin caracteres de control y con 5.000 caracteres como máximo.
+- **Acceso:** una cuenta de servicio de Google de Biguá, con la clave JSON en `MAILGW_GOOGLE_SA`
+  (Vercel). El cliente comparte la planilla como Editor con el mail de esa cuenta, que el panel
+  muestra para copiar. El gateway pide el token con un JWT firmado (scope `spreadsheets`) y lo
+  reusa hasta que vence. Si la planilla no está compartida o no existe (403 o 404), la conexión
+  queda «sin acceso» y las cargas esperan en la cola, como con un token de HubSpot rechazado.
+- **La pestaña:** la de la URL (`#gid=`); sin gid, la primera. Su nombre se anota al probar.
+- **Probar conexión** lee la planilla y deja listos los encabezados: es la prueba de que la cuenta
+  puede escribir.
+- **Al terminar:** el evento `crm.cargado` lleva `proveedor: 'sheets'` y el enlace a la fila, y el
+  `crm_id` del prospecto queda como `<pestaña>!<fila>`.
+- **Panel:** Canales → CRM, «Dónde se cargan los positivos». Pasar de HubSpot a la planilla (o al
+  revés) no borra nada: las cargas hechas quedan donde están, y el token de HubSpot queda guardado.
+- **Pruebas:** `gateway/test/crm_sheets.test.mjs`, contra un Google simulado.
+
+**Para ponerlo en marcha (una vez, Biguá):** crear en Google Cloud un proyecto con la API de Google
+Sheets habilitada, una cuenta de servicio sin roles y una clave JSON. Pegar el JSON entero en la
+variable `MAILGW_GOOGLE_SA` de Vercel y volver a desplegar. Hasta entonces, el panel deja guardar
+la URL pero «Probar conexión» dice que falta la cuenta.

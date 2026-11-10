@@ -30,7 +30,7 @@ esté completa, el Resumen muestra «Alta: N de 16 pasos listos».
 | | Dominios | Los dominios de los buzones están verificados y sin errores | |
 | Canales | LinkedIn · Dripify | La API key está cargada y probada, sin error | Sí |
 | | WhatsApp | Está activado | Sí |
-| | CRM · HubSpot | La conexión está activa | Sí |
+| | CRM · HubSpot o planilla | La conexión está activa: HubSpot con token o una planilla de Google Sheets con su URL (`23` §14) | Sí |
 | Bots | Usuario de ASCI | Se marca hecho (se hace fuera del panel) | |
 | | Token del gateway | Hay un token vigente con el permiso `sdr` | |
 | | Cuenta de Grok Bot | Se marca hecho (se hace fuera del panel) | |

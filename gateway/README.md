@@ -347,3 +347,17 @@ con el enlace al contacto.
   alguien a mano, y `crm_cargas` para el resumen. Los bots no escriben en el CRM.
 - **Pruebas:** `test/crm.test.mjs`, contra un HubSpot simulado (`MAILGW_HUBSPOT_URL`). Para correr
   sólo ese archivo: `MAILGW_TESTS=test/crm.test.mjs npm test`.
+
+**Cliente sin CRM: una planilla de Google Sheets** (`docs/23` §14). En Canales → CRM se elige
+«Una planilla de Google Sheets» y se pega la URL de la pestaña. Cada positivo aprobado agrega una
+fila (Fecha, Nombre, Email, Cargo, Empresa, Dominio, Canal, Qué pide, Lo que respondió, Respuesta
+aprobada, Por qué lo contactamos, Origen, ID registro); si la planilla ya tiene encabezados, usa los
+suyos y agrega al final los que falten. Nunca borra ni cambia una fila. El ID registro evita
+duplicar si una carga se corta después de escribir. Todo va con `valueInputOption=RAW`: lo que
+escribió el prospecto o redactó un bot no se interpreta como fórmula.
+
+- **Acceso:** una cuenta de servicio de Google de Biguá con la API de Sheets habilitada. Su clave
+  JSON va entera en la variable `MAILGW_GOOGLE_SA` de Vercel (nunca en el repo). El cliente comparte
+  su planilla como **Editor** con el mail de esa cuenta, que el panel muestra para copiar.
+- **Pruebas:** `test/crm_sheets.test.mjs`, contra un Google simulado (`MAILGW_SHEETS_URL` y
+  `MAILGW_GOOGLE_TOKEN_URL`).
