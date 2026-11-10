@@ -674,7 +674,7 @@ test('no contactar: el cliente carga dominios y mails, el gateway la hace cumpli
   const cuenta = await sdr.guardarCuenta('adm-b', { nombre: 'Ventas del competidor', dominio: 'ventas.competidor.test' }, meta);
   assert.equal(cuenta.no_contactar, true);
   assert.equal(cuenta.cuenta.estado, 'excluida');
-  assert.match(cuenta.cuenta.estado_motivo, /No contactar: ventas\.competidor\.test \(dominio competidor\.test: Competidor\)/);
+  assert.match(cuenta.cuenta.estado_motivo, /No contactar: ventas\.competidor\.test \(dominio competidor\.test: «Competidor»\)/);
   await assert.rejects(sdr.guardarProspecto('adm-b', { nombre: 'Alguien', cuenta_id: cuenta.cuenta.id }, meta), /no contactar/);
   await assert.rejects(sdr.guardarProspecto('adm-b', { nombre: 'Juan', email: 'juan@otra.test' }, meta), /no contactar/);
   const libre = await sdr.guardarProspecto('adm-b', { nombre: 'Pedro', email: 'pedro@otra.test' }, meta);

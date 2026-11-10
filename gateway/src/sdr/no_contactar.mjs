@@ -7,6 +7,7 @@
 // tildes ni puntuación ni forma societaria) y se compara con la clave del nombre de la cuenta.
 
 import { GatewayError } from '../errors.mjs';
+import { citaNombre } from './en_campana.mjs';
 
 export const MAX_FILAS = 5000;
 const EMAIL = /^[^\s@]+@([a-z0-9-]+\.)+[a-z0-9-]{2,}$/;
@@ -93,9 +94,11 @@ export async function coincidencias(c, clientId, valores, { cuentas = [], nombre
   return rows;
 }
 
-const TIPO = { dominio: (r) => `dominio ${r.valor}`, email: () => 'mail', empresa: (r) => `empresa ${r.nombre ?? r.valor}` };
-export const describir = (rows) => [...new Set(rows.map((r) => `${r.para} (${(TIPO[r.tipo] ?? TIPO.email)(r)}` +
-  `${r.motivo ? `: ${r.motivo}` : ''})`))].join(', ');
+// El nombre y el motivo los escribió el cliente: van citados, para que el bot los lea como datos
+// (llegan a errores, a estado_motivo y a los avisos).
+const TIPO = { dominio: (r) => `dominio ${r.valor}`, email: () => 'mail', empresa: (r) => `empresa ${citaNombre(r.nombre ?? r.valor)}` };
+export const describirUna = (r) => `${(TIPO[r.tipo] ?? TIPO.email)(r)}${r.motivo ? `: ${citaNombre(r.motivo)}` : ''}`;
+export const describir = (rows) => [...new Set(rows.map((r) => `${r.tipo === 'empresa' ? citaNombre(r.para) : r.para} (${describirUna(r)})`))].join(', ');
 
 // Las claves que la base le da a unos nombres (null si no queda nada: «S.A.», «---»).
 export async function claves(c, nombres) {

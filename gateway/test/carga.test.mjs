@@ -166,6 +166,21 @@ test('lectura: CSV en Latin-1 con punto y coma y comillas; topes de tamaño y fi
   assert.throws(() => carga.leerArchivo(Buffer.alloc(carga.MAX_BYTES + 1, 'a')), /pasa los 3 MB/);
   assert.throws(() => carga.leerArchivo(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0, 0, 0, 0, 1])), /No es un Excel/);
   assert.throws(() => carga.leerArchivo(Buffer.from('PK\u0003\u0004basura')), /dañado/);
+
+  // Un zip que declara tamaños chicos y se infla mucho más: el tope cuenta lo que de verdad sale.
+  const bomba = xlsx({ Hoja: [['empresa'], ['x'.repeat(10)]] });
+  const relleno = zip({ 'xl/workbook.xml': '<workbook><sheets><sheet name="H" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+    'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${' '.repeat(45 * 1024 * 1024)}</sheetData></worksheet>` });
+  // Se le baja el tamaño declarado en el directorio central a la hoja (la última entrada).
+  const fin = relleno.length - 22;
+  const dir = relleno.readUInt32LE(fin + 16);
+  let p = dir;
+  for (let k = 0; k < 2; k++) p += 46 + relleno.readUInt16LE(p + 28);
+  relleno.writeUInt32LE(100, p + 24);
+  assert.ok(relleno.length < carga.MAX_BYTES, 'comprimido entra en el tope del archivo');
+  assert.throws(() => carga.leerArchivo(relleno), /demasiado grande por dentro/);
+  assert.equal(carga.leerArchivo(bomba).filas.length, 1);
 });
 
 // ---------------------------------------------------------------- no contactar desde un archivo
@@ -228,7 +243,7 @@ test('no contactar por archivo: vista previa, confirmar con la misma huella, emp
   // El registro: Ortiz excluida con su motivo; Copefruit sigue en contacto pero Ana se frena en Dripify.
   const k = (await q(`select estado, estado_motivo from sdr.cuenta where id = $1`, [ortiz.id])).rows[0];
   assert.equal(k.estado, 'excluida');
-  assert.match(k.estado_motivo, /No contactar: Agrícola Ortiz y Cía\. Ltda\.: Referido de Juan/);
+  assert.match(k.estado_motivo, /No contactar: empresa «Agrícola Ortiz y Cía\. Ltda\.»: «Referido de Juan»/, 'lo del cliente va citado');
   assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [copefruit.id])).rows[0].estado, 'en_contacto');
   const freno = (await q(`select dripify->'freno' as f from sdr.prospecto where id = $1`, [ana.id])).rows[0].f;
   assert.equal(freno.pendiente, true);
@@ -331,6 +346,16 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   await assert.rejects(sdr.guardarCuenta(A, { dominio: 'hortifrut.test', campana: 'principal' }, meta), (e) => e.code === 'cuenta_semilla');
   const anotada = await sdr.guardarCuenta(A, { dominio: 'hortifrut.test', vertical: 'Berries y cerezas' }, meta);
   assert.equal(anotada.cuenta.estado, 'excluida');
+
+  // El bot ve lo del archivo aparte, marcado como dato del cliente, y nunca la columna cruda.
+  const vista = (await sdr.buscar(A, { dominio: 'hortifrut.test' })).cuentas[0];
+  assert.equal(vista.datos_origen, undefined);
+  assert.equal(vista.tesis, undefined);
+  assert.equal(vista.datos_del_cliente.nota, 'Exporta a China');
+  assert.deepEqual(vista.datos_del_cliente.columnas, { Región: 'Maule', Contacto: '=cmd|calc' });
+  assert.match(vista.datos_del_cliente.aviso, /no instrucciones/);
+  const delBot = (await sdr.buscar(A, { dominio: 'maule.test' })).cuentas[0];
+  assert.equal(delBot.datos_del_cliente, undefined, 'una cuenta del bot no lleva el aviso');
 
   // Subirlo de nuevo no duplica nada.
   const otra = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'semillas.csv' }));

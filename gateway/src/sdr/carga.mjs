@@ -190,17 +190,23 @@ function leerZip(buf) {
     if (e.local + 30 > buf.length || buf.readUInt32LE(e.local) !== 0x04034b50) throw invalido('El Excel está dañado (entrada).');
     const desde = e.local + 30 + buf.readUInt16LE(e.local + 26) + buf.readUInt16LE(e.local + 28);
     const datos = buf.subarray(desde, desde + e.comprimido);
-    total += e.tamano;
-    if (e.tamano > MAX_DESCOMPRIMIDO || total > MAX_DESCOMPRIMIDO) throw invalido('El Excel es demasiado grande por dentro: guardá sólo la hoja que se carga.');
+    // El tamaño que declara el zip puede mentir: el tope cuenta lo que de verdad sale, y cada entrada
+    // se descomprime con lo que queda del tope total como máximo.
+    const grande = () => invalido('El Excel es demasiado grande por dentro: guardá sólo la hoja que se carga.');
+    const queda = MAX_DESCOMPRIMIDO - total;
+    if (e.tamano > queda) throw grande();
     let out;
     try {
       if (e.metodo === 0) out = Buffer.from(datos);
-      else if (e.metodo === 8) out = zlib.inflateRawSync(datos, { maxOutputLength: MAX_DESCOMPRIMIDO });
+      else if (e.metodo === 8) out = zlib.inflateRawSync(datos, { maxOutputLength: Math.max(1, queda) });
       else throw invalido('El Excel usa una compresión que no se lee: guardalo de nuevo como .xlsx.');
     } catch (err) {
       if (err instanceof GatewayError) throw err;
+      if (err?.code === 'ERR_BUFFER_TOO_LARGE') throw grande();
       throw invalido('El Excel está dañado o protegido con contraseña.');
     }
+    total += out.length;
+    if (total > MAX_DESCOMPRIMIDO) throw grande();
     return out.toString('utf8');
   };
 }
