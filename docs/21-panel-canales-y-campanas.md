@@ -497,7 +497,7 @@ Cada etapa se puede usar sola; la A no toca la base ni las reglas.
 | **C · Campañas** (C1 y C2) | Tabla `sdr.campana`, la «principal» migrada (§6.2), tipo Prospección, buzones y Dripify por campaña, `campana` en las herramientas MCP, reparto en el orquestador, calibración por campaña, resumen por campaña | Base, gateway, MCP, `playbooks/`, panel |
 | **D · Más tipos** | Invitación a evento y Reactivación, cadencia configurable | `playbooks/` (tareas nuevas), panel |
 | **E · Canales nuevos** | CRM (HubSpot), WhatsApp de seguimiento | Según `11` y §5 |
-| **F · Buzones de Microsoft 365 y Google Workspace** | Un tipo de buzón por proveedor en el gateway: Microsoft Graph y Gmail API detrás de las mismas herramientas MCP. Mientras tanto, Google por IMAP con contraseña de aplicación | `gateway/src/mail`, base, panel (Canales → Correo), `playbooks/` (el `id` del mensaje). Plan completo en `08` |
+| **F · Buzones de Microsoft 365 y Google Workspace** | «Un clic»: OAuth por buzón con aplicaciones de Biguá e IMAP/SMTP con XOAUTH2, detrás de las mismas herramientas MCP. Mientras se verifican las aplicaciones: Google con contraseña de aplicación, y Microsoft por el conector de Grok con reserva en el gateway | `gateway/src/mail`, base, panel (Canales → Correo), `playbooks/` (buzones `conector`). Plan completo en `08` |
 
 A y B se entregaron juntas. C arranca ya, sin la revisión con BairesQA (decisión 14), en dos
 entregas: **C1**, todo lo de la fila C con un perfil de LinkedIn por cliente, y **C2**, varios
