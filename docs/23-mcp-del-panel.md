@@ -1,7 +1,7 @@
 # MCP del panel: gestionar el SDR desde Claude
 
 Estado al 10/11/2026: **diseño**. No hay código. Se apoya en el panel `/admin` (`15`, `16`, `21`)
-y en el MCP de los bots (`07`, `09`, `13`).
+y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
 y gestione su SDR conversando: ver cómo va, revisar y aprobar mensajes, armar y ajustar campañas,
@@ -29,8 +29,8 @@ base se cumplen aunque falle una consulta (`test/aislamiento.test.mjs`).
    `registro_aprobar` dice que se use sólo con lo que el operador de Biguá escribió en el chat.
 2. Un token es del cliente, no de una persona: la auditoría no sabría quién aprobó.
 3. Los tokens los crea sólo Biguá y se muestran una vez: no es un login.
-4. Por lo que sabemos, claude.ai conecta un MCP remoto con OAuth y no con un token fijo en la
-   cabecera. Hay que confirmarlo antes de construir (decisión abierta 1).
+4. claude.ai conecta un MCP remoto con OAuth (CIMD o DCR), no con un token fijo en la cabecera.
+   Lo confirmamos en ASCI, que lo usa desde el 05/11 (§3.1).
 5. La gestión (campañas, ajustes, buzones) no está en el MCP: son rutas del panel.
 
 ## 2. Decisión: un segundo MCP, para personas
@@ -40,7 +40,7 @@ base se cumplen aunque falle una consulta (`test/aislamiento.test.mjs`).
 | Dirección | `https://sdrbot.bigua.lat/mcp` | `https://sdrbot.bigua.lat/mcp/panel` |
 | Quién | Un bot de Grok | Una persona con usuario del panel |
 | Identidad | El token (un cliente) | El usuario (`mailgw.admin_user`): `bigua_admin` o `client_admin` |
-| Autenticación | Token `mgw_…` en `Authorization` | OAuth 2.1 con PKCE contra los usuarios del panel (§3) |
+| Autenticación | Token `mgw_…` en `Authorization` | OAuth 2.1 con PKCE (CIMD o DCR), con login de los usuarios del panel, como en ASCI (§3) |
 | Herramientas | Las de hoy, sin cambios | Las del panel (§4), filtradas por rol y modo |
 | Alcance en la base | `mailgw_app` con el cliente del token | El mismo `scoped()` del panel: dueño para Biguá, `mailgw_portal` para el cliente |
 
@@ -56,38 +56,173 @@ validaciones son los mismos en los dos.
 
 ## 3. Autenticación
 
-### 3.1 OAuth contra los usuarios del panel
+Se copia el OAuth que ya anda en ASCI (`mcp.bigua.lat`, repo `locasci`: `docs/32-oauth-chatgpt.md`,
+`api/oauth.mjs`, `mcp/oauth.mjs` y `api/mcp.mjs`). Ahí está probado con Claude (claude.ai y
+Claude Code), ChatGPT y Cursor, y cada tropiezo quedó documentado. Lo que cambia es **cómo entra
+la persona**: en ASCI pone su email y recibe un código; acá usa su usuario y contraseña del panel.
 
-El gateway hace de **servidor de autorización** para su propio MCP, como pide la especificación de
-autorización de MCP:
+### 3.1 Lo que aprendimos en ASCI
 
-| Pieza | Qué es |
-|---|---|
-| `/.well-known/oauth-protected-resource` | Dice que `/mcp/panel` se protege con el servidor de autorización del gateway |
-| `/.well-known/oauth-authorization-server` | Metadatos: `authorize`, `token`, `register` y `revoke`; sólo `code` con PKCE `S256` |
-| `POST /oauth/register` | Registro dinámico de clientes (lo usa claude.ai). Sólo se aceptan `redirect_uri` de una lista: las de Claude y `http://localhost` / `127.0.0.1` para Claude Code y Desktop. Cualquier otra se rechaza |
-| `GET /oauth/authorize` | La misma pantalla de login del panel, con las mismas reglas: scrypt, bloqueo tras 5 intentos, usuario activo y activado. Después, una pantalla de consentimiento: «Claude va a poder ver y gestionar **[cliente]** en tu nombre», con la lista de lo que puede hacer |
-| `POST /oauth/token` | Canje del código y renovación. Token de acceso opaco `mgp_…` de **1 hora**; token de renovación de **30 días** que rota en cada uso |
-| `POST /oauth/revoke` | Revocar |
+| Lección | Qué pasó en ASCI | Qué hacemos acá |
+|---|---|---|
+| **claude.ai conecta con OAuth y prefiere CIMD** | Con sólo DCR, claude.ai leía la metadata y no se registraba nunca. Cuando el servidor anuncia `client_id_metadata_document_supported`, Claude usa CIMD: su `client_id` es la URL de un documento que publica Claude | CIMD **y** DCR desde el principio |
+| **El 401 tiene que llegar en el saludo** | Al contestar `initialize` sin clave, Claude creía que el servidor no pedía login, pedía `tools/list`, recibía 401 y abandonaba con «No se pudo conectar» (#113). ChatGPT necesita lo contrario: el saludo sin clave (sólo para `openai-mcp/…`) | `/mcp/panel` da 401 a todo lo que llegue sin token, saludo incluido. La excepción de ChatGPT se suma sólo si un cliente lo pide (decisión abierta 1) |
+| **Los callbacks de Claude son dos** | Claude se registra con `claude.ai` y con `claude.com`; sin la segunda, el registro entero daba 400 (#114) | Lista cerrada con las dos (§3.3) |
+| **No servir `openid-configuration`** | Con ese documento, ChatGPT ofrecía «OIDC habilitado» contra un servidor que no lo es | Sólo `oauth-authorization-server` |
+| **`resource` igual a lo que cargó el usuario** | Los clientes piden la metadata del recurso con el mismo sufijo que la URL; si `resource` no coincide, no conectan | `/.well-known/oauth-protected-resource/mcp/panel` devuelve `resource: …/mcp/panel` |
+| **`iss` en la respuesta de `/authorize`** (RFC 9207) | Sin él, ChatGPT usa otro callback; los clientes comparan `iss` con `issuer` sin normalizar | Se devuelve siempre, el mismo texto que `issuer` |
+| **Sin estado donde se pueda** | El cliente DCR es un sobre firmado (no se guarda), y el estado del login viaja firmado en el formulario (15 min para el pedido, 10 para el login): sin cookies ni sesión | Igual. Lo único que va a la base es lo que tiene que ser de uso único o revocable: el código y los tokens |
+| **Un token por conexión, visible y revocable** | Cada conexión crea su propia clave «OAuth · <cliente>», que se ve en `usuarios` y se corta con `revocar_clave` | Cada conexión es una fila de `mailgw.oauth_token` que se ve y se desconecta en el panel (§3.4) |
+| **Logs que sirven** | Cada 401 deja el método JSON-RPC, si traía clave y el user-agent (nunca la clave). Con eso se reconstruyó cada falla | Lo mismo en `/mcp/panel` y `/oauth/*` |
+| **«Conectado» sin herramientas en claude.ai** | El conector quedaba conectado pero sin consentimiento (`has_consent: false`) y nunca abría el login | Va al instructivo: **Desconectar y Conectar** en la tarjeta del conector (§3.6) |
+
+### 3.2 Metadata y 401
+
+- **El 401** de `/mcp/panel` lleva
+  `WWW-Authenticate: Bearer realm="sdrbot-panel", resource_metadata="https://sdrbot.bigua.lat/.well-known/oauth-protected-resource/mcp/panel"`.
+  El origen sale de `OAUTH_ISSUER` o del pedido (`x-forwarded-proto` + `host`), para que ande en
+  previews y en local (como `emisor()` en ASCI).
+- **Recurso protegido** (RFC 9728), `GET /.well-known/oauth-protected-resource/mcp/panel`:
+
+```json
+{
+  "resource": "https://sdrbot.bigua.lat/mcp/panel",
+  "authorization_servers": ["https://sdrbot.bigua.lat"],
+  "bearer_methods_supported": ["header"],
+  "scopes_supported": ["panel"]
+}
+```
+
+- **Servidor de autorización** (RFC 8414), `GET /.well-known/oauth-authorization-server`:
+
+```json
+{
+  "issuer": "https://sdrbot.bigua.lat",
+  "authorization_endpoint": "https://sdrbot.bigua.lat/oauth/authorize",
+  "token_endpoint": "https://sdrbot.bigua.lat/oauth/token",
+  "registration_endpoint": "https://sdrbot.bigua.lat/oauth/register",
+  "revocation_endpoint": "https://sdrbot.bigua.lat/oauth/revoke",
+  "client_id_metadata_document_supported": true,
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["none"],
+  "authorization_response_iss_parameter_supported": true,
+  "scopes_supported": ["panel", "offline_access"]
+}
+```
+
+  `offline_access` va en la lista porque Claude lo agrega al pedido sólo si el servidor lo
+  publica, y es lo que le dice que va a recibir un refresh token. `none` es el único método del
+  token: todos los clientes son públicos y los ata PKCE. No hay «cliente definido por el usuario»
+  como en ASCI: acá no hay una clave de la persona para usar de secreto.
+
+- **El MCP de los bots no cambia.** `/mcp` sigue con su 401 de hoy y sin metadata: un token
+  `mgw_…` no pasa por OAuth.
+
+### 3.3 Registro del cliente
+
+- **CIMD:** el `client_id` es una URL `https` de un host de la lista `OAUTH_CIMD_HOSTS` (por
+  defecto `claude.ai,claude.com,chatgpt.com,openai.com`). `/authorize` lee el documento con los
+  topes de ASCI (sin IPs, 4 s, 16 kB, caché de 5 min), exige que su `client_id` sea esa misma
+  URL y sólo acepta los `redirect_uri` que declara **y** que además están en la lista de abajo.
+- **DCR** (RFC 7591), `POST /oauth/register`: no se guarda nada. El `client_id` es un sobre
+  firmado con `OAUTH_FIRMA` que lleva el nombre del cliente y sus `redirect_uri`.
+- **Lista de `redirect_uri`** (`OAUTH_REDIRECTS`), la misma de ASCI:
+
+```
+https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,https://chatgpt.com/connector/oauth/,https://chatgpt.com/connector_platform_oauth_redirect,https://www.cursor.com/agents/mcp/oauth/callback
+```
+
+  Más loopback (`http://localhost`, `127.0.0.1` y `[::1]` con cualquier puerto, RFC 8252) para
+  Claude Code, Claude Desktop y Cursor de escritorio. Una entrada que termina en `/` es un
+  prefijo y exige algo después; las demás tienen que coincidir enteras. Se compara la URL ya
+  normalizada (sin `..`), sólo `https`, sin fragmento ni usuario.
+  **Esta lista es lo que impide el robo de cuentas.** Con login, un atacante que registrara su
+  propio sitio podría mandarle el enlace a un usuario real; el usuario entraría con su
+  contraseña y el código, con el `code_verifier` del atacante, le llegaría al atacante.
+
+### 3.4 Autorizar, canjear y desconectar
+
+1. **`GET /oauth/authorize`** valida `response_type=code`, PKCE `S256`, el cliente (CIMD o DCR)
+   y el `redirect_uri`. Si el `redirect_uri` no vale, responde 400 con HTML y no redirige a
+   ningún lado. Si falla otra cosa, redirige con `error` y el `state`. Toda respuesta lleva `iss`.
+2. **La página de login** es la del panel, servida desde `/oauth/authorize`, con las mismas
+   reglas: scrypt, bloqueo tras 5 intentos, usuario activo y activado. **No se aprovecha la
+   sesión del panel:** la cookie es `SameSite=Strict` y `Path=/admin`, así que no llega cuando
+   la página se abre desde claude.ai. Se entra siempre con usuario y contraseña. Igual que en
+   ASCI, el mensaje no dice si el email existe.
+3. **Consentimiento:** «Claude va a poder ver y gestionar **[cliente]** en tu nombre», con lo
+   que puede hacer según el rol. Para un operador de Biguá dice «todos los clientes».
+4. **Código:** 5 minutos y **de uso único**, en `mailgw.oauth_code` (en ASCI el primer código era
+   sin estado, y el riesgo de canjearlo dos veces quedó anotado; con login pasó a la base).
+5. **`POST /oauth/token`** sin secreto: PKCE, que el `client_id` y el `redirect_uri` (si viene)
+   coincidan con los del código, y que el usuario siga activo. Devuelve un token de acceso
+   opaco `mgp_…` de **1 hora** y uno de renovación de **30 días**, los dos como hash en
+   `mailgw.oauth_token`.
+6. **Renovación:** rota en cada uso. Si se usa uno ya rotado, se revoca toda la familia (alguien
+   lo copió). Un usuario inactivo o con la contraseña reseteada da `invalid_grant`.
+7. **Errores** como en ASCI (RFC 6749 §5.2), en JSON con `Cache-Control: no-store`.
+
+**Por qué 1 hora y no 30 días como en ASCI.** En ASCI el token es una clave más del usuario, que
+lee datos y gasta créditos. Acá un token puede aprobar mensajes que salen a nombre del cliente
+(§5): conviene que uno copiado sirva poco tiempo. La renovación es transparente para Claude.
 
 **Reglas de los tokens:**
 
-- Se guardan sólo como hash (igual que `mgw_…` y las sesiones), atados al usuario y al cliente
-  OAuth (`mailgw.oauth_token`).
 - Si el usuario se desactiva, se le resetea la contraseña o se le cambia el rol, todos sus tokens
   quedan revocados en el acto.
-- Un `mgp_…` no sirve en `/mcp` ni un `mgw_…` en `/mcp/panel`. El prefijo se chequea antes de ir a
-  la base.
-- En el panel, **Mi usuario → Conexiones** lista las conexiones de Claude de esa persona (cliente
-  OAuth, alta, último uso) con un botón «Desconectar». Biguá ve y revoca las de todos.
+- Un `mgp_…` no sirve en `/mcp` ni un `mgw_…` en `/mcp/panel`. El prefijo se chequea antes de ir
+  a la base.
+- En el panel, **Mi usuario → Conexiones** lista las conexiones de esa persona (cliente, alta,
+  último uso) con un botón «Desconectar». Biguá ve y revoca las de todos.
 
-### 3.2 Mientras tanto: Claude Desktop y Claude Code
+### 3.5 Archivos, ruteo y configuración
 
-Claude Desktop y Claude Code permiten configurar un MCP remoto con una cabecera fija, así que se
-podrían probar las herramientas antes de tener OAuth. **No lo recomendamos con clientes:** el
-token quedaría copiado en un archivo de configuración. Para pruebas internas de Biguá alcanza con
-un token `mgp_…` de corta vida emitido a mano por la CLI (`bin/admin.mjs panel-token <email>`,
-48 h), que se muestra una vez y se pega en la configuración local.
+Como en ASCI: un solo handler `api/oauth.mjs` que despacha por ruta, y lo que no necesita HTTP ni
+base en `src/oauth.mjs` (`emisor()`, `firmar()`, `verificar()`, PKCE, la lista de redirects y
+CIMD), que se puede llevar casi tal cual de `locasci/mcp/oauth.mjs`. En `vercel.json`, las
+reglas de `/.well-known/*` y `/oauth/*` van **antes** de las que ya existen, y el sufijo de la
+metadata del recurso viaja explícito en el destino (sin eso el handler no sabe qué `resource`
+devolver).
+
+Variables en Vercel (proyecto `sdrbot-mail-gateway`), sin valores en el repo:
+
+| Variable | Qué es |
+|---|---|
+| `OAUTH_FIRMA` | 32 bytes aleatorios en base64, la clave HMAC. **Obligatoria**: sin ella `/authorize` y `/token` fallan. Distinta de la de ASCI. Rotarla invalida los clientes DCR y los sobres en vuelo; las conexiones siguen, porque los tokens están en la base |
+| `OAUTH_ISSUER` | Opcional. Si no está, el origen sale del pedido |
+| `OAUTH_REDIRECTS`, `OAUTH_CIMD_HOSTS` | Opcionales: si no están, rigen las listas por defecto del código |
+
+CORS: `Access-Control-Allow-Origin: *` en `/.well-known/*` y `/oauth/token` (no hay cookies). La
+página de `/oauth/authorize` lleva la CSP estricta del panel y `frame-ancestors 'none'`.
+
+### 3.6 Instructivo para el cliente
+
+En claude.ai: Configuración → Conectores → Agregar conector personalizado → URL
+`https://sdrbot.bigua.lat/mcp/panel` → Conectar. Se abre la página del SDR: usuario,
+contraseña y «Autorizar». En Claude Code:
+`claude mcp add --transport http sdrbot https://sdrbot.bigua.lat/mcp/panel` y la primera vez
+abre el navegador.
+
+**Si queda «conectado» pero dice que no tiene herramientas:** en la tarjeta del conector,
+**Desconectar** y después **Conectar**. Es el caso de ASCI del 05/11: no hace falta borrarlo ni
+crearlo de nuevo. Si así tampoco abre la página, recién ahí mirar los logs de Vercel. Una
+conexión buena se ve en este orden: 401 en `/mcp/panel`, las dos metadatas, `authorize`
+(con `cimd: true`), `login`, `autorizado` y `POST /oauth/token`.
+
+Cada persona conecta con su propio usuario. Con login no pasa lo de ASCI con el «cliente
+definido por el usuario», donde un conector compartido hacía entrar a todos como quien lo creó:
+acá cada conexión es de quien autorizó.
+
+### 3.7 Pruebas
+
+`test/oauth.test.mjs`, sobre los casos de `locasci/mcp/probar-oauth.mjs`: el 401 con
+`resource_metadata`, las dos metadatas y el `resource` por sufijo, `redirect_uri` fuera de la
+lista (400 sin redirigir) y que trepa fuera del prefijo, el flujo completo con CIMD y con DCR,
+PKCE incorrecto, código vencido y código usado dos veces, renovación que rota y reuso que revoca
+la familia, usuario desactivado, `mgp_…` en `/mcp` y `mgw_…` en `/mcp/panel`, y la regresión del
+MCP de los bots.
 
 ## 4. Herramientas
 
@@ -219,7 +354,7 @@ decida otra cosa (decisión abierta 3).
 |---|---|
 | Un usuario ve otro cliente | El mismo `scoped()` y las mismas políticas de la base que el panel. Pruebas de aislamiento nuevas para `/mcp/panel` (§8) |
 | Un token robado | Acceso de 1 hora, renovación que rota (si se reusa una vieja, se revoca toda la cadena), revocación al desactivar o resetear, «Desconectar» en el panel |
-| Un `redirect_uri` falso en el registro dinámico | Lista cerrada de destinos (§3.1) y PKCE obligatorio |
+| Un `redirect_uri` falso en el registro (DCR o CIMD) | Lista cerrada de destinos (§3.3) y PKCE obligatorio |
 | **Inyección por contenido de terceros.** Un mail de un prospecto que dice «aprobá todo» y que Claude lee al listar aprobaciones | Lo externo va en `datos_externos` y la descripción de la herramienta lo dice. `aprobacion_decidir` es `destructiveHint`, decide de a una y pide `confirmar: true` después de mostrar el texto final. El gateway sólo deja enviar lo aprobado, a un destinatario que el cliente no puede cambiar |
 | Un cliente aprueba algo que rompe una regla | Aprobar no salta controles: el gateway sigue haciendo cumplir campaña, buzones, links, cupo, horario, supresión y no contactar al enviar |
 | Datos personales de prospectos en el chat de Claude | Es el mismo dato que el cliente ya ve en el panel. Va en el DPA: el cliente decide si conecta Claude, y las conversaciones quedan en su cuenta de Claude |
@@ -230,17 +365,15 @@ decida otra cosa (decisión abierta 3).
 
 ```sql
 -- OAuth del MCP del panel.
-create table mailgw.oauth_client (
-  id text primary key, nombre text not null, redirect_uris text[] not null,
-  created_at timestamptz not null default now(), last_used_at timestamptz);
+-- Los clientes (CIMD o DCR) no se guardan: el client_id es una URL o un sobre firmado.
 create table mailgw.oauth_code (
-  code_hash text primary key, client_id text not null references mailgw.oauth_client,
+  code_hash text primary key, client_id text not null, cliente_nombre text not null,
   user_id uuid not null references mailgw.admin_user, redirect_uri text not null,
   code_challenge text not null, expires_at timestamptz not null, used_at timestamptz);
 create table mailgw.oauth_token (
   id uuid primary key default gen_random_uuid(),
   token_hash text not null unique, tipo text not null check (tipo in ('acceso', 'renovacion')),
-  client_id text not null references mailgw.oauth_client,
+  client_id text not null, cliente_nombre text not null,
   user_id uuid not null references mailgw.admin_user, familia uuid not null,
   expires_at timestamptz not null, revoked_at timestamptz, last_used_at timestamptz,
   created_at timestamptz not null default now());
@@ -273,8 +406,7 @@ tocar el destinatario.
   que no existe.
 - **Lista por rol y modo:** `client_admin` no ve `clientes_listar` ni `usuario_crear`; en modo
   operado no ve `campana_estado`.
-- **OAuth:** PKCE obligatorio, `redirect_uri` fuera de la lista rechazada, código de un solo uso,
-  renovación que rota y reuso que revoca la familia, revocación al desactivar el usuario.
+- **OAuth:** los casos de §3.7.
 - **Aprobaciones:** cada valor de `aprueba`; el cliente no cambia el destinatario; doble decisión →
   `ya_decidida`; el mail aprobado por el cliente sale y uno corregido sale corregido; el resto de
   los controles del envío sigue andando; la calibración cuenta las del cliente.
@@ -285,7 +417,7 @@ tocar el destinatario.
 | Etapa | Qué | Toca |
 |---|---|---|
 | **M0 · Servicio** | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
-| **M1 · Conectar y mirar** | OAuth (§3), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai en la cuenta de Biguá | Gateway, base, panel |
+| **M1 · Conectar y mirar** | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
 | **M2 · Aprobaciones del cliente** | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
 | **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
 | **M4 · Biguá** | `cliente_crear`, usuarios y lo técnico en lectura | Gateway |
@@ -295,10 +427,10 @@ los datos del panel.
 
 ## 10. Decisiones abiertas
 
-1. **Cómo conecta claude.ai.** Confirmar con la documentación vigente que un conector
-   personalizado de claude.ai usa OAuth con registro dinámico y cuál es la URL de retorno exacta,
-   para la lista de §3.1. Si acepta un token en la cabecera, M1 puede salir antes que OAuth, pero
-   igual recomendamos OAuth para clientes.
+1. **ChatGPT.** El 401 en el saludo (§3.1) es lo que necesita Claude; ChatGPT necesita el
+   saludo sin token. Si algún cliente usa ChatGPT, se suma la excepción de ASCI (`initialize`,
+   `notifications/initialized`, `ping` y `server/discover` sin token, sólo para `openai-mcp/…`).
+   Hasta entonces, no.
 2. **Valor por defecto de `aprueba`** para clientes nuevos: propuesto `cliente_y_bigua`. ¿O
    `bigua` hasta terminar la calibración y después `cliente_y_bigua`?
 3. **CRM:** ¿el cliente aprueba también `crm_mapeo` y `crm_cambio`? Es su CRM, pero hoy el mapeo
