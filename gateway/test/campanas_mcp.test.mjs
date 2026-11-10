@@ -210,6 +210,28 @@ test('campañas MCP: una campaña en pausa no manda mails nuevos ni toma persona
   await q(`update sdr.campana set estado = 'activa' where id = $1`, [k.webinar.id]);
 });
 
+test('campañas MCP: registro_resumen trae el detalle por campaña, y con campana sólo esa', async () => {
+  const todo = await ok('registro_resumen', { ...META });
+  const claves = todo.por_campana.map((k) => k.clave);
+  assert.deepEqual(claves.slice(0, 1), ['principal'], 'la principal primero');
+  for (const x of ['webinar', 'otra']) assert.ok(claves.includes(x), x);
+  // Lo del cliente es la suma de sus campañas.
+  const suma = {};
+  for (const k of todo.por_campana) for (const [t, n] of Object.entries(k.eventos)) suma[t] = (suma[t] ?? 0) + n;
+  assert.deepEqual(suma, todo.eventos);
+  assert.ok(Object.keys(todo.eventos).length > 0, 'hubo actividad en las pruebas de arriba');
+  assert.deepEqual(todo.calibracion, todo.por_campana[0].calibracion, 'la del cliente es la de la principal');
+
+  const w = await ok('registro_resumen', { ...META, campana: 'webinar' });
+  const enLista = todo.por_campana.find((k) => k.clave === 'webinar');
+  assert.equal(w.campana.nombre, 'Webinar');
+  assert.deepEqual(w.eventos, enLista.eventos);
+  assert.deepEqual(w.prospectos_por_estado, enLista.prospectos_por_estado);
+  assert.equal(w.calibracion.total, 1, 'la calibración propia de la campaña');
+  assert.equal(w.por_campana, undefined);
+  assert.equal((await call('registro_resumen', { ...META, campana: 'no-existe' })).status, 404);
+});
+
 test('campañas MCP: un cliente sin el SDR no tiene campañas ni calibración', async () => {
   const D = 'cmc-sin-sdr';
   await store.upsertClient(D, 'Sólo correo');

@@ -627,30 +627,61 @@ export async function historia(clientId, { prospecto_id, cuenta_id, limite }) {
 
 // Números de un período: eventos por tipo, corridas por bot y estado, y lo que espera. Lo usa el
 // resumen del orquestador y, más adelante, el dashboard del cliente.
-export async function resumen(clientId, { desde, hasta }) {
+// Los números de un período (docs/21 §3.1 y §7.2, paso 3). Sin `campana`: los del cliente, con el
+// detalle de cada campaña en por_campana. Con `campana` (la clave): sólo los de esa campaña.
+// Las corridas no son de una campaña: van siempre las del cliente.
+export async function resumen(clientId, { desde, hasta, campana }) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
     const tz = cfg?.zona_horaria ?? 'America/Argentina/Buenos_Aires';
     const d = desde ?? hoyEn(tz);
     const h = hasta ?? d;
     const rango = [clientId, d, h, tz];
+    const sola = campana ? await enCampana.porClave(c, clientId, campana) : null;
     const { rows: eventos } = await c.query(
-      `select tipo, count(*)::int as n from sdr.evento
+      `select campana_id, tipo, count(*)::int as n from sdr.evento
         where client_id = $1 and (at at time zone $4)::date between $2 and $3 and not interno
-        group by tipo order by tipo`, rango);
+        group by campana_id, tipo order by tipo`, rango);
     const { rows: corridas } = await c.query(
       `select bot, estado, count(*)::int as n from sdr.corrida
         where client_id = $1 and (inicio at time zone $4)::date between $2 and $3 group by bot, estado order by bot, estado`, rango);
     const { rows: estados } = await c.query(
-      `select estado, count(*)::int as n from sdr.prospecto where client_id = $1 group by estado order by estado`, [clientId]);
-    const { rows: calib } = await c.query(
-      `select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`, [clientId]);
+      `select campana_id, estado, count(*)::int as n from sdr.prospecto where client_id = $1 group by campana_id, estado order by estado`, [clientId]);
+    const { rows: campanas } = await c.query(
+      `select id, client_id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails from sdr.campana
+        where client_id = $1 and (estado <> 'borrador' or id = $2) order by (clave = 'principal') desc, nombre`, [clientId, sola?.id ?? null]);
+    const sumar = (filas, k, de) => {
+      const o = {};
+      for (const r of filas) if (!de || r.campana_id === de) o[r[k]] = (o[r[k]] ?? 0) + r.n;
+      return Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+    };
+    const calib = async (k) => {
+      const x = await enCampana.calibracion(c, clientId, k, cfg);
+      return { usados: Math.min(x.usadas, x.total), total: x.total, terminada: !x.calibrando };
+    };
+    const detalle = [];
+    for (const k of campanas) {
+      if (sola && k.id !== sola.id) continue;
+      detalle.push({
+        clave: k.clave, nombre: k.nombre, tipo: k.tipo, estado: k.estado, cuentas_por_dia: k.cuentas_por_dia,
+        eventos: sumar(eventos, 'tipo', k.id), prospectos_por_estado: sumar(estados, 'estado', k.id),
+        calibracion: cfg ? await calib(k) : null,
+      });
+    }
+    if (sola) {
+      const [k] = detalle;
+      return { desde: d, hasta: h, campana: { clave: k.clave, nombre: k.nombre, tipo: k.tipo, estado: k.estado, cuentas_por_dia: k.cuentas_por_dia },
+        eventos: k.eventos, corridas, prospectos_por_estado: k.prospectos_por_estado, calibracion: k.calibracion };
+    }
+    // La calibración del cliente es la de su «principal» (la que fija Administración).
+    const principal = detalle.find((k) => k.clave === 'principal');
     return {
       desde: d, hasta: h,
-      eventos: Object.fromEntries(eventos.map((r) => [r.tipo, r.n])),
+      eventos: sumar(eventos, 'tipo'),
       corridas,
-      prospectos_por_estado: Object.fromEntries(estados.map((r) => [r.estado, r.n])),
-      calibracion: cfg ? { usados: calib[0].n, total: cfg.calibracion_mails, terminada: calib[0].n >= cfg.calibracion_mails } : null,
+      prospectos_por_estado: sumar(estados, 'estado'),
+      calibracion: principal?.calibracion ?? null,
+      por_campana: detalle,
     };
   });
 }

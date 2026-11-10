@@ -152,8 +152,9 @@ export const SDR_OPS = [
   {
     op: 'registro_resumen', mcp: 'registro_resumen', scope: 'sdr',
     description: 'Números de un día o de un período (por defecto hoy): eventos por tipo (mails enviados, revelados, ' +
-      'respuestas, positivos…), corridas por bot y estado, prospectos por estado y cómo va la calibración. Para el resumen.',
-    schema: obj({ desde: fecha, hasta: fecha, ...META }),
+      'respuestas, positivos…), corridas por bot y estado, prospectos por estado y cómo va la calibración. Para el resumen. ' +
+      'Sin campana trae los del cliente y el detalle de cada campaña (por_campana); con campana (la clave), sólo los de esa campaña.',
+    schema: obj({ desde: fecha, hasta: fecha, campana, ...META }),
     handler: (ctx, a) => sdr.resumen(ctx.clientId, a),
   },
   // ------------------------------------------------------------ pedidos entre bots
