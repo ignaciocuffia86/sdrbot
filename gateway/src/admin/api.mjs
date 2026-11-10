@@ -72,6 +72,8 @@ route('POST', '/me/password', async ({ user, body }) => {
 
 // ----- operaciones (servicio.mjs)
 
+route('GET', '/me/conexiones', S.conexionesListar);
+route('POST', '/me/conexiones/:id/revocar', S.conexionRevocar);
 route('GET', '/clients', S.clientesListar);
 route('POST', '/clients', S.clienteCrear);
 route('GET', '/clients/:client', S.clienteVer);

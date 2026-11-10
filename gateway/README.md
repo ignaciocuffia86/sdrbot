@@ -219,6 +219,12 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
   Sale con código 0 si funcionó, 3 si el gateway devolvió un error con código y 4 si no se pudo hablar con él.
 
+## Conectar Claude (MCP del panel)
+
+Para personas, no para los bots (`docs/23`): en claude.ai, Configuración → Conectores → agregar un conector con `https://sdrbot.bigua.lat/mcp/panel`, y Conectar. Se abre una página del gateway donde la persona entra con su usuario y su contraseña del panel y autoriza. En Claude Code: `claude mcp add --transport http sdrbot https://sdrbot.bigua.lat/mcp/panel`. Un usuario de un cliente ve sólo su cliente; un operador de Biguá, todos. Las conexiones se ven y se desconectan en el panel, en «Conexiones».
+
+El OAuth está en `src/panel/oauth.mjs` (metadata en `/.well-known/oauth-*`, y `/oauth/register`, `authorize`, `login`, `token` y `revoke`) y el MCP en `src/panel/mcp.mjs`. Necesita `OAUTH_FIRMA` en Vercel (`openssl rand -base64 32`); `OAUTH_ISSUER`, `OAUTH_REDIRECTS` y `OAUTH_CIMD_HOSTS` son opcionales.
+
 ## Núcleo SDR (etapas 1 a 3 de `docs/09`)
 
 Con el permiso `sdr`, el mismo token y el mismo MCP suman 29 herramientas para los bots de Grok (`src/sdr/`, migraciones `005_sdr_nucleo`, `006_memoria_del_correo` y `009_dripify`):

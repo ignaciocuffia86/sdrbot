@@ -24,7 +24,7 @@ import * as monitor from '../sdr/monitor.mjs';
 import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/correo.mjs';
 import * as dripify from '../sdr/dripify.mjs';
 import * as campanas from '../sdr/campanas.mjs';
-import { createUser, resetSetup } from './auth.mjs';
+import { createUser, resetSetup, revocarConexiones } from './auth.mjs';
 
 const ajv = new Ajv({ allErrors: true, useDefaults: true, strict: false });
 const forbidden = () => new GatewayError('forbidden', 'No tenés permiso para esto.', 403);
@@ -412,7 +412,10 @@ export const usuarioEstado = async ({ user, params, body }) => {
   return asOwner(async (c) => {
     const { rowCount } = await c.query(`update mailgw.admin_user set active = $2 where id = $1`, [params.id, active]);
     if (!rowCount) throw notFound('No existe ese usuario.');
-    if (!active) await c.query(`delete from mailgw.admin_session where user_id = $1`, [params.id]);
+    if (!active) {
+      await c.query(`delete from mailgw.admin_session where user_id = $1`, [params.id]);
+      await revocarConexiones(params.id, c);
+    }
     return { active };
   });
 };
@@ -726,7 +729,7 @@ const OPS_PANEL = {
   'admin.sdr.dripify': 'cuenta de Dripify', 'admin.sdr.despertador': 'despertador', 'admin.user.create': 'alta de usuario',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
-  'admin.sdr.campana.duplicar': 'campaña duplicada',
+  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.conexion.revocar': 'conexión de Claude desconectada',
 };
 
 export const monitorVer = async ({ user, params }) => {
@@ -999,3 +1002,40 @@ export const dominioSelectores = async ({ user, params, body }) => {
     return { dkim_selectors: selectors };
   });
 };
+
+// ----- conexiones de Claude (MCP del panel, docs/23 §3.4)
+//
+// Una conexión es una familia de tokens OAuth. Cada persona ve y desconecta las suyas; un operador
+// de Biguá ve y desconecta las de todos. Las tablas son del dueño: ni el portal las lee.
+
+const SQL_CONEXIONES = `
+  select t.familia as id, t.cliente_nombre as cliente_oauth, u.email, u.role, u.client_id,
+         min(t.created_at) as creada_at, max(t.last_used_at) as usada_at,
+         max(t.expires_at) filter (where t.tipo = 'renovacion') as vence_at
+    from mailgw.oauth_token t join mailgw.admin_user u on u.id = t.user_id
+   where t.revoked_at is null and t.expires_at > now() and t.tipo = 'renovacion' and t.used_at is null
+     and ($1::uuid is null or t.user_id = $1)
+   group by t.familia, t.cliente_nombre, u.email, u.role, u.client_id
+   order by creada_at desc limit 200`;
+
+export const conexionesListar = async ({ user }) => asOwner(async (c) => {
+  const { rows } = await c.query(SQL_CONEXIONES, [isBigua(user) ? null : user.id]);
+  // usada_at sale de los tokens de acceso de la familia, que no entran en el filtro de arriba.
+  const usos = rows.length ? (await c.query(
+    `select familia, max(last_used_at) as usada_at from mailgw.oauth_token where familia = any($1::uuid[]) group by familia`,
+    [rows.map((r) => r.id)])).rows : [];
+  const uso = new Map(usos.map((r) => [r.familia, r.usada_at]));
+  return { conexiones: rows.map((r) => ({ ...r, usada_at: uso.get(r.id) ?? null, propia: r.email === user.email })) };
+});
+
+export const conexionRevocar = async ({ user, params }) => asOwner(async (c) => {
+  if (!/^[0-9a-f-]{36}$/i.test(String(params.id))) throw notFound('No existe esa conexión.');
+  const { rows } = await c.query(
+    `update mailgw.oauth_token set revoked_at = now()
+      where familia = $1 and revoked_at is null and ($2::uuid is null or user_id = $2)
+      returning user_id, cliente_nombre`, [params.id, isBigua(user) ? null : user.id]);
+  if (!rows.length) throw notFound('No existe esa conexión.');
+  const dueno = (await c.query(`select client_id from mailgw.admin_user where id = $1`, [rows[0].user_id])).rows[0];
+  if (dueno?.client_id) await audit(c, user, dueno.client_id, 'admin.conexion.revocar', { cliente_oauth: rows[0].cliente_nombre });
+  return { revocada: true };
+});

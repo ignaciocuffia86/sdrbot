@@ -82,14 +82,18 @@ export async function activate(token, password) {
       returning id, email`, [sha256(String(token ?? '')), hash]);
   if (!rows.length) throw authError('El enlace de activación no es válido o ya venció. Pedí uno nuevo.');
   await q(`delete from mailgw.admin_session where user_id = $1`, [rows[0].id]);
+  await revocarConexiones(rows[0].id);
   return rows[0];
 }
 
 // ---------------------------------------------------------------- login y sesiones
 
-export async function login(email, password, meta) {
+// Valida email y contraseña con el bloqueo por intentos fallidos, sin abrir sesión. La usan el
+// login del panel y el login de OAuth del MCP del panel (docs/23 §3.4), con las mismas reglas.
+export async function verificarCredenciales(email, password) {
   const { rows } = await q(
-    `select id, password_hash, active, failed_logins, locked_until from mailgw.admin_user where email = lower($1)`,
+    `select id, email, name, role, client_id, password_hash, active, failed_logins, locked_until
+       from mailgw.admin_user where email = lower($1)`,
     [String(email ?? '')]);
   const u = rows[0];
   dummyHash ??= await hashPassword(randomToken());
@@ -108,11 +112,22 @@ export async function login(email, password, meta) {
     throw authError();
   }
   await q(`update mailgw.admin_user set failed_logins = 0, locked_until = null, last_login_at = now() where id = $1`, [u.id]);
+  return { id: u.id, email: u.email, name: u.name, role: u.role, client_id: u.client_id };
+}
+
+export async function login(email, password, meta) {
+  const u = await verificarCredenciales(email, password);
   const token = randomToken();
   await q(`insert into mailgw.admin_session (token_hash, user_id, expires_at, ip, user_agent)
            values ($1, $2, now() + make_interval(hours => $3), $4, $5)`,
   [sha256(token), u.id, SESSION_HOURS, meta?.ip ?? null, meta?.userAgent?.slice(0, 200) ?? null]);
   return token;
+}
+
+// Las conexiones de Claude (MCP del panel) de un usuario quedan revocadas cuando se lo desactiva o
+// se le resetea la contraseña: un token copiado no sobrevive a eso.
+export async function revocarConexiones(userId, c = null) {
+  await (c ?? getPool()).query(`update mailgw.oauth_token set revoked_at = now() where user_id = $1 and revoked_at is null`, [userId]);
 }
 
 export async function logout(token) {

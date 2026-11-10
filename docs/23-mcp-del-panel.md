@@ -1,6 +1,6 @@
 # MCP del panel: gestionar el SDR desde Claude
 
-Estado al 10/11/2026: **diseño**, con la etapa M0 hecha (§9). Se apoya en el panel `/admin` (`15`, `16`, `21`)
+Estado al 10/11/2026: **M0 y M1 construidas** (§9): el OAuth, `/mcp/panel` con las herramientas de lectura y las conexiones en el panel. M2 a M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
 y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
@@ -108,16 +108,19 @@ la persona**: en ASCI pone su email y recibe un código; acá usa su usuario y c
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code", "refresh_token"],
   "code_challenge_methods_supported": ["S256"],
-  "token_endpoint_auth_methods_supported": ["none"],
+  "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
   "authorization_response_iss_parameter_supported": true,
   "scopes_supported": ["panel", "offline_access"]
 }
 ```
 
   `offline_access` va en la lista porque Claude lo agrega al pedido sólo si el servidor lo
-  publica, y es lo que le dice que va a recibir un refresh token. `none` es el único método del
-  token: todos los clientes son públicos y los ata PKCE. No hay «cliente definido por el usuario»
-  como en ASCI: acá no hay una clave de la persona para usar de secreto.
+  publica, y es lo que le dice que va a recibir un refresh token. Los clientes CIMD son públicos
+  (`none`) y los ata PKCE. Uno de DCR que pide `client_secret_post` o `client_secret_basic` recibe
+  un secreto `mgc_…` derivado de su `client_id` (no se guarda) y lo tiene que mandar siempre: en
+  ASCI, un cliente que pidió secreto y recibió «none» abandonaba sin decir por qué. No hay
+  «cliente definido por el usuario» como en ASCI: acá no hay una clave de la persona para usar
+  de secreto.
 
 - **El MCP de los bots no cambia.** `/mcp` sigue con su 401 de hoy y sin metadata: un token
   `mgw_…` no pasa por OAuth.
@@ -363,25 +366,18 @@ decida otra cosa (decisión abierta 3).
 | Abuso o un bucle de un agente | Límite por usuario (60 llamadas por minuto, 20 cambios por minuto) y por IP en `/oauth/*` |
 | Pedidos de otro origen | El MCP no usa cookies, así que no hay CSRF. Se valida la cabecera `Origin` cuando viene, como pide la especificación de MCP |
 
-## 7. Base: migración `014_mcp_del_panel`
+## 7. Base
+
+### 7.1 Migración `015_mcp_del_panel_oauth` (M1, construida)
+
+`mailgw.oauth_code` (el código, de uso único) y `mailgw.oauth_token` (los tokens de acceso y de
+renovación, en familias: una familia es una conexión). Todo como hash, con RLS y sin permisos para
+`mailgw_app` ni `mailgw_portal`: sólo las toca el dueño, como `admin_user` y las sesiones. Los
+clientes OAuth (CIMD o DCR) no se guardan.
+
+### 7.2 Para M2: quién aprueba
 
 ```sql
--- OAuth del MCP del panel.
--- Los clientes (CIMD o DCR) no se guardan: el client_id es una URL o un sobre firmado.
-create table mailgw.oauth_code (
-  code_hash text primary key, client_id text not null, cliente_nombre text not null,
-  user_id uuid not null references mailgw.admin_user, redirect_uri text not null,
-  code_challenge text not null, expires_at timestamptz not null, used_at timestamptz);
-create table mailgw.oauth_token (
-  id uuid primary key default gen_random_uuid(),
-  token_hash text not null unique, tipo text not null check (tipo in ('acceso', 'renovacion')),
-  client_id text not null, cliente_nombre text not null,
-  user_id uuid not null references mailgw.admin_user, familia uuid not null,
-  expires_at timestamptz not null, revoked_at timestamptz, last_used_at timestamptz,
-  created_at timestamptz not null default now());
--- Sólo el dueño las toca (como admin_user y las sesiones): ni mailgw_app ni mailgw_portal.
-
--- Quién aprueba.
 alter table sdr.cliente_config add column aprueba text not null default 'bigua'
   check (aprueba in ('bigua', 'cliente_y_bigua', 'cliente'));
 alter table sdr.aprobacion
@@ -419,13 +415,38 @@ tocar el destinatario.
 | Etapa | Qué | Toca |
 |---|---|---|
 | **M0 · Servicio** (hecha) | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
-| **M1 · Conectar y mirar** | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
+| **M1 · Conectar y mirar** (hecha) | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
 | **M2 · Aprobaciones del cliente** | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
 | **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
 | **M4 · Biguá** | `cliente_crear`, usuarios y lo técnico en lectura | Gateway |
 
 M1 sola ya sirve: el cliente pregunta «¿cómo viene la campaña de webinar?» y Claude contesta con
 los datos del panel.
+
+### 9.1 Cómo quedó M1 (10/11)
+
+| Pieza | Dónde |
+|---|---|
+| OAuth: metadata, DCR, CIMD, página de ingreso y consentimiento, canje, renovación, revocación | `gateway/src/panel/oauth.mjs`; lo puro (firma, PKCE, redirects, CIMD) en `gateway/src/panel/oauth_util.mjs`, llevado de `locasci/mcp/oauth.mjs` |
+| `/mcp/panel` y sus diez herramientas de lectura (`readOnlyHint`) | `gateway/src/panel/mcp.mjs`, sobre `src/admin/servicio.mjs` |
+| Ingreso con las reglas del panel (scrypt, bloqueo tras 5 intentos) | `verificarCredenciales` en `gateway/src/admin/auth.mjs`; el login del panel la usa también |
+| Desactivar un usuario o resetearle la contraseña revoca sus conexiones | `revocarConexiones` en `auth.mjs` |
+| «Conexiones» en el panel (botón arriba, al lado de «Cambiar contraseña») | `GET /admin/api/me/conexiones`, `POST /admin/api/me/conexiones/:id/revocar`; Biguá ve y desconecta las de todos |
+| Base | `015_mcp_del_panel_oauth.sql` (§7.1) |
+| Pruebas | `gateway/test/mcp_panel.test.mjs`: los casos de §3.7, con CIMD contra un documento simulado |
+
+**Para ponerlo en producción** (lo hace Biguá; no está hecho):
+
+1. Aplicar la `015` en el proyecto `sdrbot` de Supabase (`node bin/admin.mjs migrate`).
+2. Cargar `OAUTH_FIRMA` en Vercel (proyecto `sdrbot-mail-gateway`): 32 bytes aleatorios en base64
+   (`openssl rand -base64 32`), distinta de la de ASCI. Sin ella, `/oauth/*` responde
+   `server_error` y nadie puede conectar.
+3. Probar con un usuario de Biguá desde claude.ai y desde Claude Code (§3.6), y mirar en los
+   logs de Vercel la secuencia de una conexión buena.
+
+**Lo que §6 propone y M1 todavía no tiene:** los límites por usuario y por IP, y la validación de
+la cabecera `Origin` en `/mcp/panel`. M1 es sólo lectura; conviene sumarlos antes de M2, que ya
+decide aprobaciones.
 
 ## 10. Decisiones abiertas
 
