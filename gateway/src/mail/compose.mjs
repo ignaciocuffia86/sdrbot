@@ -100,6 +100,14 @@ export function replyFields(account, original, r) {
     to = (original.to ?? []).filter((a) => a.address && a.address !== self);
   }
   if (!to.length) throw errors.notAllowed('El mensaje original no tiene a quién responder.');
+  // La copia pedida (derivar a un interesado), además de la de responder a todos.
+  if (r.cc?.length) {
+    const ya = new Set([self, ...to.map((a) => a.address), ...cc.map((a) => a.address)]);
+    for (const x of r.cc) {
+      const address = String(x).trim().toLowerCase();
+      if (address && !ya.has(address)) { ya.add(address); cc.push({ address }); }
+    }
+  }
   const subject = /^\s*(re|rv|fw|fwd)\s*:/i.test(original.subject ?? '') ? original.subject : `Re: ${original.subject ?? ''}`.trim();
   const references = [...(original.references ?? [])];
   if (original.message_id && !references.includes(original.message_id)) references.push(original.message_id);

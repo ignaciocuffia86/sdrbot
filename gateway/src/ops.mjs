@@ -95,7 +95,7 @@ async function onMailbox(ctx, email, fn) {
 async function sendFlow(ctx, args, kind) {
   // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón. La supresión y el
   // estado de quien recibe se controlan con los destinatarios ya armados, antes del SMTP.
-  const { aprobacion, campanaId } = await sdr.controlarEnvio(ctx.clientId, args, kind);
+  const { aprobacion, campanaId, cc } = await sdr.controlarEnvio(ctx.clientId, args, kind);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
     const res = await store.reserveSend(account, args.idempotency_key, today, kind);
@@ -134,7 +134,7 @@ async function sendFlow(ctx, args, kind) {
       if (kind === 'reply') {
         await withImap(account, password, async (client) => {
           const original = await originalForReply(client, args.folder, args.uid);
-          built = await buildMessage(account, replyFields(account, original, args));
+          built = await buildMessage(account, replyFields(account, original, { ...args, cc }));
           await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
           smtp = await sendRaw(account, password, built);
           smtpDone = true;
@@ -173,6 +173,14 @@ async function sendFlow(ctx, args, kind) {
         idempotency_key: args.idempotency_key, aprobacion: aprobacion?.id ?? null,
       }, { bot: args.bot, tarea: args.tarea, corrida: args.corrida }).catch((e) => {
         warnings.push(`El mail salió pero no se pudo registrar en la línea de tiempo: ${e.message}`);
+      });
+    }
+    // Una respuesta con copia deriva al interesado: desde ahí lo sigue quien está en copia.
+    if (kind === 'reply' && args.prospecto_id && cc?.length) {
+      await sdr.registrarDerivacion(ctx.clientId, args.prospecto_id, {
+        a: cc, buzon: account.email, message_id: built.messageId, aprobacion: aprobacion?.id ?? null,
+      }, { bot: args.bot, tarea: args.tarea, corrida: args.corrida }).catch((e) => {
+        warnings.push(`El mail salió pero no se pudo registrar la derivación: ${e.message}`);
       });
     }
     return {
@@ -297,10 +305,13 @@ const MAIL_OPS = [
       'buzón, con la cita del original salvo quote=false, guarda la copia en Enviados y marca el original como ' +
       'respondido. Respeta el cupo diario y la clave de idempotencia. Sólo enviar lo que ya está aprobado. Si la ' +
       'respuesta va a alguien del registro, exige su prospecto_id (prospecto_requerido, destinatario_no_coincide); a un ' +
-      'positivo, con su aprobación respuesta_positivo.',
+      'positivo, con su aprobación respuesta_positivo. Con cc suma en copia a quien toma a los interesados (su casilla del ' +
+      'dominio principal, o alguien de ese dominio), tal como está en la aprobación: el prospecto queda derivado al cliente.',
     schema: obj({
       mailbox, folder, uid, text, html: text,
       reply_all: { type: 'boolean', default: false },
+      cc: { type: 'array', items: { type: 'string', minLength: 3, maxLength: 320 }, maxItems: 3, uniqueItems: true,
+        description: 'Copia para derivar a un interesado: quien toma a los interesados, como en contenido.cc de la aprobación.' },
       quote: { type: 'boolean', default: true },
       mark_answered: { type: 'boolean', default: true },
       idempotency_key: idem, ...sdrSend,

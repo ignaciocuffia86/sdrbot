@@ -17,7 +17,7 @@ import { aadFor, decryptSecret, encryptSecret } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
 import { checkWebhookHost, postWebhook } from '../mail/net.mjs';
-import { insertarEvento, aplicarEvento, versionActual, SQL_BIGUA_DECIDE } from './store.mjs';
+import { insertarEvento, aplicarEvento, versionActual, SQL_BIGUA_DECIDE, esDelResponsable } from './store.mjs';
 import * as dripify from './dripify.mjs';
 import * as crm from './crm.mjs';
 import * as noContactar from './no_contactar.mjs';
@@ -123,11 +123,19 @@ async function procesar(c, clientId, account, uidvalidity, m) {
 
   let prospecto = null;
   if (prospectoId) {
-    const { rows } = await c.query(`select id, cuenta_id, email, nombre, estado from sdr.prospecto where client_id = $1 and id = $2`,
+    const { rows } = await c.query(
+      `select id, cuenta_id, email, nombre, estado, derivado_a from sdr.prospecto where client_id = $1 and id = $2`,
       [clientId, prospectoId]);
     prospecto = rows[0] ?? null;
     cuentaId = prospecto?.cuenta_id ?? cuentaId;
   }
+  // Un interesado derivado: lo que escribe en el hilo quien lo tomó (su «responder a todos», que
+  // también le llega a esta casilla) no es una respuesta del prospecto. Queda guardado y atendido,
+  // sin despertar a nadie. Lo que escribe el prospecto sí se lee, sabiendo que ya está derivado.
+  const delResponsable = Boolean(prospecto?.derivado_a) && tipo === 'respuesta' && de !== prospecto.email
+    && esDelResponsable(de, prospecto.derivado_a);
+  if (delResponsable) tipo = 'del_responsable';
+  else if (prospecto?.derivado_a) datos.derivado_a = prospecto.derivado_a;
 
   const texto = m.reply_text ? m.reply_text.slice(0, TEXTO_MAX) : null;
   const ins = await c.query(
@@ -139,10 +147,11 @@ async function procesar(c, clientId, account, uidvalidity, m) {
     [clientId, account.id, CARPETA, uidvalidity, m.uid, m.message_id, de, m.from?.name ?? null, (m.subject ?? '').slice(0, 500),
       m.date, tipo, prospecto?.id ?? null, cuentaId, enviado, como, texto, JSON.stringify(datos),
       // Un rebote temporal no pide nada: el servidor del destinatario reintenta solo.
-      tipo === 'rebote_temporal' ? 'atendido' : 'nuevo',
-      tipo === 'rebote_temporal' ? new Date() : null,
-      tipo === 'rebote_temporal' ? 'gateway' : null,
-      tipo === 'rebote_temporal' ? 'Rebote temporal: el servidor de destino sigue intentando.' : null]);
+      ['rebote_temporal', 'del_responsable'].includes(tipo) ? 'atendido' : 'nuevo',
+      ['rebote_temporal', 'del_responsable'].includes(tipo) ? new Date() : null,
+      ['rebote_temporal', 'del_responsable'].includes(tipo) ? 'gateway' : null,
+      { rebote_temporal: 'Rebote temporal: el servidor de destino sigue intentando.',
+        del_responsable: `Lo escribió ${de}, que tomó al interesado: la conversación sigue con el cliente.` }[tipo] ?? null]);
   if (!ins.rows.length) return null;
   const fila = ins.rows[0];
 
@@ -163,6 +172,7 @@ async function procesar(c, clientId, account, uidvalidity, m) {
       baja: { tipo: 'baja', datos: { ...base, por: 'mail' } },
       respuesta: { tipo: 'respuesta', datos: { ...base, como } },
       automatica: { tipo: 'nota', datos: { ...base, respuesta_automatica: true } },
+      del_responsable: { tipo: 'nota', datos: { ...base, de, del_responsable: true } },
     }[tipo];
     if (e) {
       const ev = { ...e, canal: 'mail', prospecto_id: prospecto.id, ref: m.message_id };
@@ -349,11 +359,15 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
     if (kind !== 'send') return;
     if (campanaId) await controlarCampanaDelEnvio(c, clientId, emails, prospectoId, campanaId);
     const { rows } = await c.query(
-      `select p.id, p.email, p.estado,
+      `select p.id, p.email, p.estado, p.derivado_a,
               exists (select 1 from sdr.correo x where x.client_id = p.client_id and x.prospecto_id = p.id and x.estado = 'nuevo') as sin_leer
          from sdr.prospecto p where p.client_id = $1 and (p.email = any($2) or p.id = $3::uuid)`,
       [clientId, emails, prospectoId ?? null]);
     for (const p of rows) {
+      if (p.derivado_a) {
+        throw new GatewayError('prospecto_derivado',
+          `${p.email ?? 'Esta persona'} está derivada a ${p.derivado_a}: la conversación es del cliente y no va otro mail del SDR.`, 409);
+      }
       if (p.sin_leer) {
         throw new GatewayError('respuesta_sin_atender',
           `${p.email ?? 'Esta persona'} tiene una respuesta sin atender: la lee seguimiento (correo_revisar) antes de escribirle otra cosa.`, 409);

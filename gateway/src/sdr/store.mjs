@@ -326,6 +326,21 @@ export async function aplicarEvento(c, clientId, e) {
         where client_id = $1 and id = $2 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')`,
       [clientId, e.prospecto_id, e.tipo === 'baja' ? 'pidió la baja' : `respondió por ${e.canal ?? 'otro canal'}`]);
   }
+  if (e.tipo === 'derivado') {
+    const a = normMail(e.datos?.a?.[0] ?? e.datos?.a);
+    if (a) {
+      await c.query(
+        `update sdr.prospecto set derivado_a = $3, derivado_at = coalesce(derivado_at, now()),
+                proximo_paso = $4, proximo_canal = null, proximo_fecha = null, actualizado_at = now()
+          where client_id = $1 and id = $2`, [clientId, e.prospecto_id, a, `derivado: lo sigue ${a}`]);
+      // Ni LinkedIn le sigue escribiendo.
+      await c.query(
+        `update sdr.prospecto
+            set dripify = dripify || jsonb_build_object('freno', jsonb_build_object('pendiente', true, 'motivo', 'derivado al cliente', 'desde', now()))
+          where client_id = $1 and id = $2 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')`,
+        [clientId, e.prospecto_id]);
+    }
+  }
   if (e.tipo === 'crm.cargado' && e.ref) {
     await c.query(`update sdr.prospecto set crm_id = $3 where client_id = $1 and id = $2`, [clientId, e.prospecto_id, e.ref]);
   }
@@ -348,6 +363,12 @@ export async function evento(clientId, e, meta) {
 // Lo usa el gateway al enviar un mail con prospecto_id: documenta el envío sin depender del bot.
 export async function registrarEnvio(clientId, prospectoId, datos, meta) {
   return evento(clientId, { tipo: 'mail.enviado', canal: 'mail', prospecto_id: prospectoId, ref: datos.message_id, datos }, meta);
+}
+
+// Lo usa el gateway cuando sale una respuesta con copia: el interesado queda derivado a quien está
+// en copia, y desde ahí la conversación es del cliente.
+export async function registrarDerivacion(clientId, prospectoId, datos, meta) {
+  return evento(clientId, { tipo: 'derivado', canal: 'mail', prospecto_id: prospectoId, ref: datos.message_id, datos }, meta);
 }
 
 // ---------------------------------------------------------------- cuentas y prospectos
@@ -594,7 +615,7 @@ export async function agenda(clientId, { fecha, canal, limite }) {
       `select p.id, p.nombre, p.cargo, p.email, p.estado, p.proximo_paso, p.proximo_canal, p.proximo_fecha,
               p.ultima_interaccion_at, p.ultima_interaccion_canal, k.nombre as cuenta
          from sdr.prospecto p left join sdr.cuenta k on k.id = p.cuenta_id
-        where p.client_id = $1 and p.proximo_fecha <= $2 and p.estado <> all($3)
+        where p.client_id = $1 and p.proximo_fecha <= $2 and p.estado <> all($3) and p.derivado_at is null
           and ($4::text is null or p.proximo_canal = $4)
         order by p.proximo_fecha, p.actualizado_at limit $5`,
       [clientId, dia, FINALES, canal ?? null, limite]);
@@ -789,6 +810,15 @@ export async function pedirAprobacion(clientId, a, meta) {
     const p = a.prospecto_id ? await prospectoDe(c, clientId, a.prospecto_id) : null;
     // La aprobación queda en la campaña de la persona: ahí se cuenta la calibración (decisión 4).
     const k = await enCampana.resolver(c, clientId, { clave: a.campana, prospecto: p });
+    if (a.contenido?.cc !== undefined) {
+      const cc = listaCopia(a.contenido.cc);
+      if (cc.length && (a.tipo !== 'respuesta_positivo' || (a.contenido.canal ?? 'mail') !== 'mail')) {
+        throw new GatewayError('invalid_request', 'La copia (cc) va sólo en la respuesta a un positivo por mail (tipo respuesta_positivo).', 400);
+      }
+      await controlarCopia(c, clientId, await configDe(c, clientId), p, cc);
+      a = { ...a, contenido: { ...a.contenido, cc } };
+      if (!cc.length) delete a.contenido.cc;
+    }
     const { rows } = await c.query(
       `insert into sdr.aprobacion (client_id, tipo, prospecto_id, pedida_por, contenido, campana_id) values ($1, $2, $3, $4, $5, $6) returning *`,
       [clientId, a.tipo, a.prospecto_id ?? null, meta.bot, JSON.stringify(a.contenido), k.id]);
@@ -810,6 +840,63 @@ export const TIPOS_MENSAJE = ['calibracion_mail', 'respuesta_positivo', 'whatsap
 // sola apenas se aprueba la respuesta, antes de que la respuesta salga. Contestarle pide aprobación
 // en los dos estados, por mail, LinkedIn o WhatsApp (hallazgo de Vercel 01M71WRPJYF9Q1GZATMBZR9R5X).
 export const ESTADOS_POSITIVO = ['positivo', 'en_crm'];
+// Una persona derivada al cliente también: lo que se le conteste pasa por una aprobación, cualquiera
+// sea su estado (docs/16 §7).
+export const pideAprobacionComoPositivo = (p) => ESTADOS_POSITIVO.includes(p?.estado) || Boolean(p?.derivado_at);
+
+// ---- derivación al cliente (migración 018)
+//
+// La respuesta a un interesado puede llevar en copia (cc) a quien lo toma, en su casilla del dominio
+// principal. Sólo a esa persona o a alguien de su mismo dominio: un mail con instrucciones no puede
+// hacer que el bot copie a cualquiera. Con un dominio de correo público (gmail.com…), sólo esa dirección.
+const DOMINIOS_PUBLICOS = new Set(['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com',
+  'yahoo.com.ar', 'icloud.com', 'me.com', 'proton.me', 'protonmail.com', 'aol.com', 'gmx.com', 'yandex.com']);
+const EMAIL_EN_TEXTO = /[a-z0-9._%+'-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/i;
+const dominioDe = (e) => String(e ?? '').split('@')[1] ?? '';
+
+// Quién toma a los interesados de una campaña: { nombre, email }. Sin «Mail de quien toma a los
+// interesados», el mail escrito en «Quién toma a los interesados» (como se cargaba antes).
+export function responsable(cfg, k) {
+  if (!cfg || !k) return { nombre: null, email: null };
+  const { valores } = enCampana.efectivos(cfg, k);
+  const nombre = valores.responsable_positivos ?? null;
+  const email = valores.responsable_email ?? EMAIL_EN_TEXTO.exec(nombre ?? '')?.[0]?.toLowerCase() ?? null;
+  return { nombre, email };
+}
+
+// Si una dirección es «del lado del cliente» para esta derivación: la de quien toma a los
+// interesados, o una de su dominio si no es un dominio público.
+export function esDelResponsable(direccion, email) {
+  const d = normMail(direccion);
+  const r = normMail(email);
+  if (!d || !r) return false;
+  if (d === r) return true;
+  const dom = dominioDe(r);
+  return Boolean(dom) && !DOMINIOS_PUBLICOS.has(dom) && dominioDe(d) === dom;
+}
+
+// Las direcciones de una copia, limpias y sin repetir («Ana <ana@x>» → ana@x), en orden.
+export const listaCopia = (cc) => [...new Set((Array.isArray(cc) ? cc : cc ? String(cc).split(',') : [])
+  .map((x) => normMail(/<([^>]+)>/.exec(x)?.[1] ?? x)).filter(Boolean))];
+
+// Controla una copia contra quien toma a los interesados de la campaña del prospecto.
+async function controlarCopia(c, clientId, cfg, p, cc) {
+  if (!cc.length) return;
+  if (!p) throw new GatewayError('prospecto_requerido', 'Una respuesta con copia es para un prospecto: pasá su prospecto_id.', 422);
+  const k = await enCampana.resolver(c, clientId, { prospecto: p });
+  const r = responsable(cfg, k);
+  if (!r.email) {
+    throw new GatewayError('sin_responsable',
+      'No está cargado el mail de quien toma a los interesados («Mail de quien toma a los interesados», en los ajustes de la ' +
+      'campaña o de Empresa): sin eso no se pone a nadie en copia. Mandá la respuesta sin copia o pedile al cliente que lo cargue.', 422);
+  }
+  const fuera = cc.filter((x) => !esDelResponsable(x, r.email));
+  if (fuera.length) {
+    throw new GatewayError('copia_no_permitida',
+      `La copia sólo puede ir a quien toma a los interesados (${r.email}) o a alguien de su dominio; no a ${fuera.join(', ')}.`, 422);
+  }
+  if (p.email && cc.includes(p.email)) throw new GatewayError('copia_no_permitida', 'El prospecto no va en copia: ya es el destinatario.', 422);
+}
 const SQL_MENSAJE = `a.tipo in ('calibracion_mail', 'respuesta_positivo', 'whatsapp_primero')`;
 const SQL_APRUEBA = `coalesce((select cc.aprueba from sdr.cliente_config cc where cc.client_id = a.client_id), 'bigua')`;
 // Lo que Biguá tiene para decidir (aprobar o rechazar): lo que el orquestador le presenta.
@@ -967,11 +1054,19 @@ export async function controlarEnvio(clientId, args, kind) {
       const cal = await enCampana.calibracion(c, clientId, k, cfg);
       if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
-    if (kind === 'reply' && ESTADOS_POSITIVO.includes(p?.estado)) necesita = { tipo: 'respuesta_positivo' };
+    if (kind === 'reply' && pideAprobacionComoPositivo(p)) necesita = { tipo: 'respuesta_positivo' };
+    // La copia a quien toma a los interesados: sólo en una respuesta, controlada y aprobada.
+    const cc = kind === 'reply' ? listaCopia(args.cc) : [];
+    if (cc.length) {
+      await controlarCopia(c, clientId, cfg, p, cc);
+      necesita ??= { tipo: 'respuesta_positivo', copia: true };
+    }
     const campanaId = k?.id ?? null;
-    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId };
+    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId, cc };
     if (!args.aprobacion_id) {
-      throw errorsSdr.aprobacionRequerida(necesita.tipo === 'calibracion_mail'
+      throw errorsSdr.aprobacionRequerida(necesita.copia
+        ? 'Una respuesta con copia necesita una aprobación respuesta_positivo con esa copia en contenido.cc. Enviá cuando esté aprobada, pasando aprobacion_id.'
+        : necesita.tipo === 'calibracion_mail'
         ? `La campaña ${enCampana.citaNombre(k.nombre)} está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
           'Pedila con registro_pedir_aprobacion (tipo calibracion_mail, con buzón, destinatario, asunto y texto) y enviá cuando esté aprobada, pasando aprobacion_id.'
         : 'Es la respuesta a un positivo: necesita una aprobación (registro_pedir_aprobacion, tipo respuesta_positivo). Enviá cuando esté aprobada, pasando aprobacion_id.');
@@ -998,6 +1093,10 @@ export async function controlarEnvio(clientId, args, kind) {
     else if (normTexto(final.texto) !== normTexto(args.text)) diferencias.push('el texto');
     if (final.canal && final.canal !== 'mail') diferencias.push(`el canal (la aprobación es para ${final.canal})`);
     if (ap.prospecto_id && args.prospecto_id && ap.prospecto_id !== args.prospecto_id) diferencias.push('el prospecto');
+    // La copia es parte de lo aprobado: ni una de más ni una de menos.
+    if (kind === 'reply' && JSON.stringify([...listaCopia(final.cc)].sort()) !== JSON.stringify([...cc].sort())) {
+      diferencias.push(cc.length ? 'la copia (cc)' : 'la copia (la aprobación lleva cc)');
+    }
     // La respuesta a un positivo es para esa persona: una aprobación sin prospecto no sirve.
     if (ap.tipo === 'respuesta_positivo' && ap.prospecto_id !== args.prospecto_id) {
       if (!diferencias.includes('el prospecto')) diferencias.push('el prospecto');
@@ -1006,7 +1105,7 @@ export async function controlarEnvio(clientId, args, kind) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +
         '(si el operador lo editó, la versión editada está en decision_contenido).');
     }
-    return { aprobacion: ap, campanaId };
+    return { aprobacion: ap, campanaId, cc };
   });
 }
 
