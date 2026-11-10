@@ -312,7 +312,7 @@ Levanta un Dovecot real con TLS y STARTTLS, Postgres local y servidores SMTP de 
 
 ### CRM: la carga de los positivos en HubSpot
 
-Diseño en `docs/23-crm-carga-mixta.md` (etapa 4a, migración `013`). Cuando el operador aprueba la
+Diseño en `docs/23-crm-carga-mixta.md` (etapa 4a, migración `015`). Cuando el operador aprueba la
 respuesta a un positivo (`registro_aprobar` sobre una `respuesta_positivo`), la carga entra a
 `sdr.crm_carga` en la misma transacción, si el cliente tiene el CRM conectado. La vuelta del reloj
 (`POST /cron/correo`) la procesa antes de leer los buzones (`src/sdr/crm.mjs`, adaptador en
