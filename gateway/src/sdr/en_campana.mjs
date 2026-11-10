@@ -77,10 +77,10 @@ function deLaCampana(cfg, k) {
 // lo que hace cumplir el gateway.
 export const efectivos = (cfg, k) => ajustesEfectivos(cfg?.ajustes ?? {}, deLaCampana(cfg, k), k.tipo);
 
-// Las cuentas nuevas por día de la campaña. La «principal», mientras Empresa tenga
-// cuentas_por_dia (hasta la 014), usa ése: es el que edita el formulario de Empresa.
-export const cuentasPorDia = (cfg, k) => (k.clave === 'principal' && Number.isInteger(cfg?.ajustes?.cuentas_por_dia)
-  ? cfg.ajustes.cuentas_por_dia : k.cuentas_por_dia);
+// Las cuentas nuevas por día de una campaña: su columna, la misma que suma el tope del cliente. El
+// formulario de Empresa, mientras edite cuentas_por_dia, la actualiza en la «principal»
+// (campanas.cuentasDeLaPrincipal).
+export const cuentasPorDia = (k) => k.cuentas_por_dia;
 
 export function exigirActiva(k, que) {
   if (k.estado !== 'activa') throw errorsCampana.inactiva(k, que);

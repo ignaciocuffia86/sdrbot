@@ -143,7 +143,7 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
   for (const k of campanas) {
     lista.push('', `### ${k.nombre}`, '',
       `- Clave \`${k.clave}\`, id \`${k.id}\`. Tipo: ${k.tipo}. Estado: **${k.estado}**.`,
-      `- Cuentas nuevas por día: ${k.estado === 'activa' ? enCampana.cuentasPorDia(cfg, k) : 0}${k.estado === 'activa' ? '' : ' (no está activa)'}.`,
+      `- Cuentas nuevas por día: ${k.estado === 'activa' ? enCampana.cuentasPorDia(k) : 0}${k.estado === 'activa' ? '' : ' (no está activa)'}.`,
       `- Calibración: ${textoCalibracion(total(k), k.usadas)}`,
       `- Buzones: ${k.buzones?.length ? k.buzones.join(', ') : 'ninguno (no puede mandar mails nuevos)'}.`,
       `- LinkedIn: ${k.dripify_campana_id ? 'tiene campaña de Dripify.' : 'sin campaña de Dripify propia.'}`,

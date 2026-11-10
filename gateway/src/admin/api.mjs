@@ -550,6 +550,9 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
     }
     const cambiados = diferencias(cfg.ajustes, nuevo);
     if (!cambiados.length) return { cambios: [] };
+    if (cambiados.includes('cuentas_por_dia')) {
+      await campanas.cuentasDeLaPrincipal(c, clientId, nuevo.cuentas_por_dia, { tope: cfg.tope_cuentas_dia, esBigua: isBigua(user) });
+    }
     await c.query(`update sdr.cliente_config set ajustes = $2, actualizado_at = now() where client_id = $1`,
       [clientId, JSON.stringify(nuevo)]);
     await c.query(

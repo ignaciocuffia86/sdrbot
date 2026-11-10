@@ -43,18 +43,17 @@ test('la «principal» toma de Empresa lo que todavía está ahí; las demás, l
   assert.equal(p.icp, 'Software en Argentina');
   assert.deepEqual(p.roles_objetivo, ['CTO'], 'lo que Empresa no tiene sale de la campaña');
   assert.deepEqual(p.links_permitidos, ['https://r.test/caso']);
-  assert.equal(cuentasPorDia(cfg, principal), 6);
+  assert.equal(cuentasPorDia(principal), 4, 'las cuentas por día son siempre las de la columna, las que suma el tope');
   // Sin las claves en Empresa (después de la 014), vale lo de la campaña.
   const sin = { ...cfg, ajustes: { firma: 'Equipo R' } };
   assert.equal(efectivos(sin, principal).valores.icp, 'icp viejo');
-  assert.equal(cuentasPorDia(sin, principal), 4);
 
   const w = efectivos(cfg, webinar).valores;
   assert.equal(w.icp, 'Bancos', 'otra campaña no toma lo de la principal');
   assert.equal(w.tono, 'formal', 'la campaña cambia lo heredable');
   assert.deepEqual(w.excluir, ['consultoras', 'startups'], 'las exclusiones se suman');
   assert.equal(w.link_agenda, 'https://agenda.test/r', 'lo que la campaña no cambia viene de Empresa');
-  assert.equal(cuentasPorDia(cfg, webinar), 5);
+  assert.equal(cuentasPorDia(webinar), 5);
 });
 
 test('reglas_manual del cliente: Empresa, Campañas y una sección por campaña', () => {
@@ -69,7 +68,7 @@ test('reglas_manual del cliente: Empresa, Campañas y una sección por campaña'
   }
 
   assert.match(lista.contenido, /### Principal\n\n- Clave `principal`, id `00000000-0000-0000-0000-00000000000a`/);
-  assert.match(lista.contenido, /Cuentas nuevas por día: 6\./);
+  assert.match(lista.contenido, /Cuentas nuevas por día: 4\./, 'la columna, no el cuentas_por_dia de Empresa');
   assert.match(lista.contenido, /Calibración: faltan 17 de 20/);
   assert.match(lista.contenido, /Cuentas nuevas por día: 5\.\n- Calibración: terminada \(5 de 5\)/);
   assert.match(lista.contenido, /### Vieja\n\n.*\*\*pausada\*\*.*\n- Cuentas nuevas por día: 0 \(no está activa\)/);

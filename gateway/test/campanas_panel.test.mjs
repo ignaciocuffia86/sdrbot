@@ -266,3 +266,32 @@ test('campañas: muchas listas a la vez no traban el pool de conexiones', async 
   const r = await Promise.race([Promise.all(pedidos), limite]);
   for (const x of r) assert.equal(x.status, 200, JSON.stringify(x.body));
 });
+
+test('campañas: las cuentas por día de la «principal» son una sola, también desde el formulario de Empresa', async () => {
+  // El hallazgo: bajar la columna de la principal para hacerle lugar a otra campaña y dejar alto el
+  // cuentas_por_dia de Empresa, que es el que el orquestador usaba para la principal.
+  const C = 'cp-c';
+  await store.upsertClient(C, 'Campañas C');
+  await q(`insert into sdr.cliente_config (client_id, modo, tope_cuentas_dia, ajustes) values ($1, 'autogestionado', 10, $2)`,
+    [C, { nombre_comercial: 'C SA', cuentas_por_dia: 4 }]);
+  try {
+    const cli = await loggedIn('usuario@cp-c.test', 'client_admin', C);
+    await q(`update sdr.campana set estado = 'activa', cuentas_por_dia = 1 where client_id = $1 and clave = 'principal'`, [C]);
+    await q(`insert into sdr.campana (client_id, clave, nombre, estado, cuentas_por_dia) values ($1, 'otra', 'Otra', 'activa', 9)`, [C]);
+    const col = async () => (await q(`select cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal'`, [C])).rows[0].cuentas_por_dia;
+
+    const pasado = await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 10 } });
+    assert.equal(pasado.status, 400);
+    assert.match(pasado.body.error.message, /sumarían 19 cuentas por día; el tope del cliente es 10/);
+    assert.equal(await col(), 1, 'rechazado: no cambia nada');
+    assert.equal((await q(`select ajustes from sdr.cliente_config where client_id = $1`, [C])).rows[0].ajustes.cuentas_por_dia, 4);
+
+    ok(await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 1 } }));
+    assert.equal(await col(), 1);
+    await q(`update sdr.campana set estado = 'pausada' where client_id = $1 and clave = 'otra'`, [C]);
+    ok(await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 7 } }));
+    assert.equal(await col(), 7, 'el formulario de Empresa actualiza la columna de la principal');
+  } finally {
+    await q(`delete from mailgw.client where id = $1`, [C]);
+  }
+});

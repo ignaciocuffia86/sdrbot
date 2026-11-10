@@ -66,6 +66,20 @@ async function otrasActivas(c, clientId, id) {
   return rows[0].n;
 }
 
+// Las cuentas por día de la «principal» viven en su columna, la misma que suma el tope y la que leen
+// las reglas. Mientras el formulario de Empresa siga editando cuentas_por_dia (hasta la 014), guardar
+// ese ajuste pasa por acá: actualiza la columna y controla la suma de las campañas activas contra el
+// tope, como un cambio hecho en la pestaña Campañas. Va dentro de la transacción de quien guarda.
+// esBigua: el operador fija el volumen sin tope desde el formulario de Empresa, como hasta ahora.
+export async function cuentasDeLaPrincipal(c, clientId, cuentas, { tope = null, esBigua = false } = {}) {
+  const { rows } = await c.query(
+    `select id, estado, cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal' for update`, [clientId]);
+  if (!rows.length || !Number.isInteger(cuentas) || rows[0].cuentas_por_dia === cuentas) return;
+  if (!esBigua) controlarTope(rows[0], { cuentas_por_dia: cuentas }, { tope, otrasActivas: await otrasActivas(c, clientId, rows[0].id) });
+  await c.query(`update sdr.campana set cuentas_por_dia = $3, actualizado_at = now() where client_id = $1 and id = $2`,
+    [clientId, rows[0].id, cuentas]);
+}
+
 async function buzonesDelCliente(c, clientId) {
   return (await c.query(
     `select id, email, display_name, status from mailgw.account where client_id = $1 order by email`, [clientId])).rows;
