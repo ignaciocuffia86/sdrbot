@@ -64,6 +64,20 @@ const SOLO_CAMPANA = new Set(['oferta', 'propuesta', 'icp', 'roles_objetivo', 's
 const SOLO_EMPRESA = new Set(['nombre_comercial', 'descripcion', 'firma']);
 const ESTADOS_CON_SECCION = ['activa', 'pausada', 'terminada'];
 
+// Lo de la «principal» con las claves de Empresa de antes de la 014 (la propuesta como «oferta», sus
+// cuentas por día), para las reglas que todavía no conocen las campañas.
+function comoAntes(cfg, principal) {
+  const { valores, origen } = enCampana.efectivos(cfg, principal);
+  const out = {};
+  for (const k of ['icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'links_permitidos', 'positivos']) {
+    if (valores[k] !== undefined) out[k] = valores[k];
+  }
+  if (origen.llamado_accion === 'campana') out.llamado_accion = valores.llamado_accion;
+  if (valores.propuesta !== undefined) out.oferta = valores.propuesta;
+  out.cuentas_por_dia = enCampana.cuentasPorDia(principal);
+  return out;
+}
+
 function lineasDeAjustes(ajustes, titulo = tituloDe) {
   const lineas = [];
   for (const [k, v] of Object.entries(ajustes)) {
@@ -109,7 +123,11 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
   if (!campanas.length) lineas.push(`Calibración: ${textoCalibracion(cfg.calibracion_mails)}`);
   else lineas.push('Lo de cada campaña (a quién, qué se ofrece, qué es positivo, volumen y calibración) está en la sección ' +
     '«Campañas» y en la de cada campaña.');
-  const ajustes = ordenar(Object.fromEntries(Object.entries(cfg.ajustes ?? {})
+  // Sin secciones por campaña (reglas de antes de las campañas), todo va acá, como siempre: lo de la
+  // «principal» (que después de la 014 ya no está en Empresa) con sus nombres de antes.
+  const principal = (extra.campanas ?? []).find((k) => k.clave === 'principal');
+  const base = !campanas.length && principal ? { ...(cfg.ajustes ?? {}), ...comoAntes(cfg, principal) } : (cfg.ajustes ?? {});
+  const ajustes = ordenar(Object.fromEntries(Object.entries(base)
     .filter(([k]) => !campanas.length || !SOLO_CAMPANA.has(k))));
   if (Object.keys(ajustes).length) lineas.push('', AVISO_DATOS_CLIENTE, ...lineasDeAjustes(ajustes));
   const activos = (extra.buzones ?? []).filter((b) => b.status === 'active');

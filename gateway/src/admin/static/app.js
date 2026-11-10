@@ -287,6 +287,10 @@ async function resumenView({ clientId, bigua, base }) {
     if (d.status === 'error') aviso('err', `${d.domain} tiene SPF, DKIM o DMARC mal: los mails pueden ir a spam.`, `${base}/canales`, 'Ver cómo arreglarlo');
   }
   if (r.sdr_activo) {
+    if (r.revisar_descripcion) {
+      aviso('warn', 'Revisar la descripción de la empresa: arrancó como una copia de la oferta. Contá qué hace la empresa en general; lo de cada campaña va en su propuesta.',
+        `${base}/empresa`, 'Revisarla');
+    }
     if (r.aprobaciones_pendientes) aviso('warn', `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')} en el chat del orquestador.`);
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
@@ -421,7 +425,9 @@ async function empresaView({ clientId, bigua, base, reload }) {
       bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
   }
   const auto = sdr.modo === 'autogestionado';
-  const notaModo = auto
+  const notaModo = sdr.formulario === 'empresa'
+    ? 'A quién se le escribe, la propuesta, el volumen y los buzones son de cada campaña: se editan en su campaña. Esto vale para las campañas que no digan otra cosa.'
+    : auto
     ? `Este cliente es autogestionado: el volumen y los buzones los decide el cliente${sdr.tope_cuentas_dia !== null ? `, hasta ${sdr.tope_cuentas_dia} cuentas nuevas por día` : ''}.`
     : 'Este cliente lo opera Biguá: el volumen y los buzones los decide Biguá.';
   const err = h('p', { class: 'err', role: 'alert' });
