@@ -445,7 +445,7 @@ async function resumenView({ clientId, bigua, base }) {
     canal('CRM · HubSpot', !r.crm?.token ? ['b-mute', 'sin conectar'] : r.crm.con_problema ? ['b-err', 'con problemas'] : CRM_ESTADO[r.crm.estado] ?? ['b-mute', r.crm.estado],
       r.crm?.token ? `${plural(r.crm.semana, 'cargado', 'cargados')} en 7 días${r.crm.en_cola ? ` · ${r.crm.en_cola} en cola` : ''}` : 'Los positivos aprobados se cargan solos'),
     h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
-      h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails))),
+      h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails + (r.no_contactar.empresas ?? 0)))),
       h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
   // Las campañas activas y en pausa, con sus números de la semana (docs/21 §3.1). Mientras la pestaña
   // Campañas sea sólo de Biguá, el bloque también.
@@ -835,6 +835,7 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
           : terminada ? null : h('button', { class: 'sm', onclick: volver(v) }, 'Volver a esta'))))))
     : h('p', { class: 'muted small' }, 'Todavía no hay cambios registrados.');
 
+  const semillas = await semillasCard({ clientId, path, k, terminada });
   return h('div', { class: 'stack' },
     h('a', { href: `${base}/campanas`, class: 'small' }, '← Campañas'),
     h('div', { class: 'row spread' },
@@ -845,7 +846,185 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
     terminada ? h('p', { class: 'note' }, `Terminada el ${fmtDate(k.terminada_at)}. No se edita ni se reactiva: para repetirla, duplicala.`) : null,
     errEstado,
     h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, faltan, vista)),
+    semillas,
     h('section', {}, h('h2', {}, 'Historial de cambios'), historial));
+}
+
+// Las cuentas de la campaña que vienen de un archivo. En la etapa 1, semillas del ICP (docs/26 §2):
+// empresas modelo que no reciben nada.
+async function semillasCard({ clientId, path, k, terminada }) {
+  const card = h('section', { class: 'card' });
+  const lista = h('div');
+  const pintarLotes = async () => {
+    const { cargas } = await api('GET', `/clients/${enc(clientId)}/cargas`);
+    const deEsta = cargas.filter((x) => x.campana_id === k.id);
+    lista.replaceChildren(deEsta.length
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['Archivo', 'Cuándo', 'Quién', 'Resultado'].map((x) => h('th', {}, x)))),
+        h('tbody', {}, deEsta.map((x) => h('tr', {}, h('td', {}, x.archivo, x.hoja ? h('div', { class: 'small muted' }, `hoja «${x.hoja}»`) : null),
+          h('td', { class: 'small' }, fmtDate(x.creado_at)), h('td', { class: 'small' }, x.por_email),
+          h('td', { class: 'small' }, `${plural(x.resumen.nuevas ?? 0, 'semilla nueva', 'semillas nuevas')}` +
+            `${x.resumen.ya_en_registro ? `, ${plural(x.resumen.ya_en_registro, 'ya estaba', 'ya estaban')} en el registro` : ''}`)))))
+      : h('p', { class: 'muted small' }, 'Todavía no se cargó ningún archivo en esta campaña.'));
+  };
+  const subir = h('button', { type: 'button', disabled: terminada || null, onclick: () => cargaArchivoDialog({
+    titulo: `Subir semillas a «${k.nombre}»`, path: `${path}/cargas`, destino: 'campana',
+    ayuda: 'Empresas que son el modelo de lo que busca esta campaña (clientes o empresas ideales). Quedan en el registro con su rubro, tamaño ' +
+      'y nota, marcadas como semillas: el SDR no les escribe. Una empresa que ya está en el registro no se toca. Nada se guarda hasta confirmar.',
+    alTerminar: () => pintarLotes(),
+  }) }, 'Subir Excel o CSV');
+  card.append(
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Semillas del ICP'), subir),
+    h('p', { class: 'small muted' }, 'Las cuentas modelo de esta campaña, cargadas desde un archivo. Para que el SDR no toque a una empresa en ' +
+      'ninguna campaña (un cliente o un referido), va a Empresa → No contactar.'),
+    lista);
+  await pintarLotes();
+  return card;
+}
+
+// ----- carga de un archivo (docs/26): el mismo paso a paso para la lista de no contactar y para
+// las semillas de una campaña. El archivo se lee en el servidor; la confirmación lo vuelve a mandar
+// con la huella de la vista previa, así se aplica exactamente lo que se vio.
+
+const MAX_ARCHIVO = 3 * 1024 * 1024;
+
+function aBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+const RESULTADO_CARGA = {
+  nueva: ['entra', 'b-ok'], ya_estaba: ['ya estaba', 'b-mute'], repetida: ['repetida en el archivo', 'b-mute'],
+  ya_en_registro: ['ya está en el registro', 'b-warn'], ya_era_semilla: ['ya era semilla', 'b-mute'],
+};
+const resultadoBadge = (r) => { const [label, cls] = RESULTADO_CARGA[r] ?? [r ?? '—', 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
+const ENTRA_COMO = { dominio: 'dominio', empresa: 'nombre', email: 'mail' };
+const ESTADO_CUENTA = { en_investigacion: 'en investigación', en_contacto: 'en contacto', en_pausa: 'en pausa', excluida: 'excluida', descartada: 'descartada' };
+
+// opciones: { titulo, path (sin /previa), destino: 'no_contactar' | 'campana', ayuda, alTerminar(r) }
+function cargaArchivoDialog({ titulo, path, destino, ayuda, alTerminar }) {
+  let estado = null; // { archivo, nombre, hoja, mapeo, previa }
+  const errLocal = h('p', { class: 'err', role: 'alert' });
+  const pasos = h('div', { class: 'stack' });
+  const archivo = h('input', { type: 'file', accept: '.xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+  const cuerpo = () => ({ archivo: estado.archivo, nombre: estado.nombre, ...(estado.hoja ? { hoja: estado.hoja } : {}),
+    ...(estado.mapeo ? { mapeo: estado.mapeo } : {}) });
+
+  async function previa() {
+    errLocal.textContent = '';
+    pasos.replaceChildren(h('p', { class: 'muted small' }, 'Leyendo el archivo…'));
+    try {
+      estado.previa = await api('POST', `${path}/previa`, cuerpo());
+      estado.hoja = estado.previa.hoja;
+      estado.mapeo = estado.previa.mapeo;
+      pintar();
+    } catch (e) { pasos.replaceChildren(); errLocal.textContent = e.message; }
+  }
+
+  archivo.addEventListener('change', async () => {
+    const f = archivo.files?.[0];
+    if (!f) return;
+    if (f.size > MAX_ARCHIVO) { errLocal.textContent = 'El archivo pasa los 3 MB: partilo en dos o guardá sólo la hoja que se carga.'; return; }
+    estado = { archivo: aBase64(await f.arrayBuffer()), nombre: f.name, hoja: null, mapeo: null, previa: null };
+    await previa();
+  });
+
+  function mapeoUI(p) {
+    const ejemplo = (i) => p.muestra.map((f) => f[i]).find((x) => x) ?? '';
+    const filas = p.campos.map((c) => {
+      const sel = h('select', { 'aria-label': c.titulo },
+        c.obligatorio ? null : h('option', { value: '' }, '— no usar —'),
+        p.encabezados.map((e, i) => h('option', { value: String(i), selected: p.mapeo[c.clave] === i || null },
+          `${e}${ejemplo(i) ? ` (ej.: ${String(ejemplo(i)).slice(0, 40)})` : ''}`)));
+      if (p.mapeo[c.clave] === undefined && !c.obligatorio) sel.value = '';
+      sel.addEventListener('change', () => {
+        const m = { ...estado.mapeo };
+        if (sel.value === '') delete m[c.clave]; else m[c.clave] = Number(sel.value);
+        // Una columna va a un solo campo: se saca de donde estaba.
+        for (const [k, v] of Object.entries(m)) if (k !== c.clave && v === m[c.clave]) delete m[k];
+        estado.mapeo = m;
+        previa();
+      });
+      return field(`${c.titulo}${c.obligatorio ? ' *' : ''}`, sel);
+    });
+    const hoja = p.hojas.length > 1 ? field('Hoja', (() => {
+      const sel = h('select', {}, p.hojas.map((x) => h('option', { value: x, selected: x === p.hoja || null }, x)));
+      sel.addEventListener('change', () => { estado.hoja = sel.value; estado.mapeo = null; previa(); });
+      return sel;
+    })()) : null;
+    return h('details', { class: 'card', open: true }, h('summary', {}, h('strong', {}, 'Columnas'),
+      h('span', { class: 'small muted' }, ' · propuestas por el encabezado; corregilas si hace falta')),
+    h('div', { class: 'carga-mapeo' }, hoja, filas));
+  }
+
+  function totalesUI(p) {
+    const t = p.totales;
+    const items = destino === 'no_contactar'
+      ? [[t.nuevas, 'entra a la lista', 'entran a la lista'], [t.por_dominio, 'por dominio'], [t.por_nombre, 'por nombre, sin dominio'],
+        [t.mails, 'mail de un contacto', 'mails de contactos'], [t.ya_estaban, 'ya estaba', 'ya estaban'],
+        [t.repetidas, 'repetida en el archivo', 'repetidas en el archivo'], [t.invalidas, 'fila con errores', 'filas con errores']]
+      : [[t.nuevas, 'semilla nueva', 'semillas nuevas'], [t.sin_dominio, 'sin dominio'],
+        [t.ya_en_registro, 'ya está en el registro (no se toca)', 'ya están en el registro (no se tocan)'],
+        [t.ya_eran_semilla, 'ya era semilla', 'ya eran semillas'], [t.repetidas, 'repetida en el archivo', 'repetidas en el archivo'],
+        [t.en_no_contactar, 'también en no contactar'], [t.invalidas, 'fila con errores', 'filas con errores']];
+    const efecto = p.efecto && (p.efecto.cuentas_excluidas || p.efecto.cuentas_en_marcha || p.efecto.frenos) ? h('div', { class: 'note' },
+      h('strong', {}, 'Al confirmar: '),
+      [p.efecto.cuentas_excluidas ? `${plural(p.efecto.cuentas_excluidas, 'cuenta en investigación queda excluida', 'cuentas en investigación quedan excluidas')}` : null,
+        p.efecto.cuentas_en_marcha ? `${plural(p.efecto.cuentas_en_marcha, 'cuenta ya en contacto deja', 'cuentas ya en contacto dejan')} de recibir mensajes nuevos` : null,
+        p.efecto.frenos ? `${plural(p.efecto.frenos, 'persona cargada en Dripify se frena', 'personas cargadas en Dripify se frenan')}` : null]
+        .filter(Boolean).join('; '), '.',
+      p.efecto.cuentas?.length ? h('div', { class: 'small muted' }, p.efecto.cuentas.map((k) => `${k.nombre} (${ESTADO_CUENTA[k.estado] ?? k.estado})`).join(', ')) : null)
+      : null;
+    return h('div', { class: 'stack' },
+      h('p', {}, `${plural(t.filas, 'fila', 'filas')} en «${estado.nombre}»${p.hoja ? `, hoja «${p.hoja}»` : ''}${p.campana ? `, para la campaña «${p.campana.nombre}»` : ''}.`),
+      h('ul', { class: 'carga-totales' }, items.filter(([n]) => n).map(([n, uno, varios]) => h('li', {}, h('strong', {}, String(n)), ' ', n === 1 || !varios ? uno : varios))),
+      efecto);
+  }
+
+  function filasUI(p) {
+    const problemas = [...p.invalidas.map((x) => `renglón ${x.renglon}: ${x.motivo}`),
+      ...p.avisos.map((x) => `renglón ${x.renglon}: ${x.avisos.join('; ')}`)];
+    const cabeza = destino === 'no_contactar' ? ['Renglón', 'Empresa', 'Entra como', 'Motivo'] : ['Renglón', 'Empresa', 'Dominio', 'Rubro', 'Qué pasa'];
+    const fila = (f) => (destino === 'no_contactar'
+      ? h('tr', {}, h('td', { class: 'small' }, String(f.renglon)), h('td', {}, f.empresa ?? '—'),
+        h('td', { class: 'small' }, f.error ? h('span', { class: 'badge b-err' }, f.error)
+          : f.entradas.map((e) => h('div', {}, `${ENTRA_COMO[e.tipo]}: `, h('span', { class: 'mono' }, e.valor), ' ', resultadoBadge(e.resultado)))),
+        h('td', { class: 'small' }, f.motivo ?? '—'))
+      : h('tr', {}, h('td', { class: 'small' }, String(f.renglon)), h('td', {}, f.empresa ?? '—'), h('td', { class: 'small mono' }, f.dominio ?? '—'),
+        h('td', { class: 'small' }, f.vertical ?? '—'),
+        h('td', { class: 'small' }, f.error ? h('span', { class: 'badge b-err' }, f.error) : resultadoBadge(f.resultado),
+          f.existente ? h('div', { class: 'muted' }, `${ESTADO_CUENTA[f.existente.estado] ?? f.existente.estado}${f.existente.campana ? `, campaña «${f.existente.campana}»` : ''}`) : null,
+          f.en_no_contactar ? h('div', { class: 'muted' }, 'está en no contactar') : null)));
+    return h('div', { class: 'stack' },
+      problemas.length ? h('details', {}, h('summary', { class: 'small' }, `${plural(problemas.length, 'renglón para revisar', 'renglones para revisar')}`),
+        h('ul', { class: 'small' }, problemas.slice(0, 50).map((x) => h('li', {}, x)))) : null,
+      h('div', { class: 'carga-tabla' }, h('table', {}, h('thead', {}, h('tr', {}, cabeza.map((x) => h('th', {}, x)))),
+        h('tbody', {}, p.filas.map(fila)))),
+      p.totales.filas > p.filas.length ? h('p', { class: 'small muted' }, `Se muestran las primeras ${p.filas.length} filas.`) : null);
+  }
+
+  function pintar() {
+    const p = estado.previa;
+    pasos.replaceChildren(mapeoUI(p), totalesUI(p), filasUI(p));
+  }
+
+  dlg.classList.add('ancho');
+  dlg.addEventListener('close', () => dlg.classList.remove('ancho'), { once: true });
+  openDialog(titulo, h('div', { class: 'stack' },
+    h('p', { class: 'small muted' }, ayuda),
+    field('Archivo (Excel .xlsx o CSV, hasta 2.000 filas)', archivo),
+    errLocal, pasos), {
+    submitLabel: 'Confirmar la carga',
+    submit: async () => {
+      if (!estado?.previa) throw new Error('Elegí un archivo y revisá la vista previa antes de confirmar.');
+      const r = await api('POST', path, { ...cuerpo(), huella: estado.previa.huella });
+      toast(`Listo: ${plural(r.lote.resumen.nuevas, 'fila cargada', 'filas cargadas')}.`);
+      alTerminar?.(r);
+      return true;
+    },
+  });
 }
 
 // ----- no contactar
@@ -859,14 +1038,16 @@ async function noContactarCard(clientId) {
   const cuerpo = h('div');
   const pintarLista = () => {
     const q = filtro.value.trim().toLowerCase();
-    const vistas = (q ? lista.filter((x) => x.valor.includes(q) || (x.motivo ?? '').toLowerCase().includes(q)) : lista);
+    const vistas = (q ? lista.filter((x) => x.valor.includes(q) || (x.nombre ?? '').toLowerCase().includes(q) || (x.motivo ?? '').toLowerCase().includes(q)) : lista);
     const muestra = vistas.slice(0, 200);
     cuerpo.replaceChildren(!lista.length ? h('p', { class: 'muted small' }, 'La lista está vacía.') : h('div', {},
-      h('table', {}, h('thead', {}, h('tr', {}, ['Dominio o mail', 'Motivo', 'Cargado', ''].map((x) => h('th', {}, x)))),
+      h('table', {}, h('thead', {}, h('tr', {}, ['Empresa, dominio o mail', 'Motivo', 'Cargado', ''].map((x) => h('th', {}, x)))),
         h('tbody', {}, muestra.map((x) => h('tr', {},
-          h('td', {}, h('span', { class: 'mono' }, x.valor), h('div', { class: 'small muted' }, x.tipo === 'dominio' ? 'dominio y sus subdominios' : 'mail')),
+          h('td', {}, x.tipo === 'empresa' ? h('span', {}, x.nombre ?? x.valor) : h('span', { class: 'mono' }, x.valor),
+            h('div', { class: 'small muted' }, { dominio: 'dominio y sus subdominios', email: 'mail', empresa: 'empresa por nombre, con cualquier forma societaria' }[x.tipo] ?? x.tipo)),
           h('td', { class: 'small' }, x.motivo ?? '—'),
-          h('td', { class: 'small' }, fmtDate(x.at), x.por_email ? h('div', { class: 'muted' }, x.por_email) : null),
+          h('td', { class: 'small' }, fmtDate(x.at), x.por_email ? h('div', { class: 'muted' }, x.por_email) : null,
+            x.lote_archivo ? h('div', { class: 'muted' }, `desde «${x.lote_archivo}»`) : null),
           h('td', {}, h('button', { class: 'sm', type: 'button', onclick: async (ev) => {
             const r = await busy(ev.currentTarget, () => api('POST', `${path}/quitar`, { valores: [x.valor] }));
             if (r) { pintar(r); toast(`${x.valor} salió de la lista.`); }
@@ -877,7 +1058,7 @@ async function noContactarCard(clientId) {
   const totales = h('span', { class: 'badge b-mute' });
   const pintar = (r) => {
     lista = r.no_contactar;
-    totales.textContent = `${plural(r.totales.dominios, 'dominio', 'dominios')} · ${plural(r.totales.emails, 'mail', 'mails')}`;
+    totales.textContent = `${plural(r.totales.dominios, 'dominio', 'dominios')} · ${plural(r.totales.emails, 'mail', 'mails')} · ${plural(r.totales.empresas ?? 0, 'empresa', 'empresas')}`;
     filtro.hidden = lista.length < 15;
     pintarLista();
   };
@@ -885,43 +1066,47 @@ async function noContactarCard(clientId) {
     const partes = [`${plural(r.agregados, 'agregado', 'agregados')}`];
     if (r.ya_estaban) partes.push(`${r.ya_estaban} ya estaban`);
     salida.replaceChildren(h('p', {}, `${partes.join(', ')}.`),
-      r.invalidas?.length ? h('div', { class: 'err' }, `${plural(r.invalidas.length, 'renglón no tiene', 'renglones no tienen')} un dominio o un mail válido: `,
+      r.invalidas?.length ? h('div', { class: 'err' }, `${plural(r.invalidas.length, 'renglón no tiene', 'renglones no tienen')} un dominio, un mail o un nombre válido: `,
         r.invalidas.slice(0, 5).map((x) => `renglón ${x.renglon} («${x.texto}»)`).join(', '), r.invalidas.length > 5 ? '…' : '') : null);
   };
+  const informarEfecto = (e) => {
+    if (!e || !(e.cuentas_excluidas || e.cuentas_en_marcha || e.frenos)) return;
+    salida.append(h('p', { class: 'small' }, [
+      e.cuentas_excluidas ? plural(e.cuentas_excluidas, 'cuenta en investigación quedó excluida', 'cuentas en investigación quedaron excluidas') : null,
+      e.cuentas_en_marcha ? `${plural(e.cuentas_en_marcha, 'cuenta en contacto ya no recibe', 'cuentas en contacto ya no reciben')} nada nuevo` : null,
+      e.frenos ? `${plural(e.frenos, 'persona se frena', 'personas se frenan')} en Dripify en la próxima vuelta` : null].filter(Boolean).join('; ') + '.'));
+  };
   const err = h('p', { class: 'err', role: 'alert' });
-  const valor = h('input', { id: 'nc-valor', required: true, maxlength: 300, placeholder: 'empresa.com o persona@empresa.com' });
+  const valor = h('input', { id: 'nc-valor', required: true, maxlength: 300, placeholder: 'empresa.com, persona@empresa.com o el nombre de la empresa' });
   const motivo = h('input', { id: 'nc-motivo', maxlength: 200, placeholder: 'Cliente actual, competidor, pidió que no…' });
   const agregar = h('button', { type: 'submit', class: 'primary' }, 'Agregar');
-  const alta = h('form', { class: 'nc-alta' }, field('Dominio o mail', valor), field('Motivo', motivo), agregar);
+  const alta = h('form', { class: 'nc-alta' }, field('Dominio, mail o empresa', valor), field('Motivo', motivo), agregar);
   alta.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const r = await busy(agregar, () => api('POST', path, { valor: valor.value, ...(motivo.value.trim() ? { motivo: motivo.value.trim() } : {}) }), err);
-    if (r) { pintar(r); informar(r); valor.value = ''; motivo.value = ''; valor.focus(); }
+    if (r) { pintar(r); informar(r); informarEfecto(r.efecto); valor.value = ''; motivo.value = ''; valor.focus(); }
   });
-  const archivo = h('input', { type: 'file', accept: '.csv,.txt,text/csv,text/plain', id: 'nc-csv', class: 'visually-hidden' });
-  archivo.addEventListener('change', async () => {
-    const f = archivo.files?.[0];
-    if (!f) return;
-    if (f.size > 400_000) { err.textContent = 'El archivo pasa los 400 KB: partilo en dos.'; return; }
-    err.textContent = '';
-    const texto = await f.text();
-    try { const r = await api('POST', path, { csv: texto }); pintar(r); informar(r); } catch (e) { err.textContent = e.message; }
-    archivo.value = '';
-  });
+  const subir = h('button', { type: 'button', onclick: () => cargaArchivoDialog({
+    titulo: 'Subir un Excel a no contactar', path: `${path}/cargas`, destino: 'no_contactar',
+    ayuda: 'Clientes, referidos, partners: cada fila es una empresa que el SDR no toca en ninguna campaña. Con sitio web entra por dominio; ' +
+      'sin sitio, por el nombre (sin importar la forma societaria). El motivo queda a la vista en la lista. Nada se guarda hasta confirmar.',
+    alTerminar: (r) => { pintar(r); informarEfecto(r.efecto); },
+  }) }, 'Subir Excel o CSV');
   const pegar = h('button', { type: 'button', onclick: () => openDialog('Pegar una lista', h('div', {},
-    h('p', { class: 'small muted' }, 'Un dominio o un mail por renglón. Después de una coma, el motivo (opcional).'),
-    h('textarea', { name: 'csv', rows: 10, required: true, placeholder: 'empresa.com, Cliente actual\npersona@otra.com, Pidió que no' })), {
+    h('p', { class: 'small muted' }, 'Un dominio, un mail o el nombre de una empresa por renglón. Después de una coma, el motivo (opcional).'),
+    h('textarea', { name: 'csv', rows: 10, required: true, placeholder: 'empresa.com, Cliente actual\npersona@otra.com, Pidió que no\nAgrícola Ortiz, Referido de Juan' })), {
     submitLabel: 'Agregar',
-    submit: async (fd) => { const r = await api('POST', path, { csv: fd.get('csv') }); pintar(r); informar(r); return true; },
+    submit: async (fd) => { const r = await api('POST', path, { csv: fd.get('csv') }); pintar(r); informar(r); informarEfecto(r.efecto); return true; },
   }) }, 'Pegar una lista');
   card.append(
     h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'No contactar'), totales),
     h('p', { class: 'small muted' }, 'Empresas y personas a las que el SDR no les escribe nunca, de ninguna campaña ni canal: clientes actuales, ' +
       'partners, competidores, quien pidió que no. El gateway la hace cumplir: una empresa de la lista queda excluida y nadie de ella ' +
-      'recibe mails ni invitaciones de LinkedIn. Un dominio cubre también sus subdominios.'),
+      'recibe mails ni invitaciones de LinkedIn. Un dominio cubre también sus subdominios; una empresa por nombre vale con cualquier forma ' +
+      'societaria («Ortiz y Cía. Ltda.» es «Ortiz»). Si alguien de esa empresa ya está en marcha, se frena.'),
     alta, err,
-    h('div', { class: 'row' }, h('label', { for: 'nc-csv', class: 'btn' }, 'Cargar CSV'), archivo, pegar,
-      h('span', { class: 'small muted' }, 'CSV: primera columna el dominio o el mail, segunda el motivo.')),
+    h('div', { class: 'row' }, subir, pegar,
+      h('span', { class: 'small muted' }, 'Un Excel con la columna de la empresa (y, si hay, sitio web, motivo y mail del contacto).')),
     salida, filtro, cuerpo);
   pintar(await api('GET', path));
   return card;
