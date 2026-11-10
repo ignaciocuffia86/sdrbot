@@ -535,9 +535,10 @@ async function leerSdr(c, user, clientId) {
 // pedido para contárselo al operador de Biguá en su chat.
 async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false } = {}) {
   const r = await scoped(user, clientId, async (c) => {
-    const cfg = (await c.query(`select ajustes, modo, tope_cuentas_dia, formulario from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
+    const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
     const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
+    // select *: la columna formulario existe desde la 014; antes vale la transición.
     const form = formularioEmpresa(cfg);
     let nuevo;
     if (restaurado && !isBigua(user)) {
