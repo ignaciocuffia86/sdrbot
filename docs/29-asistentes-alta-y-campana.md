@@ -54,13 +54,14 @@ campaña.
 |---|---|
 | Objetivo | Tipo, nombre y fechas |
 | Para quién | A quién se le escribe, cargos, exclusiones y señal |
+| Cuentas | En una «Lista del cliente», la lista de cuentas a prospectar (obligatoria); en las demás, las cuentas modelo del ICP (opcional). Se cargan por Excel o CSV (`27`) |
 | Qué ofrecemos | Propuesta y casos que se citan |
 | Mensaje y llamado a la acción | Qué se le pide al prospecto, links, tono e idioma |
 | Respuestas e interesados | Positivos, objeciones y quién toma a los interesados si no es el de Empresa |
 | Canales y ritmo | Buzones, cuentas por día, Dripify y calibración |
 | Revisar y activar | Lo que falta para activarla, lo pendiente y cómo la leen los bots |
 
-Un paso queda listo al guardarlo sin que le falte nada de lo que exige la campaña para activarse.
+Un paso queda listo al guardarlo sin que le falte nada de lo que exige la campaña para activarse. El de cuentas no tiene formulario: queda listo con «Listo, seguir», y en una lista sólo si ya hay cuentas cargadas.
 
 ## Pausa
 
@@ -82,6 +83,12 @@ lo dicen. El rol del portal sólo ve y escribe las filas de las campañas de su 
 | `GET /admin/api/clients/:client/asistente/alta` | Los 16 pasos con su estado calculado, qué les falta y lo pendiente (sólo Biguá) |
 | `GET /admin/api/clients/:client/asistente/campana:<id>` | Los pasos y campos pausados de una campaña |
 | `PUT /admin/api/clients/:client/asistente/:ambito/:paso` | `{ estado: "esperando" \| "listo" \| "no_aplica" \| null, que, quien }` |
+
+## Que no se quede atrás
+
+Cada PR que toque la configuración de un cliente o de una campaña suma lo nuevo al paso que le
+corresponde (regla en `CLAUDE.md`). `gateway/test/asistentes.test.mjs` falla si un campo de Empresa,
+una sección de la campaña o algo que puede faltar para activarla no está en ningún paso.
 
 ## Lo que sigue
 

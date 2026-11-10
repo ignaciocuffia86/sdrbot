@@ -33,6 +33,13 @@
 
    Una campaña pausada o terminada no lleva pedido de cuentas nuevas ni de mails nuevos. Si una
    campaña activa no tiene buzones, decíselo al operador y no la pidas.
+
+   **Una campaña de tipo lista** («Lista del cliente») lleva su pedido como las demás, con sus
+   cuentas por día, pero sin señal que mirar: el `prospector` toma las cuentas que cargó el
+   cliente. Antes de pedir, `registro_cuentas_de_lista(campana, limite: 1)`: si `quedan` es 0, la
+   lista se terminó: no la pidas y decíselo al operador una vez («la lista de la campaña … se
+   terminó: hay que cargar más cuentas o terminarla»). Si quedan menos que sus cuentas por día,
+   pedí las que quedan. En una lista no se revelan publicantes: no le repartas de ese tope.
 4. Si hay pedidos escalados para vos, resolvelos o preguntáselos al operador.
 5. Si `registro_agenda` muestra `correo_sin_atender` o `linkedin_sin_atender` y `seguimiento` está
    activo, mandale un mensaje corto: «Tenés respuestas para atender».

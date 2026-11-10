@@ -260,6 +260,7 @@ MCP de los bots.
 | `aprobaciones_listar` | Pendientes (o por estado), con el mensaje completo, la persona, la cuenta y la campaña | Sí | Sí |
 | `aprobacion_decidir` | Aprobar o rechazar, con correcciones (§5) | Sí, si su cliente lo permite | Sí |
 | `campanas_listar`, `campana_ver` | Campañas con su estado y sus números | Sí | Sí |
+| `cargas_listar` | Las cargas de archivos (docs/27): destino, quién, qué entró, si se deshicieron. Subir, deshacer y el informe quedan en el panel | Sí | Sí |
 | `campana_crear`, `campana_editar`, `campana_duplicar` | Lo que el panel deja editar a cada uno (`21` §6.2); una campaña nueva del cliente en modo operado queda en borrador | Sí, los campos de su rol | Sí, todos |
 | `campana_estado` | Activar, pausar o terminar | En autogestionado | Sí |
 | `ajustes_ver`, `ajustes_editar` | Empresa: oferta, ICP, tono, firma, objeciones, positivos… con el mismo historial y aviso al orquestador | Sí, los campos que no tienen candado | Sí |

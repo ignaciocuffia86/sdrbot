@@ -26,6 +26,7 @@ import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/co
 import * as dripify from '../sdr/dripify.mjs';
 import * as crm from '../sdr/crm.mjs';
 import * as campanas from '../sdr/campanas.mjs';
+import * as carga from '../sdr/carga.mjs';
 import { createUser, resetSetup, revocarConexiones, tomarUsuario } from './auth.mjs';
 
 const ajv = new Ajv({ allErrors: true, useDefaults: true, strict: false });
@@ -135,6 +136,15 @@ const V = {
       tope_dia: { type: 'integer', minimum: 1, maximum: 500 },
       aprobar_primero: { type: 'boolean' },
       reanudar: { type: 'boolean' },
+    } }),
+  carga: validator({ type: 'object', required: ['archivo', 'nombre'], additionalProperties: false,
+    properties: {
+      // El archivo en base64: hasta 3 MB (carga.MAX_BYTES), que en base64 son unos 4 millones de caracteres.
+      archivo: { type: 'string', minLength: 1, maxLength: 4_200_000 },
+      nombre: { type: 'string', minLength: 1, maxLength: 300 },
+      hoja: { type: 'string', maxLength: 200 },
+      mapeo: { type: 'object', additionalProperties: { type: ['integer', 'null'] } },
+      huella: { type: 'string', maxLength: 64 },
     } }),
   noContactarBaja: validator({ type: 'object', required: ['valores'], additionalProperties: false,
     properties: { valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 300 } } } }),
@@ -851,7 +861,7 @@ const OPS_PANEL = {
   'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida', 'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
-  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.conexion.revocar': 'conexión de Claude desconectada',
+  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.sdr.carga': 'carga de un archivo', 'admin.sdr.carga.deshacer': 'carga deshecha', 'admin.conexion.revocar': 'conexión de Claude desconectada',
 };
 
 export const monitorVer = async ({ user, params }) => {
@@ -891,7 +901,9 @@ async function clienteExiste(c, clientId) {
 
 async function listaNoContactar(c, clientId) {
   const { rows } = await c.query(
-    `select valor, tipo, motivo, por_email, at from sdr.no_contactar where client_id = $1 order by at desc, valor limit $2`,
+    `select n.valor, n.tipo, n.nombre, n.motivo, n.por_email, n.at, n.lote_id, l.archivo as lote_archivo
+       from sdr.no_contactar n left join sdr.lote_carga l on l.id = n.lote_id and l.client_id = n.client_id
+      where n.client_id = $1 order by n.at desc, n.valor limit $2`,
     [clientId, noContactar.MAX_FILAS]);
   return { no_contactar: rows, totales: await noContactar.contar(c, clientId) };
 }
@@ -901,6 +913,35 @@ export const noContactarListar = async ({ user, params }) => scoped(user, params
   return listaNoContactar(c, params.client);
 });
 
+// Guarda filas en la lista (las que ya estaban no se tocan) y devuelve las nuevas. filas: { valor,
+// tipo, motivo, nombre? } con la clave ya puesta en las empresas (noContactar.conClaves).
+export async function insertarNoContactar(c, clientId, filas, porEmail, loteId = null) {
+  const { rows } = await c.query(
+    `insert into sdr.no_contactar (client_id, valor, tipo, motivo, nombre, por_email, lote_id)
+     select $1, f.valor, f.tipo, f.motivo, f.nombre, $6, $7
+       from unnest($2::text[], $3::text[], $4::text[], $5::text[]) as f(valor, tipo, motivo, nombre)
+     on conflict (client_id, valor) do nothing returning valor, tipo`,
+    [clientId, filas.map((f) => f.valor), filas.map((f) => f.tipo), filas.map((f) => f.motivo ?? null),
+      filas.map((f) => (f.tipo === 'empresa' ? f.nombre ?? null : null)), porEmail, loteId]);
+  return rows;
+}
+
+// Lo que la lista nueva cambia en el registro (cuentas excluidas, Dripify frenado), y el aviso al
+// orquestador si tocó algo en marcha.
+export async function despuesDeNoContactar(user, clientId, nuevas) {
+  const efecto = await registro.aplicarNoContactar(clientId, nuevas);
+  if (!isBigua(user) && (efecto.cuentas_en_marcha || efecto.frenos)) {
+    await pedirABot(clientId, {
+      para_bot: 'orquestador',
+      que: `El cliente sumó ${nuevas.length} fila(s) a su lista de no contactar desde el panel. ${efecto.cuentas_en_marcha} cuenta(s) ` +
+        `ya estaban en contacto o en pausa y ${efecto.frenos} persona(s) cargadas en Dripify se frenan en la próxima vuelta del reloj. ` +
+        'No les escribas más por ningún canal; si hay mails o mensajes aprobados para esas empresas, no salen. Contáselo al operador de Biguá en el chat.',
+      por_que: 'Altas en la lista de no contactar hechas por el cliente desde el panel.',
+    }, { bot: 'panel' }).catch((e) => console.error('[mailgw] aviso de no contactar', e.message));
+  }
+  return efecto;
+}
+
 // Una fila (valor y motivo) o un CSV entero. Lo que ya estaba no se toca.
 export const noContactarAgregar = async ({ user, params, body }) => {
   const b = V.noContactarAlta(body);
@@ -909,23 +950,25 @@ export const noContactarAgregar = async ({ user, params, body }) => {
   if (b.csv !== undefined) {
     ({ filas, invalidas } = noContactar.leerCsv(b.csv));
   } else {
-    const n = noContactar.normalizar(b.valor);
-    if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio ni un mail.`);
+    const n = noContactar.normalizar(b.valor, { empresa: true });
+    if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio, un mail ni el nombre de una empresa.`);
     filas = [{ ...n, motivo: b.motivo?.trim() || null }];
   }
-  if (!filas.length) throw errors.invalid(invalidas.length ? 'Ningún renglón tiene un dominio o un mail válido.' : 'La lista está vacía.');
-  return scoped(user, params.client, async (c) => {
+  const r = await scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
-    const { rows } = await c.query(
-      `insert into sdr.no_contactar (client_id, valor, tipo, motivo, por_email)
-       select $1, f.valor, f.tipo, f.motivo, $5
-         from unnest($2::text[], $3::text[], $4::text[]) as f(valor, tipo, motivo)
-       on conflict (client_id, valor) do nothing returning valor`,
-      [params.client, filas.map((f) => f.valor), filas.map((f) => f.tipo), filas.map((f) => f.motivo), user.email]);
+    ({ filas, invalidas } = await noContactar.conClaves(c, filas, invalidas));
+    if (!filas.length) {
+      throw errors.invalid(invalidas.length ? 'Ningún renglón tiene un dominio, un mail o un nombre de empresa válido.' : 'La lista está vacía.');
+    }
+    const nuevas = await insertarNoContactar(c, params.client, filas, user.email);
     const unicos = new Set(filas.map((f) => f.valor)).size;
-    await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.length });
-    return { agregados: rows.length, ya_estaban: unicos - rows.length, invalidas: invalidas.slice(0, 50), ...(await listaNoContactar(c, params.client)) };
+    await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.length });
+    return { nuevas, agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.slice(0, 50) };
   });
+  // Con la conexión del panel ya devuelta: una conexión adentro de otra puede trabar el pool.
+  const efecto = await despuesDeNoContactar(user, params.client, r.nuevas);
+  const { nuevas, ...resto } = r;
+  return { ...resto, efecto, ...(await scoped(user, params.client, (c) => listaNoContactar(c, params.client))) };
 };
 
 export const noContactarQuitar = async ({ user, params, body }) => {
@@ -937,6 +980,259 @@ export const noContactarQuitar = async ({ user, params, body }) => {
     await audit(c, user, params.client, 'admin.sdr.no_contactar.quitar', { quitados: rowCount });
     return { quitados: rowCount, ...(await listaNoContactar(c, params.client)) };
   });
+};
+
+// ----- carga por archivo (docs/27): la lista de no contactar o las semillas de una campaña
+
+const nombreArchivo = (n) => String(n).split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200) || 'archivo';
+const MAX_FILAS_VISTA = 200;
+
+// Lo que el panel muestra de la lectura: hojas, encabezados, mapeo y la muestra (sin las filas).
+const lectura = (prep) => ({ hojas: prep.hojas, hoja: prep.hoja, encabezados: prep.encabezados, mapeo: prep.mapeo,
+  campos: prep.campos, muestra: prep.muestra, huella: prep.huella });
+
+const invalidasDe = (filas) => filas.filter((f) => f.error).slice(0, 50).map((f) => ({ renglon: f.renglon, motivo: f.error }));
+const avisosDe = (filas) => filas.filter((f) => f.avisos?.length).slice(0, 50).map((f) => ({ renglon: f.renglon, avisos: f.avisos }));
+
+function exigirHuella(b, prep) {
+  if (b.huella !== prep.huella) {
+    throw new GatewayError('carga_cambio', 'El archivo, la hoja o las columnas cambiaron desde la vista previa: volvé a verla antes de confirmar.', 409);
+  }
+}
+
+// El mapeo de la última carga aplicada de ese destino (etapa 3): con qué encabezado fue cada campo.
+async function mapeoGuardado(c, clientId, destino) {
+  const { rows } = await c.query(
+    `select mapeo_nombres from sdr.lote_carga where client_id = $1 and destino = $2 and estado = 'aplicado'
+      order by creado_at desc limit 1`, [clientId, destino]);
+  return rows[0]?.mapeo_nombres ?? {};
+}
+
+async function noContactarDeArchivo(user, clientId, b) {
+  const guardado = await scoped(user, clientId, async (c) => {
+    await clienteExiste(c, clientId);
+    return mapeoGuardado(c, clientId, 'no_contactar');
+  });
+  const prep = carga.prepararFilas({ ...b, destino: 'no_contactar', mapeoGuardado: guardado });
+  const plan = await scoped(user, clientId, (c) => carga.planNoContactar(c, clientId, prep.filas));
+  const porRenglon = new Map();
+  for (const e of plan.entradas) {
+    const x = porRenglon.get(e.renglon) ?? [];
+    x.push(e);
+    porRenglon.set(e.renglon, x);
+  }
+  const filas = prep.filas.map((f) => {
+    const es = porRenglon.get(f.renglon) ?? [];
+    const sinClave = plan.sinClave.some((x) => x.renglon === f.renglon);
+    return { ...f, error: f.error ?? (sinClave && !es.length ? 'el nombre de la empresa queda vacío sin la forma societaria' : undefined),
+      entradas: es.map((e) => ({ tipo: e.tipo, valor: e.tipo === 'empresa' ? e.nombre : e.valor, resultado: e.resultado })) };
+  });
+  const cuenta = (r) => plan.entradas.filter((e) => e.resultado === r).length;
+  const totales = {
+    filas: filas.length, invalidas: filas.filter((f) => f.error).length,
+    nuevas: plan.nuevas.length, ya_estaban: cuenta('ya_estaba'), repetidas: cuenta('repetida'),
+    por_dominio: plan.nuevas.filter((e) => e.tipo === 'dominio').length,
+    por_nombre: plan.nuevas.filter((e) => e.tipo === 'empresa').length,
+    mails: plan.nuevas.filter((e) => e.tipo === 'email').length,
+  };
+  return { prep, plan, filas, totales };
+}
+
+export const noContactarCargaPrevia = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep, plan, filas, totales } = await noContactarDeArchivo(user, params.client, b);
+  const efecto = await registro.aplicarNoContactar(params.client, plan.nuevas, { simular: true });
+  return { ...lectura(prep), totales, efecto, invalidas: invalidasDe(filas), avisos: avisosDe(filas),
+    filas: filas.slice(0, MAX_FILAS_VISTA).map((f) => ({ renglon: f.renglon, empresa: f.empresa, motivo: f.motivo ?? null,
+      error: f.error ?? null, entradas: f.entradas })) };
+};
+
+export const noContactarCargaAplicar = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep, plan, filas, totales } = await noContactarDeArchivo(user, params.client, b);
+  exigirHuella(b, prep);
+  if (!plan.nuevas.length && !totales.ya_estaban) throw errors.invalid('El archivo no tiene ninguna fila para cargar.');
+  const r = await scoped(user, params.client, async (c) => {
+    const { rows: [lote] } = await c.query(
+      `insert into sdr.lote_carga (client_id, destino, archivo, hoja, mapeo, mapeo_nombres, resumen, informe, por_email)
+       values ($1, 'no_contactar', $2, $3, $4, $5, $6, $7, $8) returning id, archivo, creado_at`,
+      [params.client, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, prep.mapeo_nombres, totales,
+        JSON.stringify(carga.informeNoContactar(filas)), user.email]);
+    const nuevas = await carga.insertarEnTandas(plan.nuevas, (t) => insertarNoContactar(c, params.client, t, user.email, lote.id));
+    // Entre la vista previa y acá otra persona pudo cargar la misma fila: el resumen dice lo que entró.
+    const resumen = { ...totales, nuevas: nuevas.length, ya_estaban: totales.ya_estaban + (plan.nuevas.length - nuevas.length) };
+    await c.query(`update sdr.lote_carga set resumen = $3 where client_id = $1 and id = $2`, [params.client, lote.id, resumen]);
+    await audit(c, user, params.client, 'admin.sdr.carga', { destino: 'no_contactar', lote: lote.id, ...resumen });
+    return { lote: { ...lote, resumen }, nuevas };
+  });
+  const efecto = await despuesDeNoContactar(user, params.client, r.nuevas);
+  return { lote: r.lote, efecto, ...(await scoped(user, params.client, (c) => listaNoContactar(c, params.client))) };
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function campanaDeCarga(c, clientId, id) {
+  if (!UUID.test(String(id))) throw notFound('No existe esa campaña.');
+  const { rows } = await c.query(`select id, nombre, estado, tipo from sdr.campana where client_id = $1 and id = $2`, [clientId, id]);
+  if (!rows.length) throw notFound('No existe esa campaña.');
+  if (rows[0].estado === 'terminada') throw errors.invalid('La campaña está terminada: no toma cuentas.');
+  return rows[0];
+}
+
+async function cuentasDeArchivo(user, clientId, campanaId, b) {
+  const guardado = await scoped(user, clientId, async (c) => {
+    await clienteExiste(c, clientId);
+    return mapeoGuardado(c, clientId, 'campana');
+  });
+  return carga.prepararFilas({ ...b, destino: 'campana', campanaId, mapeoGuardado: guardado });
+}
+
+const totalesCampana = (filas) => {
+  const r = carga.resumirFilas(filas);
+  const nuevas = filas.filter((f) => f.resultado === 'nueva');
+  const personas = carga.resumirFilas(filas.filter((f) => f.persona?.resultado).map((f) => f.persona));
+  return { filas: filas.length, invalidas: r.invalida ?? 0, nuevas: nuevas.length,
+    prospectar: nuevas.filter((f) => f.uso === 'prospectar' && !f.en_no_contactar).length,
+    semillas: nuevas.filter((f) => f.uso === 'semilla').length,
+    suma_a_existente: r.suma_a_existente ?? 0, ya_en_registro: r.ya_en_registro ?? 0,
+    ya_eran_semilla: r.ya_era_semilla ?? 0, repetidas: r.repetida ?? 0,
+    sin_dominio: nuevas.filter((f) => !f.dominio).length,
+    en_no_contactar: filas.filter((f) => f.en_no_contactar).length,
+    personas: personas.nueva ?? 0, personas_ya_existen: personas.ya_existe ?? 0,
+    personas_bloqueadas: (personas.no_contactar ?? 0) + (personas.suprimida ?? 0) };
+};
+
+export const campanaCargaPrevia = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const prep = await cuentasDeArchivo(user, params.client, params.id, b);
+  const campana = await asRole('mailgw_app', params.client, async (c) => {
+    const k = await campanaDeCarga(c, params.client, params.id);
+    await carga.planCampana(c, params.client, k, prep.filas);
+    return k;
+  });
+  const filas = prep.filas;
+  return { ...lectura(prep), campana: { id: campana.id, nombre: campana.nombre, tipo: campana.tipo },
+    uso: campana.tipo === 'lista' ? 'prospectar' : 'semilla', totales: totalesCampana(filas),
+    invalidas: invalidasDe(filas), avisos: avisosDe(filas),
+    filas: filas.slice(0, MAX_FILAS_VISTA).map((f) => ({ renglon: f.renglon, empresa: f.empresa, dominio: f.dominio ?? null,
+      vertical: f.vertical ?? null, uso: f.uso ?? null, error: f.error ?? null, resultado: f.resultado ?? null, existente: f.existente ?? null,
+      en_no_contactar: Boolean(f.en_no_contactar),
+      persona: f.persona ? { nombre: f.persona.nombre, cargo: f.persona.cargo ?? null, email: f.persona.email ?? null,
+        linkedin_url: f.persona.linkedin_url ?? null, resultado: f.persona.resultado ?? null } : null })) };
+};
+
+export const campanaCargaAplicar = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const prep = await cuentasDeArchivo(user, params.client, params.id, b);
+  exigirHuella(b, prep);
+  // Las cuentas y personas son del registro: se escriben con el rol de la aplicación y el cliente
+  // fijado, ya comprobado que la persona ve este cliente. El lote nace en la misma transacción.
+  const r = await asRole('mailgw_app', params.client, async (c) => {
+    const k = await campanaDeCarga(c, params.client, params.id);
+    const plan = await carga.planCampana(c, params.client, k, prep.filas);
+    if (!plan.cuentasNuevas.length && !plan.personasNuevas.length) {
+      throw errors.invalid('No hay nada nuevo para cargar: todas las cuentas y personas ya estaban en el registro o tienen errores.');
+    }
+    const totales = totalesCampana(prep.filas);
+    const { rows: [lote] } = await c.query(
+      `insert into sdr.lote_carga (client_id, destino, campana_id, archivo, hoja, mapeo, mapeo_nombres, resumen, informe, por_email)
+       values ($1, 'campana', $2, $3, $4, $5, $6, $7, $8, $9) returning id, archivo, creado_at`,
+      [params.client, k.id, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, prep.mapeo_nombres, totales,
+        JSON.stringify(carga.informeCampana(prep.filas)), user.email]);
+    const hecho = await carga.aplicarCampana(c, params.client, k, plan, {
+      loteId: lote.id,
+      motivoSemilla: `Semilla del ICP de la campaña ${citaCliente(k.nombre, 120)}: no se le escribe.`,
+      motivoNoContactar: 'Está en la lista de no contactar del cliente: vino en el archivo, pero no se le escribe.',
+    });
+    const resumen = { ...totales, nuevas: hecho.cuentas, prospectar: hecho.prospectar, semillas: hecho.semillas, personas: hecho.personas };
+    await c.query(`update sdr.lote_carga set resumen = $3 where client_id = $1 and id = $2`, [params.client, lote.id, resumen]);
+    await registro.insertarEvento(c, params.client, { tipo: 'nota',
+      datos: { carga: lote.id, campana: k.id, cuentas: hecho.cuentas, prospectar: hecho.prospectar, semillas: hecho.semillas,
+        personas: hecho.personas, archivo: lote.archivo } }, { bot: 'panel', tarea: 'carga' });
+    return { lote: { ...lote, resumen }, campana: k };
+  });
+  await scoped(user, params.client, (c) => audit(c, user, params.client, 'admin.sdr.carga',
+    { destino: 'campana', campana: r.campana.id, lote: r.lote.id, ...r.lote.resumen }));
+  const x = r.lote.resumen;
+  await avisarCampana(user, params.client, r.campana.id,
+    `El cliente cargó un archivo en la campaña ${citaCliente(r.campana.nombre)}: ${x.prospectar} cuenta(s) para prospectar, ` +
+    `${x.semillas} semilla(s) del ICP y ${x.personas} persona(s).` +
+    (x.prospectar ? ' Las cuentas para prospectar salen con registro_cuentas_de_lista.' : ' Las semillas no reciben nada.'));
+  return { lote: r.lote };
+};
+
+// Cómo viene la lista de una campaña: cuántas cuentas cargadas quedan sin trabajar. Con el rol de
+// la aplicación (el portal no lee el registro), ya comprobado que la persona ve este cliente.
+export const campanaListaVer = async ({ user, params }) => {
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  return asRole('mailgw_app', params.client, async (c) => {
+    if (!UUID.test(String(params.id))) throw notFound('No existe esa campaña.');
+    const { rows } = await c.query(
+      `select count(*) filter (where k.uso = 'prospectar')::int as cargadas,
+              count(*) filter (where ${registro.SQL_SIN_TRABAJAR})::int as sin_trabajar,
+              count(*) filter (where k.uso = 'prospectar' and k.estado not in ('excluida', 'descartada')
+                                 and not (${registro.SQL_SIN_TRABAJAR}))::int as en_curso,
+              count(*) filter (where k.uso = 'prospectar' and k.estado in ('excluida', 'descartada'))::int as cerradas,
+              count(*) filter (where k.uso = 'semilla')::int as semillas
+         from sdr.cuenta k where k.client_id = $1 and k.campana_id = $2 and k.origen = 'archivo'`, [params.client, params.id]);
+    return { lista: rows[0] };
+  });
+};
+
+// El informe de cada carga vive 30 días; el archivo, nunca.
+const DIAS_INFORME = 30;
+const vaciarInformesVencidos = (c, clientId) => c.query(
+  `update sdr.lote_carga set informe = null
+    where client_id = $1 and informe is not null and creado_at < now() - make_interval(days => $2)`, [clientId, DIAS_INFORME]);
+
+export const cargasListar = async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  await vaciarInformesVencidos(c, params.client);
+  const { rows } = await c.query(
+    `select l.id, l.destino, l.campana_id, k.nombre as campana, l.archivo, l.hoja, l.resumen, l.estado, l.por_email, l.creado_at,
+            l.deshecho_at, l.deshecho_por, (l.informe is not null) as tiene_informe
+       from sdr.lote_carga l left join sdr.campana k on k.id = l.campana_id and k.client_id = l.client_id
+      where l.client_id = $1 order by l.creado_at desc limit 100`, [params.client]);
+  return { cargas: rows, dias_informe: DIAS_INFORME };
+});
+
+export const cargaInforme = async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  if (!UUID.test(String(params.id))) throw notFound('No existe esa carga.');
+  await vaciarInformesVencidos(c, params.client);
+  const { rows } = await c.query(`select archivo, creado_at, informe from sdr.lote_carga where client_id = $1 and id = $2`,
+    [params.client, params.id]);
+  if (!rows.length) throw notFound('No existe esa carga.');
+  if (!rows[0].informe) throw notFound(`El informe de esa carga ya no está: se borra a los ${DIAS_INFORME} días.`);
+  const base = rows[0].archivo.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[^\p{L}\p{N} ._-]+/gu, '_').slice(0, 80) || 'carga';
+  return { nombre: `informe-${base}.csv`, csv: carga.csvDeInforme(rows[0].informe), filas: rows[0].informe.filas.length };
+});
+
+// Deshacer una carga (docs/27 §4.1, paso 5): lo hace sdr.deshacer_lote en la base, con el cliente
+// fijado, después de comprobar que la persona ve este cliente.
+export const cargaDeshacer = async ({ user, params }) => {
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  if (!UUID.test(String(params.id))) throw notFound('No existe esa carga.');
+  const r = await asRole('mailgw_app', params.client, async (c) => {
+    const { rows: [x] } = await c.query(`select sdr.deshacer_lote($1, $2) as r`, [params.id, user.email]);
+    const { rows: [l] } = await c.query(`select destino, campana_id, archivo from sdr.lote_carga where client_id = $1 and id = $2`,
+      [params.client, params.id]);
+    return { ...x.r, lote: l ?? null };
+  });
+  if (r.error === 'no_existe') throw notFound('No existe esa carga.');
+  if (r.error === 'ya_deshecho') throw errors.invalid('Esa carga ya se deshizo.');
+  if (r.error === 'en_uso') {
+    throw new GatewayError('carga_en_uso', `No se puede deshacer: ${r.en_uso} persona(s) o cuenta(s) de esta carga ya se están trabajando ` +
+      '(un mail, LinkedIn, una aprobación o un próximo paso). Para sacar una cuenta, descartala; para que el SDR no toque a una empresa, ' +
+      'va a No contactar.', 409);
+  }
+  await scoped(user, params.client, (c) => audit(c, user, params.client, 'admin.sdr.carga.deshacer',
+    { lote: params.id, destino: r.lote.destino, cuentas: r.cuentas, personas: r.personas, filas: r.filas }));
+  if (r.lote.destino === 'campana' && r.cuentas) {
+    await avisarCampana(user, params.client, r.lote.campana_id,
+      `El cliente deshizo la carga ${citaCliente(r.lote.archivo)}: salieron ${r.cuentas} cuenta(s) y ${r.personas} persona(s) que nadie había trabajado.`);
+  }
+  return { deshecho: { cuentas: r.cuentas, personas: r.personas, filas: r.filas, destino: r.lote.destino } };
 };
 
 // ----- resumen: lo que necesita atención, para la primera pantalla del cliente
@@ -1218,7 +1514,7 @@ export const aprobacionDecidir = async ({ user, params, body, via = 'panel' }) =
   return r;
 };
 
-// ----- asistentes (docs/27): el alta de un cliente y el armado de cada campaña, con pausa
+// ----- asistentes (docs/29): el alta de un cliente y el armado de cada campaña, con pausa
 //
 // Lo que se carga en cada paso va a donde ya iba. Acá sólo se calcula en qué quedó cada paso (de
 // los datos cuando se puede) y se guarda lo que los datos no dicen: un paso o un campo que espera

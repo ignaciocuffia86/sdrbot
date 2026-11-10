@@ -232,7 +232,7 @@ td.num { font-variant-numeric: tabular-nums; }
 
 pre.mensaje { white-space: pre-wrap; font: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
 
-/* ---- asistentes (docs/27) */
+/* ---- asistentes (docs/29) */
 .asistente { grid-template-columns: 240px minmax(0, 1fr); }
 .pasos a { display: flex; gap: 8px; align-items: center; padding: 6px 10px; }
 .pasos .etapa { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 10px 2px; }
@@ -260,3 +260,11 @@ pre.mensaje { white-space: pre-wrap; font: inherit; background: var(--panel); bo
   /* En el teléfono, sólo el resumen y el paso actual: se avanza con Anterior y Siguiente. */
   .asistente .pasos .etapa, .asistente .pasos a:not(.on):not(:first-child) { display: none; }
 }
+
+/* carga de un archivo (docs/27) */
+dialog.ancho { width: min(1000px, 96vw); }
+.carga-mapeo { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+.carga-totales { display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; padding: 0; margin: 0; }
+.carga-tabla { max-height: 340px; overflow: auto; }
+.acciones-carga { white-space: nowrap; text-align: right; }
+.acciones-carga button + button { margin-left: 6px; }

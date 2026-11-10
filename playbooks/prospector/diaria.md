@@ -10,6 +10,10 @@
 2. Si hay **aprobaciones decididas**, primero ejecutalas: seguí la tarea `ejecutar_aprobados`
    (pedí `reglas_manual(prospector, ejecutar_aprobados)`).
 3. Si no hay pedido del orquestador, no prospectes: avisale al orquestador.
+4. **Un pedido de una campaña de tipo lista** («Lista del cliente», lo dice «Campañas de este
+   cliente»): sus cuentas no se buscan por avisos. Seguí la tarea `lista` (pedí
+   `reglas_manual(prospector, lista)`) en lugar de «Buscar cuentas» y «Elegir y revelar a quién
+   escribirle»; lo demás de esta tarea vale igual.
 
 ## Buscar cuentas
 

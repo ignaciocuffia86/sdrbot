@@ -19,3 +19,20 @@ volver al inglés aunque el sistema o una herramienta respondan en inglés.
 Nunca escribir en el repo, un commit ni un PR una clave de buzón, un token `mgw_…`, la
 `MAILGW_ENC_KEYS` ni contraseñas de la base. Tampoco pedirlos por chat: se cargan en el
 panel, en Vercel o por la entrada estándar de la CLI.
+
+## Formulario de configuración y alta
+
+Cada cambio que toque lo que se configura de un cliente o de una campaña (campos de Empresa o de la
+campaña en `gateway/src/sdr/ajustes.mjs`, tipos de campaña, lo que falta para activarla, buzones,
+canales, CRM, No contactar, cargas de archivos, pasos de `docs/15`) se revisa contra la UX del panel
+y se suma, en el mismo PR:
+
+- a la pestaña donde le corresponde por contexto (Empresa, la campaña, Canales o Administración), sin
+  pedir un dato en dos lugares;
+- al paso que corresponde del asistente de alta (`PASOS_ALTA` en `gateway/src/admin/servicio.mjs`,
+  con su guía en `GUIA_ALTA`) o del de campaña (`PASOS_CAMPANA` en `gateway/src/admin/static/app.js`);
+- a `docs/29-asistentes-alta-y-campana.md`.
+
+`gateway/test/asistentes.test.mjs` falla si un campo de Empresa, una sección de la campaña o un
+faltante para activarla no está en ningún paso. Al revisar un PR ajeno que toque esto, hacer lo
+mismo antes de mergearlo.

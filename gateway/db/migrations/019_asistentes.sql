@@ -1,4 +1,4 @@
--- Asistentes del panel (docs/27): el alta de un cliente y el armado de cada campaña, paso a paso y
+-- Asistentes del panel (docs/29): el alta de un cliente y el armado de cada campaña, paso a paso y
 -- con pausa. Lo que se carga en cada paso va a donde ya iba (ajustes, campaña, buzones…): acá sólo
 -- queda en qué quedó cada paso cuando no sale de los datos.
 --

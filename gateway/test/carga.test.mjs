@@ -1,0 +1,681 @@
+// Carga de cuentas por archivo (docs/27, etapa 1): lectura de Excel y CSV, mapeo, la lista de no
+// contactar de la empresa desde un archivo (con empresas por nombre y el freno de lo que ya está en
+// marcha en Dripify) y las semillas de una campaña; y que un cliente no vea ni toque lo de otro.
+
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import zlib from 'node:zlib';
+import * as store from '../src/store.mjs';
+import { startServer } from '../src/server.mjs';
+import { createUser } from '../src/admin/auth.mjs';
+import * as carga from '../src/sdr/carga.mjs';
+import * as sdr from '../src/sdr/store.mjs';
+import * as correo from '../src/sdr/correo.mjs';
+
+let server, base;
+const A = 'carga-a';
+const B = 'carga-b';
+const meta = { bot: 'prospector', tarea: 'diaria' };
+
+function browser() {
+  let cookie = null;
+  return {
+    async call(method, path, body) {
+      const res = await fetch(`${base}/admin/api${path}`, {
+        method,
+        headers: { 'x-mailgw-admin': '1', ...(body ? { 'content-type': 'application/json' } : {}), ...(cookie ? { cookie } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const set = res.headers.get('set-cookie');
+      if (set) cookie = set.split(';')[0];
+      return { status: res.status, body: await res.json() };
+    },
+  };
+}
+
+async function loggedIn(email, role, clientId) {
+  const { setupToken } = await createUser({ email, name: email, role, clientId });
+  const b = browser();
+  assert.equal((await b.call('POST', '/activate', { token: setupToken, password: 'clave-larga-de-prueba' })).status, 200);
+  assert.equal((await b.call('POST', '/login', { email, password: 'clave-larga-de-prueba' })).status, 200);
+  return b;
+}
+
+const ok = (r) => { assert.equal(r.status, 200, JSON.stringify(r.body)); return r.body.data; };
+const q = (sql, params) => store.asOwner((c) => c.query(sql, params));
+const u = {};
+
+// ----- un .xlsx mínimo, como lo guarda Excel: un zip con el libro, las hojas y los textos compartidos.
+
+function zip(archivos) {
+  const locales = [];
+  const centrales = [];
+  let offset = 0;
+  for (const [nombre, texto] of Object.entries(archivos)) {
+    const datos = Buffer.from(texto, 'utf8');
+    const comprimido = zlib.deflateRawSync(datos);
+    const n = Buffer.from(nombre, 'utf8');
+    const crc = zlib.crc32(datos);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(crc, 14); local.writeUInt32LE(comprimido.length, 18); local.writeUInt32LE(datos.length, 22);
+    local.writeUInt16LE(n.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6); central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(crc, 16); central.writeUInt32LE(comprimido.length, 20); central.writeUInt32LE(datos.length, 24);
+    central.writeUInt16LE(n.length, 28); central.writeUInt32LE(offset, 42);
+    locales.push(local, n, comprimido);
+    centrales.push(central, n);
+    offset += 30 + n.length + comprimido.length;
+  }
+  const dir = Buffer.concat(centrales);
+  const fin = Buffer.alloc(22);
+  fin.writeUInt32LE(0x06054b50, 0); fin.writeUInt16LE(centrales.length / 2, 8); fin.writeUInt16LE(centrales.length / 2, 10);
+  fin.writeUInt32LE(dir.length, 12); fin.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locales, dir, fin]);
+}
+
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// hojas: { nombre: [[celda, ...], ...] }. Los textos van a sharedStrings; los números, como número;
+// una celda { f, v } es una fórmula con su último valor calculado.
+function xlsx(hojas) {
+  const compartidos = [];
+  const idx = (s) => { let i = compartidos.indexOf(s); if (i < 0) { i = compartidos.length; compartidos.push(s); } return i; };
+  const archivos = {};
+  const nombres = Object.keys(hojas);
+  nombres.forEach((nombre, k) => {
+    const filas = hojas[nombre].map((fila, r) => `<row r="${r + 1}">${fila.map((v, c) => {
+      const ref = `${String.fromCharCode(65 + c)}${r + 1}`;
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'number') return `<c r="${ref}"><v>${v}</v></c>`;
+      if (typeof v === 'object') return `<c r="${ref}" t="str"><f>${esc(v.f)}</f><v>${esc(v.v)}</v></c>`;
+      return `<c r="${ref}" t="s"><v>${idx(v)}</v></c>`;
+    }).join('')}</row>`).join('');
+    archivos[`xl/worksheets/sheet${k + 1}.xml`] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${filas}</sheetData></worksheet>`;
+  });
+  archivos['xl/workbook.xml'] = `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${nombres.map((n, k) =>
+  `<sheet name="${esc(n)}" sheetId="${k + 1}" r:id="rId${k + 1}"/>`).join('')}</sheets></workbook>`;
+  archivos['xl/_rels/workbook.xml.rels'] = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${
+    nombres.map((_, k) => `<Relationship Id="rId${k + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${k + 1}.xml"/>`).join('')}</Relationships>`;
+  archivos['xl/sharedStrings.xml'] = `<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${
+    compartidos.map((s) => `<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')}</sst>`;
+  return zip(archivos);
+}
+
+const b64 = (buf) => Buffer.from(buf).toString('base64');
+
+before(async () => {
+  server = await startServer(0);
+  base = `http://127.0.0.1:${server.address().port}`;
+  await store.upsertClient(A, 'Carga A');
+  await store.upsertClient(B, 'Carga B');
+  await q(`insert into sdr.cliente_config (client_id, ajustes) values ($1, $2), ($3, $2)`,
+    [A, { nombre_comercial: 'A SA', oferta: 'Logística', icp: 'Exportadoras', roles_objetivo: ['Gerente'], cuentas_por_dia: 5 }, B]);
+  u.bigua = await loggedIn('operador@carga.test', 'bigua_admin');
+  u.a = await loggedIn('usuario@carga-a.test', 'client_admin', A);
+  u.b = await loggedIn('usuario@carga-b.test', 'client_admin', B);
+});
+
+after(async () => {
+  await q(`delete from mailgw.client where id in ($1, $2)`, [A, B]);
+  await new Promise((r) => server.close(r));
+  await store.closePool();
+});
+
+// ---------------------------------------------------------------- lectura
+
+test('lectura: Excel con varias hojas, celdas vacías y fórmulas; el mapeo se propone por el encabezado', () => {
+  const buf = xlsx({
+    Exportadoras: [
+      ['Razón Social', 'Sitio Web', 'Rubro', 'RUT', 'Motivo', 'Mail', 'Región'],
+      ['Copefruit S.A.', 'https://www.copefruit.test/contacto', 'Fruta fresca', '76.123.456-7', 'Cliente actual', 'gerente@copefruit.test', 'Maule'],
+      [null, null, null, null, null, null, null],
+      ['Agrícola Ortiz y Cía. Ltda.', null, 'Uva', { f: 'HYPERLINK("http://x.test","x")', v: '=1+1' }, 'Referido de Juan', null, 'O\'Higgins'],
+      ['Agrosuper', 'agrosuper.test', 12345, null, 'Cliente', null, null],
+    ],
+    Referidos: [['Empresa'], ['Pepe & Hijos <SA>']],
+  });
+  const r = carga.leerArchivo(buf);
+  assert.deepEqual(r.hojas, ['Exportadoras', 'Referidos']);
+  assert.equal(r.hoja, 'Exportadoras');
+  assert.equal(r.filas.length, 3, 'la fila vacía no cuenta');
+  assert.deepEqual(r.filas.map((f) => f.renglon), [2, 4, 5], 'el renglón es el del archivo');
+  assert.equal(r.filas[1].celdas[3], '=1+1', 'de una fórmula queda el valor, como texto; nada se evalúa');
+  assert.equal(r.filas[2].celdas[2], '12345');
+  assert.deepEqual(carga.proponerMapeo(r.encabezados, 'no_contactar'), { empresa: 0, dominio: 1, motivo: 4, contacto_email: 5 });
+  assert.deepEqual(carga.proponerMapeo(r.encabezados, 'campana'), { empresa: 0, dominio: 1, vertical: 2, rut: 3, contacto_email: 5 });
+  assert.deepEqual(carga.leerArchivo(buf, { hoja: 'Referidos' }).filas[0].celdas, ['Pepe & Hijos <SA>']);
+  assert.throws(() => carga.leerArchivo(buf, { hoja: 'Otra' }), /no tiene una hoja/);
+});
+
+test('lectura: CSV en Latin-1 con punto y coma y comillas; topes de tamaño y filas; lo que no es un archivo', () => {
+  const csv = Buffer.from('Empresa;Web;Motivo\r\n"Copefruit; S.A.";copefruit.test;"dice ""no""\nde nuevo"\r\nÑandú SRL;;cliente\r\n', 'latin1');
+  const r = carga.leerArchivo(csv);
+  assert.deepEqual(r.encabezados, ['Empresa', 'Web', 'Motivo']);
+  assert.deepEqual(r.filas[0].celdas, ['Copefruit; S.A.', 'copefruit.test', 'dice "no" de nuevo']);
+  assert.equal(r.filas[1].celdas[0], 'Ñandú SRL');
+  assert.equal(r.filas[1].renglon, 4, 'el salto de línea dentro de las comillas corre el renglón');
+  const coma = carga.leerArchivo(Buffer.from('\uFEFFempresa,dominio\nUno,uno.test\n'));
+  assert.deepEqual(coma.filas[0].celdas, ['Uno', 'uno.test']);
+
+  const muchas = Buffer.from(`empresa\n${Array.from({ length: carga.MAX_FILAS + 1 }, (_, i) => `E${i}`).join('\n')}\n`);
+  assert.throws(() => carga.leerArchivo(muchas), /el máximo por carga es 2000/);
+  assert.throws(() => carga.leerArchivo(Buffer.alloc(carga.MAX_BYTES + 1, 'a')), /pasa los 3 MB/);
+  assert.throws(() => carga.leerArchivo(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0, 0, 0, 0, 1])), /No es un Excel/);
+  assert.throws(() => carga.leerArchivo(Buffer.from('PK\u0003\u0004basura')), /dañado/);
+
+  // Un zip que declara tamaños chicos y se infla mucho más: el tope cuenta lo que de verdad sale.
+  const bomba = xlsx({ Hoja: [['empresa'], ['x'.repeat(10)]] });
+  const relleno = zip({ 'xl/workbook.xml': '<workbook><sheets><sheet name="H" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+    'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${' '.repeat(45 * 1024 * 1024)}</sheetData></worksheet>` });
+  // Se le baja el tamaño declarado en el directorio central a la hoja (la última entrada).
+  const fin = relleno.length - 22;
+  const dir = relleno.readUInt32LE(fin + 16);
+  let p = dir;
+  for (let k = 0; k < 2; k++) p += 46 + relleno.readUInt16LE(p + 28);
+  relleno.writeUInt32LE(100, p + 24);
+  assert.ok(relleno.length < carga.MAX_BYTES, 'comprimido entra en el tope del archivo');
+  assert.throws(() => carga.leerArchivo(relleno), /demasiado grande por dentro/);
+  assert.equal(carga.leerArchivo(bomba).filas.length, 1);
+});
+
+test('lectura: un Excel armado para trabar el gateway se rechaza o se lee en tiempo lineal (Vercel 01M7360X214QQ68W26K5AYZAE5)', () => {
+  const base = { 'xl/workbook.xml': '<workbook><sheets><sheet name="H" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>' };
+  const hoja = (cuerpo) => zip({ ...base, 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${cuerpo}</sheetData></worksheet>` });
+  const rapido = (fn, re) => {
+    const t0 = Date.now();
+    if (re) assert.throws(fn, re); else fn();
+    const ms = Date.now() - t0;
+    assert.ok(ms < 1500, `tardó ${ms} ms`);
+  };
+  // Lo del hallazgo: muchas aperturas de fila sin cierre. Antes, cada intento volvía a recorrer el resto.
+  rapido(() => carga.leerArchivo(hoja('<row r="1">'.repeat(400_000))), /mal formado/);
+  // Una celda sin cerrar, una etiqueta sin «>» y una etiqueta enorme.
+  rapido(() => carga.leerArchivo(hoja(`<row r="1">${'<c r="A1">'.repeat(200_000)}</row>`)), /mal formado/);
+  rapido(() => carga.leerArchivo(hoja(`<row r="1"${' x'.repeat(2_000_000)}`)), /mal formado/);
+  rapido(() => carga.leerArchivo(hoja(`<row r="1" a="${'x'.repeat(10_000)}"></row>`)), /mal formado/);
+  // Un atributo sin comilla de cierre (dentro del tope de la etiqueta).
+  rapido(() => carga.leerArchivo(hoja('<row r="1></row>')), /mal formado/);
+  // Muchas filas vacías y una sola celda al final: se lee bien y rápido.
+  const vacias = Array.from({ length: 1900 }, (_, i) => `<row r="${i + 1}"></row>`).join('');
+  rapido(() => {
+    const r = carga.leerArchivo(hoja(`${vacias}<row r="1901"><c r="A1901" t="inlineStr"><is><t>Empresa</t></is></c></row>` +
+      '<row r="1902"><c r="A1902" t="inlineStr"><is><t>Una &amp; otra</t></is></c></row>'));
+    assert.deepEqual(r.encabezados, ['Empresa']);
+    assert.deepEqual(r.filas[0].celdas, ['Una & otra']);
+  });
+  // Muchas «&» sin cerrar en un texto: no se cuelga.
+  rapido(() => carga.leerArchivo(hoja(`<row r="1"><c r="A1" t="inlineStr"><is><t>${'&a'.repeat(500_000)}</t></is></c></row>`)));
+  // Texto con formato (runs) y guía fonética: se toma el texto, no la fonética.
+  const rico = zip({ ...base,
+    'xl/sharedStrings.xml': '<sst><si><r><rPr><b/></rPr><t>Agrícola </t></r><r><t xml:space="preserve">Ortiz</t></r></si>' +
+      '<si><t>Empresa</t><rPh sb="0" eb="1"><t>えんぷれさ</t></rPh></si></sst>',
+    'xl/worksheets/sheet1.xml': '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>1</v></c></row>' +
+      '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2"/><c r="C2"><v>7</v></c></row></sheetData></worksheet>' });
+  const r = carga.leerArchivo(rico);
+  assert.deepEqual(r.encabezados[0], 'Empresa');
+  assert.deepEqual(r.filas[0].celdas, ['Agrícola Ortiz', '', '7']);
+});
+
+// ---------------------------------------------------------------- no contactar desde un archivo
+
+test('no contactar por archivo: vista previa, confirmar con la misma huella, empresas por nombre y freno en Dripify', async () => {
+  // El registro ya tiene: una cuenta en investigación sin dominio con el nombre de un referido, y una
+  // en contacto con una persona cargada en Dripify.
+  const ortiz = (await sdr.guardarCuenta(A, { nombre: 'Agricola Ortiz' }, meta)).cuenta;
+  const copefruit = (await sdr.guardarCuenta(A, { nombre: 'Copefruit', dominio: 'copefruit.test', estado: 'en_contacto' }, meta)).cuenta;
+  const ana = (await sdr.guardarProspecto(A, { nombre: 'Ana', email: 'ana@copefruit.test', cuenta_id: copefruit.id }, meta)).prospecto;
+  await q(`update sdr.prospecto set dripify = '{"estado":"cargado","carga":"x1"}' where id = $1`, [ana.id]);
+  await q(`insert into sdr.no_contactar (client_id, valor, tipo, motivo) values ($1, 'agrosuper.test', 'dominio', 'ya estaba')`, [A]);
+
+  const archivo = b64(xlsx({ Hoja1: [
+    ['Razón social', 'Web', 'Motivo', 'Mail'],
+    ['Copefruit S.A.', 'www.copefruit.test', 'Cliente actual', 'gerente@copefruit.test'],
+    ['Agrícola Ortiz y Cía. Ltda.', null, 'Referido de Juan', 'juan.ortiz@gmail.test'],
+    ['Agrosuper', 'agrosuper.test', 'Cliente', null],
+    ['COPEFRUIT', 'copefruit.test', 'repetida', null],
+    [null, 'sinnombre.test', null, null],
+    ['S.A.', null, 'sólo la forma societaria', null],
+    ['Frutas del Sur', 'no es un sitio', null, 'no es un mail'],
+  ] }));
+  const path = `/clients/${A}/no-contactar/cargas`;
+  const pv = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'C:\\Users\\alberto\\referidos.xlsx' }));
+  assert.deepEqual(pv.mapeo, { empresa: 0, dominio: 1, motivo: 2, contacto_email: 3 });
+  assert.equal(pv.totales.filas, 7);
+  assert.equal(pv.totales.invalidas, 2, JSON.stringify(pv.invalidas));
+  assert.deepEqual(pv.invalidas.map((x) => x.renglon).sort(), [6, 7]);
+  assert.equal(pv.totales.nuevas, 4, JSON.stringify(pv.filas));
+  assert.equal(pv.totales.por_dominio, 1);
+  assert.equal(pv.totales.por_nombre, 2, 'Ortiz y Frutas del Sur, sin sitio válido, van por el nombre');
+  assert.equal(pv.totales.mails, 1, 'el mail de Copefruit lo cubre su dominio; el de Ortiz no');
+  assert.equal(pv.totales.ya_estaban, 1);
+  assert.equal(pv.totales.repetidas, 1);
+  assert.ok(pv.avisos.some((x) => x.renglon === 8 && x.avisos.length === 2));
+  assert.equal(pv.efecto.cuentas_excluidas, 1, 'Ortiz, en investigación, quedaría excluida');
+  assert.equal(pv.efecto.cuentas_en_marcha, 1, 'Copefruit está en contacto');
+  assert.equal(pv.efecto.frenos, 1, 'Ana está cargada en Dripify');
+  // La vista previa no escribe nada.
+  assert.equal((await q(`select count(*)::int as n from sdr.no_contactar where client_id = $1`, [A])).rows[0].n, 1);
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [ortiz.id])).rows[0].estado, 'en_investigacion');
+
+  // Con otro mapeo la huella no es la misma: no se aplica lo que no se vio.
+  const otra = await u.a.call('POST', path, { archivo, nombre: 'referidos.xlsx', mapeo: { empresa: 0, motivo: 2 }, huella: pv.huella });
+  assert.equal(otra.status, 409);
+  assert.equal(otra.body.error.code, 'carga_cambio');
+
+  const ap = ok(await u.a.call('POST', path, { archivo, nombre: 'C:\\Users\\alberto\\referidos.xlsx', huella: pv.huella }));
+  assert.equal(ap.lote.archivo, 'referidos.xlsx', 'sin la ruta');
+  assert.equal(ap.lote.resumen.nuevas, 4);
+  assert.deepEqual(ap.efecto, { ...ap.efecto, cuentas_excluidas: 1, cuentas_en_marcha: 1, frenos: 1 });
+  const empresa = ap.no_contactar.find((x) => x.tipo === 'empresa' && x.valor === 'agricola ortiz');
+  assert.ok(empresa, JSON.stringify(ap.no_contactar));
+  assert.equal(empresa.nombre, 'Agrícola Ortiz y Cía. Ltda.');
+  assert.equal(empresa.motivo, 'Referido de Juan');
+  assert.equal(empresa.lote_archivo, 'referidos.xlsx');
+  assert.deepEqual(ap.totales, { dominios: 2, emails: 1, empresas: 2 });
+
+  // El registro: Ortiz excluida con su motivo; Copefruit sigue en contacto pero Ana se frena en Dripify.
+  const k = (await q(`select estado, estado_motivo from sdr.cuenta where id = $1`, [ortiz.id])).rows[0];
+  assert.equal(k.estado, 'excluida');
+  assert.match(k.estado_motivo, /No contactar: empresa «Agrícola Ortiz y Cía\. Ltda\.»: «Referido de Juan»/, 'lo del cliente va citado');
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [copefruit.id])).rows[0].estado, 'en_contacto');
+  const freno = (await q(`select dripify->'freno' as f from sdr.prospecto where id = $1`, [ana.id])).rows[0].f;
+  assert.equal(freno.pendiente, true);
+  assert.equal(freno.motivo, 'está en la lista de no contactar del cliente');
+  const ev = await q(`select count(*)::int as n from sdr.evento where client_id = $1 and cuenta_id = $2 and tipo = 'cuenta.excluida'`, [A, ortiz.id]);
+  assert.equal(ev.rows[0].n, 1);
+
+  // Lo que llega después: una cuenta con el mismo nombre aunque traiga dominio (docs/27 §7, caso 4),
+  // una persona de una cuenta de ese nombre y un mail a ella.
+  const tarde = await sdr.guardarCuenta(A, { nombre: 'AGRICOLA ORTIZ SpA', dominio: 'ortiz.test' }, meta);
+  assert.equal(tarde.no_contactar, true);
+  assert.equal(tarde.cuenta.estado, 'excluida');
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Pedro', cuenta_id: ortiz.id }, meta), /no contactar/);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Juan', email: 'juan.ortiz@gmail.test' }, meta), /no contactar/);
+  await assert.rejects(correo.controlarDestinatarios(A, ['Juan.Ortiz@gmail.test'], 'send'), (e) => e.code === 'no_contactar');
+  const fs = (await sdr.guardarCuenta(A, { nombre: 'Frutas del Sur Ltda.' }, meta)).cuenta;
+  assert.equal(fs.estado, 'excluida');
+  const libre = await sdr.guardarCuenta(A, { nombre: 'Frutas del Norte' }, meta);
+  assert.equal(libre.cuenta.estado, 'en_investigacion', 'otro nombre pasa');
+  const sinDominio = (await sdr.guardarProspecto(A, { nombre: 'Rita', email: 'rita@fdn.test', cuenta_id: libre.cuenta.id }, meta)).prospecto;
+  assert.ok(sinDominio.id);
+
+  // La lista muestra de qué carga vino; quitar una empresa por su clave la saca.
+  const quitar = ok(await u.a.call('POST', `/clients/${A}/no-contactar/quitar`, { valores: ['frutas del sur'] }));
+  assert.equal(quitar.quitados, 1);
+  const cargas = ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas;
+  assert.equal(cargas.length, 1);
+  assert.equal(cargas[0].destino, 'no_contactar');
+  assert.equal(cargas[0].por_email, 'usuario@carga-a.test');
+  const act = ok(await u.bigua.call('GET', `/clients/${A}/activity`)).activity;
+  const op = act.find((x) => x.op === 'admin.sdr.carga');
+  assert.ok(op, 'queda auditado');
+  assert.ok(!JSON.stringify(op).includes('Ortiz'), 'la auditoría lleva conteos, no contenido');
+  // Tocó algo en marcha: el orquestador se entera.
+  const avisos = await q(`select que from sdr.pedido where client_id = $1 and para_bot = 'orquestador' and de_bot = 'panel'`, [A]);
+  assert.ok(avisos.rows.some((x) => /lista de no contactar/.test(x.que) && /1 persona\(s\) cargadas en Dripify/.test(x.que)), JSON.stringify(avisos.rows));
+});
+
+test('no contactar: el alta a mano y el CSV pegado aceptan una empresa por nombre y frenan lo que está en marcha', async () => {
+  const k = (await sdr.guardarCuenta(A, { nombre: 'Viña Concha S.A.', dominio: 'concha.test', estado: 'en_pausa' }, meta)).cuenta;
+  const p = (await sdr.guardarProspecto(A, { nombre: 'Luis', linkedin_url: 'https://www.linkedin.com/in/luis-concha', cuenta_id: k.id }, meta)).prospecto;
+  await q(`update sdr.prospecto set dripify = '{"estado":"cargado"}' where id = $1`, [p.id]);
+  const r = ok(await u.a.call('POST', `/clients/${A}/no-contactar`, { valor: 'Viña Concha', motivo: 'Cliente' }));
+  assert.equal(r.agregados, 1);
+  assert.equal(r.efecto.frenos, 1);
+  assert.equal(r.efecto.cuentas_en_marcha, 1);
+  assert.ok(r.no_contactar.some((x) => x.tipo === 'empresa' && x.valor === 'vina concha' && x.nombre === 'Viña Concha'));
+  const csv = ok(await u.a.call('POST', `/clients/${A}/no-contactar`, { csv: 'empresa,motivo\nLa Rosa Ltda.,Partner\n---,nada\n' }));
+  assert.equal(csv.agregados, 1);
+  assert.equal(csv.invalidas.length, 1);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Otro', cuenta_id: k.id }, meta), /no contactar/);
+});
+
+// ---------------------------------------------------------------- semillas de una campaña
+
+test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pisan lo que ya está en el registro', async () => {
+  const camp = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas`)).campanas;
+  const principal = camp.find((x) => x.clave === 'principal');
+  const icp = ok(await u.a.call('POST', `/clients/${A}/sdr/campanas`, { nombre: 'Exportadoras por ICP' })).campana;
+  // Una cuenta que ya trabaja la principal.
+  await sdr.guardarCuenta(A, { nombre: 'Frutícola Maule', dominio: 'maule.test' }, meta);
+
+  const archivo = b64(Buffer.from([
+    'Empresa,Web,Rubro,Tamaño,Nota,Región,Código interno',
+    'Hortifrut S.A.,hortifrut.test,Berries,grande,Exporta a China,Maule,=cmd|calc',
+    'Frutícola Maule,maule.test,Fruta,mediana,,Maule,',
+    'Subsole,,Uva,,,Valparaíso,',
+    'HORTIFRUT,hortifrut.test,Berries,,,,',
+    ',sin.test,,,,,',
+  ].join('\n'), 'utf8'));
+  const path = `/clients/${A}/sdr/campanas/${icp.id}/cargas`;
+  const pv = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'semillas.csv' }));
+  assert.equal(pv.campana.nombre, 'Exportadoras por ICP');
+  assert.deepEqual(pv.mapeo, { empresa: 0, dominio: 1, vertical: 2, tamano: 3, nota: 4 });
+  assert.deepEqual({ ...pv.totales }, { filas: 5, invalidas: 1, nuevas: 2, prospectar: 0, semillas: 2, suma_a_existente: 0,
+    ya_en_registro: 1, ya_eran_semilla: 0, repetidas: 1, sin_dominio: 1, en_no_contactar: 0, personas: 0, personas_ya_existen: 0,
+    personas_bloqueadas: 0 });
+  assert.ok(pv.filas.every((f) => f.uso === 'semilla' || f.error), 'una campaña que no es lista sólo toma semillas');
+  const maule = pv.filas.find((f) => f.empresa === 'Frutícola Maule');
+  assert.equal(maule.resultado, 'ya_en_registro');
+  assert.equal(maule.existente.campana, principal.nombre);
+
+  const ap = ok(await u.a.call('POST', path, { archivo, nombre: 'semillas.csv', huella: pv.huella }));
+  assert.equal(ap.lote.resumen.nuevas, 2);
+  const { rows } = await q(`select nombre, dominio, vertical, tamano, tesis, estado, estado_motivo, campana_id, origen, uso, datos_origen, prioridad
+                              from sdr.cuenta where client_id = $1 and lote_id = $2 order by prioridad`, [A, ap.lote.id]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].nombre, 'Hortifrut S.A.');
+  assert.equal(rows[0].estado, 'excluida');
+  assert.match(rows[0].estado_motivo, /Semilla del ICP de la campaña «Exportadoras por ICP»/);
+  assert.equal(rows[0].campana_id, icp.id);
+  assert.deepEqual([rows[0].origen, rows[0].uso, rows[0].tesis, rows[0].tamano], ['archivo', 'semilla', 'Exporta a China', 'grande']);
+  assert.deepEqual(rows[0].datos_origen, { Región: 'Maule', 'Código interno': '=cmd|calc' }, 'lo no mapeado queda como dato, como texto');
+  assert.equal(rows[1].nombre, 'Subsole');
+  assert.equal(rows[1].dominio, null);
+  const m = (await q(`select campana_id, uso from sdr.cuenta where client_id = $1 and dominio = 'maule.test'`, [A])).rows[0];
+  assert.equal(m.campana_id, principal.id, 'la cuenta de otra campaña no se mueve');
+  assert.equal(m.uso, null);
+
+  // El bot no reabre una semilla ni la mueve de campaña.
+  await assert.rejects(sdr.guardarCuenta(A, { dominio: 'hortifrut.test', estado: 'en_investigacion' }, meta), (e) => e.code === 'cuenta_semilla');
+  await assert.rejects(sdr.guardarCuenta(A, { dominio: 'hortifrut.test', campana: 'principal' }, meta), (e) => e.code === 'cuenta_semilla');
+  const anotada = await sdr.guardarCuenta(A, { dominio: 'hortifrut.test', vertical: 'Berries y cerezas' }, meta);
+  assert.equal(anotada.cuenta.estado, 'excluida');
+
+  // Y nadie le escribe por otro camino (Vercel 01M73616907NW21T3B4WY6VAD3): ni una persona nueva en la
+  // semilla (por su cuenta o por un mail de su dominio), ni pasar a alguien que ya estaba a esa cuenta,
+  // ni un mail o una respuesta a su dominio.
+  const semilla = anotada.cuenta;
+  const esSemilla = (e) => e.code === 'no_contactar' && /semilla del ICP «Hortifrut S\.A\.»/.test(e.message);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Gerente', cuenta_id: semilla.id }, meta), esSemilla);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Gerente', email: 'gerente@hortifrut.test' }, meta), esSemilla);
+  await assert.rejects(sdr.guardarProspecto(A, { nombre: 'Otra', email: 'otra@ventas.hortifrut.test' }, meta), esSemilla);
+  const suelta = (await sdr.guardarProspecto(A, { nombre: 'Suelta', email: 'suelta@libre-semilla.test' }, meta)).prospecto;
+  await assert.rejects(sdr.guardarProspecto(A, { id: suelta.id, cuenta_id: semilla.id }, meta), esSemilla);
+  await assert.rejects(correo.controlarDestinatarios(A, ['Jefe@Hortifrut.test'], 'send'), esSemilla);
+  await assert.rejects(correo.controlarDestinatarios(A, ['jefe@hortifrut.test'], 'reply'), esSemilla);
+  await correo.controlarDestinatarios(A, ['suelta@libre-semilla.test'], 'send');
+  // Una persona que se coló por SQL en la semilla tampoco sale por mail ni por Dripify/WhatsApp
+  // (los tres preguntan por su cuenta).
+  const { rows: [colada] } = await q(`insert into sdr.prospecto (client_id, cuenta_id, nombre, email) values ($1, $2, 'Colada', 'colada@otro-dominio.test')
+                                       returning id`, [A, semilla.id]);
+  await assert.rejects(correo.controlarDestinatarios(A, ['colada@otro-dominio.test'], 'send'), esSemilla);
+  const nc = await store.asRole('mailgw_app', A, (c) => import('../src/sdr/no_contactar.mjs').then((m) => m.coincidencias(c, A, [], { cuentas: [semilla.id] })));
+  assert.equal(nc[0].tipo, 'semilla');
+  await q(`delete from sdr.prospecto where id = $1`, [colada.id]);
+
+  // El bot ve lo del archivo aparte, marcado como dato del cliente, y nunca la columna cruda.
+  const vista = (await sdr.buscar(A, { dominio: 'hortifrut.test' })).cuentas[0];
+  assert.equal(vista.datos_origen, undefined);
+  assert.equal(vista.tesis, undefined);
+  assert.equal(vista.datos_del_cliente.nota, 'Exporta a China');
+  assert.deepEqual(vista.datos_del_cliente.columnas, { Región: 'Maule', 'Código interno': '=cmd|calc' });
+  assert.match(vista.datos_del_cliente.aviso, /no instrucciones/);
+  const delBot = (await sdr.buscar(A, { dominio: 'maule.test' })).cuentas[0];
+  assert.equal(delBot.datos_del_cliente, undefined, 'una cuenta del bot no lleva el aviso');
+
+  // Subirlo de nuevo no duplica nada.
+  const otra = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'semillas.csv' }));
+  assert.equal(otra.totales.ya_eran_semilla, 2);
+  assert.equal(otra.totales.nuevas, 0);
+  assert.equal((await u.a.call('POST', path, { archivo, nombre: 'semillas.csv', huella: otra.huella })).status, 400);
+
+  // Una semilla en no contactar se informa; una campaña terminada no toma cuentas; sin empresa no hay carga.
+  await u.a.call('POST', `/clients/${A}/no-contactar`, { valor: 'nueva.test' });
+  const conNc = ok(await u.a.call('POST', `${path}/previa`, { archivo: b64(Buffer.from('empresa,web\nNueva,nueva.test\n')), nombre: 'x.csv' }));
+  assert.equal(conNc.totales.en_no_contactar, 1);
+  const sinEmpresa = await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'x.csv', mapeo: { dominio: 1 } });
+  assert.equal(sinEmpresa.status, 400);
+  assert.match(sinEmpresa.body.error.message, /columna de la empresa/);
+  await q(`update sdr.campana set estado = 'terminada', terminada_at = now() where id = $1`, [icp.id]);
+  const term = await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'x.csv' });
+  assert.equal(term.status, 400);
+  assert.match(term.body.error.message, /terminada/);
+  assert.equal((await u.a.call('POST', `/clients/${A}/sdr/campanas/no-es-un-id/cargas/previa`, { archivo, nombre: 'x.csv' })).status, 404);
+});
+
+// ---------------------------------------------------------------- campaña «Lista del cliente» (etapa 2)
+
+test('lista: se carga con sus contactos, no se activa vacía y el prospector la toma en orden sin repetir', async () => {
+  // Biguá crea la campaña de tipo lista; sin cuentas cargadas no se puede activar.
+  const k = ok(await u.bigua.call('POST', `/clients/${A}/sdr/campanas`, {
+    nombre: 'Base SAC', tipo: 'lista', cuentas_por_dia: 2,
+    ajustes: { propuesta: 'Logística para exportadoras', roles_objetivo: ['Gerente de comercio exterior'] },
+  })).campana;
+  const path = `/clients/${A}/sdr/campanas/${k.id}`;
+  let v = ok(await u.a.call('GET', path));
+  assert.ok(v.faltantes.some((f) => f.clave === 'lista'), JSON.stringify(v.faltantes));
+  assert.ok(!v.faltantes.some((f) => f.clave === 'icp'), 'una lista no pide ICP');
+
+  // El registro ya tiene: una cuenta del bot en investigación (suma contactos), una en contacto (no se
+  // toca), una persona con ese mail en otra cuenta, y una empresa en no contactar.
+  const viña = (await sdr.guardarCuenta(A, { nombre: 'Viña del Valle', dominio: 'valle.test' }, meta)).cuenta;
+  await sdr.guardarCuenta(A, { nombre: 'Frutas Andinas', dominio: 'andinas.test', estado: 'en_contacto' }, meta);
+  await sdr.guardarProspecto(A, { nombre: 'Ya Está', email: 'ya@otra-cuenta.test' }, meta);
+  await u.a.call('POST', `/clients/${A}/no-contactar`, { valor: 'prohibida.test', motivo: 'Cliente' });
+
+  const archivo = b64(Buffer.from([
+    'Empresa;Web;Nota;Contacto;Cargo;Mail;LinkedIn;Teléfono;Uso',
+    'Exportadora Uno;uno-exp.test;Exporta cerezas a China;Ana Pérez;Gerente Comex;Ana@Uno-Exp.test;linkedin.com/in/ana-perez-uno;+56 9 1234 5678;',
+    'Exportadora Uno;uno-exp.test;;Beto Soto;Jefe de logística;beto@uno-exp.test;;;',
+    'Exportadora Dos;;;;;;;;',
+    'Viña del Valle;valle.test;Nota nueva;Carla;Gerenta;carla@valle.test;;;',
+    'Frutas Andinas;andinas.test;;Dario;CEO;dario@andinas.test;;;',
+    'Prohibida SA;prohibida.test;;Eva;CEO;eva@prohibida.test;;;',
+    'Exportadora Tres;tres.test;;Fede;CEO;ya@otra-cuenta.test;https://evil.test/in/x;;',
+    'Cliente Modelo;modelo.test;Es nuestro mejor cliente;;;;;;semilla',
+  ].join('\n'), 'utf8'));
+  const pv = ok(await u.a.call('POST', `${path}/cargas/previa`, { archivo, nombre: 'base-sac.csv' }));
+  assert.equal(pv.uso, 'prospectar');
+  assert.deepEqual(Object.keys(pv.mapeo).sort(), ['contacto_cargo', 'contacto_email', 'contacto_linkedin', 'contacto_nombre',
+    'contacto_telefono', 'dominio', 'empresa', 'nota', 'uso'].sort());
+  const t = pv.totales;
+  assert.equal(t.prospectar, 3, JSON.stringify(t)); // Uno, Dos, Tres (Prohibida entra excluida)
+  assert.equal(t.semillas, 1);
+  assert.equal(t.nuevas, 5);
+  assert.equal(t.suma_a_existente, 1);
+  assert.equal(t.ya_en_registro, 1);
+  assert.equal(t.en_no_contactar, 1);
+  assert.equal(t.personas, 3, 'Ana, Beto y Carla');
+  assert.equal(t.personas_ya_existen, 2, 'Fede (mail de otra cuenta) y Eva (empresa en no contactar)');
+  assert.ok(pv.avisos.some((x) => x.avisos.some((a) => /no es un perfil de LinkedIn/.test(a))));
+  const fila = (n) => pv.filas.find((f) => f.renglon === n);
+  assert.equal(fila(3).resultado, 'suma_contacto');
+  assert.equal(fila(6).resultado, 'ya_en_registro');
+  assert.equal(fila(6).existente.estado, 'en_contacto');
+  assert.equal(fila(9).uso, 'semilla');
+
+  const ap = ok(await u.a.call('POST', `${path}/cargas`, { archivo, nombre: 'base-sac.csv', huella: pv.huella }));
+  assert.equal(ap.lote.resumen.prospectar, 3);
+  assert.equal(ap.lote.resumen.personas, 3);
+
+  // El registro: personas con mail del cliente, en la campaña y del lote; Viña suma a Carla y su nota.
+  const { rows: ps } = await q(`select nombre, email, email_calidad, linkedin_url, whatsapp, campana_id, lote_id, estado
+                                  from sdr.prospecto where client_id = $1 and lote_id = $2 order by nombre`, [A, ap.lote.id]);
+  assert.deepEqual(ps.map((p) => p.nombre), ['Ana Pérez', 'Beto Soto', 'Carla']);
+  assert.equal(ps[0].email, 'ana@uno-exp.test');
+  assert.equal(ps[0].email_calidad, 'del_cliente');
+  assert.equal(ps[0].linkedin_url, 'https://www.linkedin.com/in/ana-perez-uno');
+  assert.equal(ps[0].whatsapp, '+56912345678');
+  assert.equal(ps[0].campana_id, k.id);
+  assert.equal(ps[2].campana_id, viña.campana_id, 'Carla va a la campaña de su cuenta, que no se movió');
+  assert.equal((await q(`select tesis from sdr.cuenta where id = $1`, [viña.id])).rows[0].tesis, 'Nota nueva');
+  const prohibida = (await q(`select estado, uso from sdr.cuenta where client_id = $1 and dominio = 'prohibida.test'`, [A])).rows[0];
+  assert.deepEqual(prohibida, { estado: 'excluida', uso: 'prospectar' });
+
+  // Ya se puede activar; el panel muestra cuántas quedan.
+  v = ok(await u.a.call('GET', path));
+  assert.ok(!v.faltantes.some((f) => f.clave === 'lista'), JSON.stringify(v.faltantes));
+  assert.equal(v.campana.cuentas_de_lista, 3);
+  let lista = ok(await u.a.call('GET', `${path}/lista`)).lista;
+  assert.deepEqual(lista, { cargadas: 4, sin_trabajar: 3, en_curso: 0, cerradas: 1, semillas: 1 });
+
+  // El prospector las toma en el orden del archivo, con sus personas y la nota como dato del cliente.
+  let r = await sdr.cuentasDeLista(A, { campana: k.clave, limite: 2 });
+  assert.equal(r.quedan, 3);
+  assert.deepEqual(r.cuentas.map((x) => x.nombre), ['Exportadora Uno', 'Exportadora Dos']);
+  assert.deepEqual(r.cuentas[0].personas.map((p) => p.nombre), ['Ana Pérez', 'Beto Soto']);
+  assert.equal(r.cuentas[0].datos_del_cliente.nota, 'Exporta cerezas a China');
+  assert.equal(r.cuentas[0].tesis, undefined);
+  assert.equal(r.cuentas[1].personas.length, 0, 'sin contacto: el prospector busca a quien decide');
+
+  // Trabajar una (una persona con próximo paso) y descartar otra: no vuelven a salir.
+  const ana = r.cuentas[0].personas[0];
+  await sdr.guardarProspecto(A, { id: ana.id, proximo_paso: 'enviar mail 1 cuando se apruebe' }, meta);
+  await sdr.guardarCuenta(A, { id: r.cuentas[1].id, estado: 'descartada', estado_motivo: 'sin contacto en ASCI ni Apollo' }, meta);
+  r = await sdr.cuentasDeLista(A, { campana: k.clave });
+  assert.deepEqual(r.cuentas.map((x) => x.nombre), ['Exportadora Tres']);
+  assert.equal(r.quedan, 1);
+  await sdr.guardarCuenta(A, { id: r.cuentas[0].id, estado: 'descartada' }, meta);
+  r = await sdr.cuentasDeLista(A, { campana: k.clave });
+  assert.equal(r.quedan, 0);
+  assert.match(r.aviso, /se terminó/);
+  lista = ok(await u.a.call('GET', `${path}/lista`)).lista;
+  assert.deepEqual(lista, { cargadas: 4, sin_trabajar: 0, en_curso: 1, cerradas: 3, semillas: 1 });
+
+  // Otra campaña no es una lista; y a una campaña que no es lista no se le cargan cuentas para prospectar.
+  await assert.rejects(sdr.cuentasDeLista(A, { campana: 'principal' }), (e) => e.code === 'campana_no_es_lista');
+  const principal = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas`)).campanas.find((x) => x.clave === 'principal');
+  const enPrincipal = ok(await u.a.call('POST', `/clients/${A}/sdr/campanas/${principal.id}/cargas/previa`, {
+    archivo: b64(Buffer.from('empresa,uso\nPara Prospectar,prospectar\nModelo Dos,semilla\n')), nombre: 'x.csv' }));
+  assert.match(enPrincipal.invalidas[0].motivo, /no es una «Lista del cliente»/);
+  assert.equal(enPrincipal.totales.semillas, 1);
+
+  // Los bots ven en la sección de la campaña que es una lista y cómo tomar sus cuentas.
+  const cfg = { ajustes: { nombre_comercial: 'A SA' }, calibracion_mails: 20, bots_activos: ['orquestador', 'prospector'] };
+  const secciones = sdr.seccionesCliente(A, 'Carga A', cfg, { buzones: [], noContactar: { dominios: 0, emails: 0, empresas: 0 },
+    campanas: [{ ...k, estado: 'activa', buzones: [], usadas: 0 }] });
+  const seccion = secciones.find((x) => x.seccion === `campana-${k.clave}`);
+  assert.match(seccion.contenido, /registro_cuentas_de_lista\(campana: "base-sac"\)/);
+  assert.match(seccion.contenido, /reglas_manual\(prospector, lista\)/);
+});
+
+// ---------------------------------------------------------------- etapa 3: informe, mapeo guardado y deshacer
+
+test('etapa 3: el informe se baja como CSV seguro y vence a los 30 días; el mapeo se recuerda', async () => {
+  const path = `/clients/${A}/no-contactar/cargas`;
+  const raro = (filas) => b64(Buffer.from(['Razón social del exportador;Página institucional;Por qué', ...filas].join('\n')));
+  const archivo = raro(['=HYPERLINK("http://x");;Fórmula', 'Exportadora Informe;informe.test;Cliente']);
+  // Con estos encabezados el mapeo propuesto no encuentra el sitio: se corrige a mano.
+  const pv = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'raro.csv' }));
+  assert.equal(pv.mapeo.dominio, undefined);
+  const mapeo = { empresa: 0, dominio: 1, motivo: 2 };
+  const pv2 = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'raro.csv', mapeo }));
+  const ap = ok(await u.a.call('POST', path, { archivo, nombre: 'raro.csv', mapeo, huella: pv2.huella }));
+
+  // La próxima carga con esas columnas ya viene con el mapeo de la última.
+  const otra = ok(await u.a.call('POST', `${path}/previa`, { archivo: raro(['Otra;otra-informe.test;x']), nombre: 'raro2.csv' }));
+  assert.deepEqual(otra.mapeo, mapeo);
+
+  const cargas = ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas;
+  const lote = cargas.find((x) => x.id === ap.lote.id);
+  assert.equal(lote.tiene_informe, true);
+  const inf = ok(await u.a.call('GET', `/clients/${A}/cargas/${lote.id}/informe`));
+  assert.equal(inf.nombre, 'informe-raro.csv');
+  assert.ok(inf.csv.startsWith('﻿Renglón;Empresa;Entra como;Resultado;Motivo;Avisos\r\n'), inf.csv.slice(0, 80));
+  assert.ok(inf.csv.includes('\r\n2;"\'=HYPERLINK(""http://x"")";"nombre: =HYPERLINK'), 'la fórmula va como texto');
+  assert.match(inf.csv, /\r\n3;Exportadora Informe;dominio: informe\.test;entra;Cliente;\r\n/);
+  // A los 30 días el informe ya no está.
+  await q(`update sdr.lote_carga set creado_at = now() - interval '31 days' where id = $1`, [lote.id]);
+  const vencido = await u.a.call('GET', `/clients/${A}/cargas/${lote.id}/informe`);
+  assert.equal(vencido.status, 404);
+  assert.match(vencido.body.error.message, /30 días/);
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas.find((x) => x.id === lote.id).tiene_informe, false);
+  assert.equal((await q(`select informe from sdr.lote_carga where id = $1`, [lote.id])).rows[0].informe, null);
+});
+
+test('etapa 3: deshacer saca lo que creó la carga mientras nadie lo trabajó, y nada más', async () => {
+  // No contactar: las filas del lote salen de la lista; la cuenta que excluyó sigue excluida.
+  const k = (await sdr.guardarCuenta(A, { nombre: 'Para Deshacer', dominio: 'deshacer.test' }, meta)).cuenta;
+  const archivo = b64(Buffer.from('empresa,web\nPara Deshacer,deshacer.test\nOtra Más,otra-mas.test\n'));
+  const pv = ok(await u.a.call('POST', `/clients/${A}/no-contactar/cargas/previa`, { archivo, nombre: 'quitar.csv' }));
+  const ap = ok(await u.a.call('POST', `/clients/${A}/no-contactar/cargas`, { archivo, nombre: 'quitar.csv', huella: pv.huella }));
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [k.id])).rows[0].estado, 'excluida');
+  // Otro cliente no lo ve ni lo deshace.
+  assert.equal((await u.b.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`)).status, 404);
+  assert.equal((await u.b.call('POST', `/clients/${B}/cargas/${ap.lote.id}/deshacer`)).status, 404);
+  assert.equal((await u.b.call('GET', `/clients/${B}/cargas/${ap.lote.id}/informe`)).status, 404);
+  const d = ok(await u.a.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`));
+  assert.deepEqual(d.deshecho, { cuentas: 0, personas: 0, filas: 2, destino: 'no_contactar' });
+  const lista = ok(await u.a.call('GET', `/clients/${A}/no-contactar`)).no_contactar;
+  assert.ok(!lista.some((x) => x.valor === 'deshacer.test' || x.valor === 'otra-mas.test'));
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [k.id])).rows[0].estado, 'excluida', 'lo hecho no vuelve atrás');
+  assert.equal((await u.a.call('POST', `/clients/${A}/cargas/${ap.lote.id}/deshacer`)).status, 400, 'una vez');
+
+  // Una lista: con una persona trabajada no se deshace; sin, salen sus cuentas y personas (también la
+  // que sumó a una cuenta que ya estaba) y la cuenta que ya estaba sigue.
+  const camp = ok(await u.bigua.call('POST', `/clients/${A}/sdr/campanas`, {
+    nombre: 'Para deshacer', tipo: 'lista', cuentas_por_dia: 1, ajustes: { propuesta: 'x', roles_objetivo: ['CEO'] } })).campana;
+  const previa = await sdr.guardarCuenta(A, { nombre: 'Ya Estaba Deshacer', dominio: 'ya-deshacer.test' }, meta);
+  const cuentasCsv = b64(Buffer.from('empresa,web,contacto,mail\nNueva Uno,nueva-uno.test,Uno,uno@nueva-uno.test\n' +
+    'Nueva Dos,nueva-dos.test,Dos,dos@nueva-dos.test\nYa Estaba Deshacer,ya-deshacer.test,Tres,tres@ya-deshacer.test\n'));
+  const cpath = `/clients/${A}/sdr/campanas/${camp.id}/cargas`;
+  const cpv = ok(await u.a.call('POST', `${cpath}/previa`, { archivo: cuentasCsv, nombre: 'cuentas.csv' }));
+  const cap = ok(await u.a.call('POST', cpath, { archivo: cuentasCsv, nombre: 'cuentas.csv', huella: cpv.huella }));
+  assert.equal(cap.lote.resumen.personas, 3);
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${camp.id}`)).campana.cuentas_de_lista, 2);
+
+  const uno = (await q(`select id from sdr.prospecto where client_id = $1 and email = 'uno@nueva-uno.test'`, [A])).rows[0];
+  await sdr.guardarProspecto(A, { id: uno.id, proximo_paso: 'enviar mail 1 cuando se apruebe' }, meta);
+  const enUso = await u.a.call('POST', `/clients/${A}/cargas/${cap.lote.id}/deshacer`);
+  assert.equal(enUso.status, 409);
+  assert.equal(enUso.body.error.code, 'carga_en_uso');
+  assert.equal((await q(`select count(*)::int as n from sdr.cuenta where lote_id = $1`, [cap.lote.id])).rows[0].n, 2, 'no tocó nada');
+
+  await q(`update sdr.prospecto set proximo_paso = null where id = $1`, [uno.id]);
+  const dd = ok(await u.a.call('POST', `/clients/${A}/cargas/${cap.lote.id}/deshacer`));
+  assert.deepEqual(dd.deshecho, { cuentas: 2, personas: 3, filas: 0, destino: 'campana' });
+  assert.equal((await q(`select count(*)::int as n from sdr.cuenta where client_id = $1 and dominio in ('nueva-uno.test', 'nueva-dos.test')`, [A])).rows[0].n, 0);
+  assert.equal((await q(`select count(*)::int as n from sdr.prospecto where client_id = $1 and email = 'tres@ya-deshacer.test'`, [A])).rows[0].n, 0);
+  assert.equal((await q(`select estado from sdr.cuenta where id = $1`, [previa.cuenta.id])).rows[0].estado, 'en_investigacion');
+  assert.equal(ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${camp.id}`)).campana.cuentas_de_lista, 0, 'una carga deshecha no cuenta');
+  const c = ok(await u.a.call('GET', `/clients/${A}/cargas`)).cargas.find((x) => x.id === cap.lote.id);
+  assert.equal(c.estado, 'deshecho');
+  assert.equal(c.deshecho_por, 'usuario@carga-a.test');
+  const act = ok(await u.bigua.call('GET', `/clients/${A}/activity`)).activity;
+  assert.ok(act.some((x) => x.op === 'admin.sdr.carga.deshacer'));
+
+  // La función no deja deshacer sin cliente fijado, ni un lote de otro cliente aunque se sepa el id.
+  await assert.rejects(store.asRole('mailgw_app', B, (c2) => c2.query(`select sdr.deshacer_lote($1, 'x') as r`, [ap.lote.id]))
+    .then(({ rows }) => { if (rows[0].r.error !== 'no_existe') throw new Error('debía ser no_existe'); throw new Error('ok'); }), /^Error: ok$/);
+  await assert.rejects(store.asRole('mailgw_portal', A, (c2) => c2.query(`select sdr.deshacer_lote($1, 'x')`, [ap.lote.id])), /permission denied/);
+});
+
+// ---------------------------------------------------------------- aislamiento
+
+test('aislamiento: un cliente no sube, no previsualiza ni ve las cargas de otro', async () => {
+  const archivo = b64(Buffer.from('empresa\nCualquiera\n'));
+  for (const [m, p] of [['POST', `/clients/${A}/no-contactar/cargas/previa`], ['POST', `/clients/${A}/no-contactar/cargas`],
+    ['GET', `/clients/${A}/cargas`]]) {
+    const r = await u.b.call(m, p, m === 'POST' ? { archivo, nombre: 'x.csv' } : undefined);
+    assert.equal(r.status, 404, `${m} ${p}: ${JSON.stringify(r.body)}`);
+  }
+  const campA = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas`)).campanas[0];
+  assert.equal((await u.b.call('POST', `/clients/${A}/sdr/campanas/${campA.id}/cargas/previa`, { archivo, nombre: 'x.csv' })).status, 404);
+  // Con el id de una campaña de A en la ruta de B, tampoco: la campaña se busca dentro del cliente.
+  assert.equal((await u.b.call('POST', `/clients/${B}/sdr/campanas/${campA.id}/cargas/previa`, { archivo, nombre: 'x.csv' })).status, 404);
+  const cruz = await store.asRole('mailgw_portal', B, (c) => c.query(`select * from sdr.lote_carga`));
+  assert.equal(cruz.rows.length, 0);
+  const cruzApp = await store.asRole('mailgw_app', B, (c) => c.query(`select * from sdr.lote_carga`));
+  assert.equal(cruzApp.rows.length, 0);
+  await assert.rejects(store.asRole('mailgw_portal', B, (c) => c.query(
+    `insert into sdr.lote_carga (client_id, destino, archivo, mapeo, por_email) values ($1, 'no_contactar', 'x', '{}', 'x')`, [A])),
+  /row-level security/);
+  await assert.rejects(store.asRole('mailgw_app', A, (c) => c.query(
+    `insert into sdr.no_contactar (client_id, valor, tipo) values ($1, 'bot', 'empresa')`, [A])), /permission denied/,
+  'los bots siguen sin poder cambiar la lista');
+});
+
+test('el cuerpo de una carga puede pasar el MB de las demás rutas, hasta su tope', async () => {
+  const grande = b64(Buffer.alloc(1_500_000, 'empresa\nUna\n'));
+  const r = await u.a.call('POST', `/clients/${A}/no-contactar/cargas/previa`, { archivo: grande, nombre: 'grande.csv' });
+  assert.notEqual(r.status, 413, JSON.stringify(r.body).slice(0, 200));
+  const otra = await u.a.call('POST', `/clients/${A}/no-contactar`, { csv: 'x'.repeat(1_200_000) });
+  assert.equal(otra.status, 413);
+});
