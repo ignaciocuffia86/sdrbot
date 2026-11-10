@@ -31,8 +31,19 @@ y se suma, en el mismo PR:
   pedir un dato en dos lugares;
 - al paso que corresponde del asistente de alta (`PASOS_ALTA` en `gateway/src/admin/servicio.mjs`,
   con su guía en `GUIA_ALTA`) o del de campaña (`PASOS_CAMPANA` en `gateway/src/admin/static/app.js`);
-- a `docs/29-asistentes-alta-y-campana.md`.
+- a `docs/29-asistentes-alta-y-campana.md`;
+- al MCP del panel, que hace desde Claude lo mismo que el panel (`docs/24` §4.4): cómo llega cada paso
+  del alta desde Claude (`ALTA_DESDE_CLAUDE` en `gateway/src/admin/servicio.mjs`: se carga con la
+  ficha de `alta_cargar`, se marca a mano, o no pasa por el chat y por qué) y la herramienta que
+  corresponda en `gateway/src/panel/mcp.mjs`. La ficha de `alta_cargar` toma sola los campos de
+  Empresa y de la campaña; lo que no deba ir (un secreto, algo que sólo se hace en el panel) se
+  anota con su motivo en `ALTA_DESDE_CLAUDE` o en `CAMPANA_FUERA_DE_LA_FICHA`.
+
+Las herramientas del MCP del panel llaman a las mismas operaciones de `gateway/src/admin/servicio.mjs`
+que las rutas del panel: un cambio en una operación (qué recibe, qué permisos pide, qué devuelve) se
+revisa también en su herramienta y en su descripción, en el mismo PR.
 
 `gateway/test/asistentes.test.mjs` falla si un campo de Empresa, una sección de la campaña o un
-faltante para activarla no está en ningún paso. Al revisar un PR ajeno que toque esto, hacer lo
-mismo antes de mergearlo.
+faltante para activarla no está en ningún paso, si un paso del alta no dice cómo llega desde Claude,
+o si un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`. Al revisar un PR ajeno
+que toque esto, hacer lo mismo antes de mergearlo.

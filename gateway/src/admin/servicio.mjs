@@ -16,7 +16,10 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
-import { diferencias, editable, FORMULARIO_EMPRESA, tieneLegado, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
+import {
+  aplicarCambiosCampana, aplicarColumnasCampana, CAMPOS_CAMPANA, CAMPOS_EMPRESA, COLUMNAS_CAMPANA, diferencias, editable,
+  FORMULARIO_EMPRESA, tieneLegado, TIPOS, tituloCampana, tituloDe,
+} from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as registro from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
@@ -1700,4 +1703,226 @@ export const asistentePasoGuardar = async ({ user, params, body }) => {
     await audit(c, user, params.client, 'admin.asistente', { ambito: params.ambito, paso: params.paso, estado: b.estado });
     return { ok: true };
   });
+};
+
+// ----- el alta desde Claude (docs/24 §4 y docs/29, «Desde Claude»): las respuestas de la llamada de
+// inicio en un solo bloque, aplicadas con las mismas operaciones que el asistente de alta.
+//
+// Qué carga Claude de cada paso del asistente. Cuando se suma o cambia un paso en PASOS_ALTA, se
+// decide acá cómo llega desde Claude (CLAUDE.md, «Formulario de configuración y alta»):
+//   datos    se carga con la ficha (en `con`, la parte de la ficha);
+//   marcar   se hace fuera del panel: se marca listo con `pasos`;
+//   fuera    no pasa por el chat (un secreto, o algo que sólo se hace en el panel), con su motivo.
+// Cualquier paso se puede dejar esperando una definición o marcar «no aplica» con `pasos`.
+// test/asistentes.test.mjs falla si un paso no está acá o si un campo de Empresa o de la campaña no
+// está en la ficha.
+export const ALTA_DESDE_CLAUDE = {
+  sdr: { como: 'datos', con: 'sdr' },
+  usuario: { como: 'datos', con: 'usuarios',
+    nota: 'El usuario se crea sin mostrar su enlace de activación en el chat: se genera en el panel (Usuarios → Nuevo enlace) y se manda por un canal seguro.' },
+  empresa: { como: 'datos', con: 'empresa' },
+  casos: { como: 'datos', con: 'empresa', nota: 'Se marca listo con pasos cuando está completo.' },
+  interesados: { como: 'datos', con: 'empresa' },
+  exclusiones: { como: 'datos', con: 'empresa y no_contactar', nota: 'Se marca listo con pasos cuando está completo.' },
+  buzones: { como: 'fuera', motivo: 'La contraseña de cada buzón es un secreto: se carga en el panel (Canales → Correo), nunca por el chat.' },
+  dominios: { como: 'fuera', motivo: 'Se verifican después de cargar los buzones; dominios_ver dice qué publicar en el DNS.' },
+  linkedin: { como: 'fuera', motivo: 'La API key de Dripify es un secreto: se carga en Administración → LinkedIn.' },
+  whatsapp: { como: 'fuera', motivo: 'Las reglas del turno y el número se cargan en Administración → WhatsApp.' },
+  crm: { como: 'fuera', motivo: 'El token de HubSpot es un secreto, y la planilla se verifica en el panel: Canales → CRM.' },
+  asci: { como: 'marcar' },
+  token: { como: 'fuera', motivo: 'El token mgw_ de los bots se ve una sola vez: se genera en Administración → Tokens.' },
+  grok: { como: 'marcar' },
+  routines: { como: 'marcar' },
+  despertadores: { como: 'fuera', motivo: 'La clave del webhook de cada routine es un secreto: se carga en Administración.' },
+};
+
+// Lo de la campaña que no va en la ficha, con su motivo (el resto de sus campos sí).
+export const CAMPANA_FUERA_DE_LA_FICHA = {
+  estado: 'La primera campaña queda en borrador: se activa en el panel o con su asistente, cuando no le falte nada.',
+  buzones: 'Los buzones se cargan con su contraseña en el panel; después se eligen en la campaña.',
+};
+
+const esquemaCampo = (c) => {
+  const desc = c.ayuda ? { description: `${c.titulo}. ${c.ayuda}` } : { description: c.titulo };
+  switch (c.tipo) {
+    case 'numero': return { type: 'integer', minimum: c.min, maximum: c.max, ...desc };
+    case 'si_no': return { type: 'boolean', ...desc };
+    case 'lista': case 'urls': case 'seleccion': case 'ids':
+      return { type: 'array', items: { type: 'string', maxLength: c.max ?? 300 }, maxItems: c.maxItems ?? 50, ...desc };
+    case 'opcion': return { enum: c.opciones, ...desc };
+    case 'fecha': return { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', ...desc };
+    default: return { type: 'string', maxLength: c.max ?? 1500, ...desc };
+  }
+};
+const objeto = (properties, required = [], extra = {}) => ({ type: 'object', properties, required, additionalProperties: false, ...extra });
+const PASO_MARCA = objeto({
+  estado: { enum: ['listo', 'no_aplica', 'esperando'] },
+  que: { type: 'string', maxLength: 500, description: 'Si espera: qué falta definir.' },
+  quien: { type: 'string', maxLength: 120, description: 'Si espera: quién lo define.' },
+}, ['estado']);
+
+// El esquema de la ficha, armado de las definiciones del panel: un campo nuevo de Empresa o de la
+// campaña aparece solo en la herramienta.
+export function esquemaFichaAlta() {
+  const empresa = Object.fromEntries(CAMPOS_EMPRESA.map((c) => [c.clave, esquemaCampo(c)]));
+  const columnas = COLUMNAS_CAMPANA.filter((c) => !CAMPANA_FUERA_DE_LA_FICHA[c.clave]);
+  const campana = objeto({
+    ...Object.fromEntries(columnas.map((c) => [c.clave, esquemaCampo(c)])),
+    ajustes: objeto(Object.fromEntries(CAMPOS_CAMPANA.map((c) => [c.clave, esquemaCampo(c)])), [],
+      { description: 'Lo de la campaña: propuesta, a quién, mensajes, respuestas. Lo que no diga, lo hereda de Empresa.' }),
+  }, ['nombre'], { description: `La primera campaña, que queda en borrador. Tipos: ${Object.entries(TIPOS).map(([k, t]) => `${k} (${t.titulo})`).join(', ')}.` });
+  const sdr = V_SDR_PROPS;
+  return objeto({
+    cliente: objeto({
+      id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,40}$', description: 'Identificador: minúsculas, números y guiones; no cambia después.' },
+      nombre: { type: 'string', minLength: 1, maxLength: 120 },
+    }, ['id', 'nombre']),
+    sdr: objeto(sdr, [], { description: 'Activar el SDR: modo, quién aprueba los mensajes, bots, zona horaria, calibración.' }),
+    empresa: objeto(empresa, [], { description: 'Los ajustes de Empresa (pasos «Quién es y cómo habla», «Casos y objeciones», «Interesados y derivación», «A quién no escribirle»).' }),
+    usuarios: { type: 'array', maxItems: 10, items: objeto({ email: { type: 'string', maxLength: 254 }, nombre: { type: 'string', minLength: 1, maxLength: 120 } }, ['email', 'nombre']),
+      description: 'Usuarios del cliente en el panel.' },
+    no_contactar: { type: 'array', maxItems: 500, items: objeto({ valor: { type: 'string', maxLength: 300 }, motivo: { type: 'string', maxLength: 200 } }, ['valor']),
+      description: 'Dominios, mails o empresas por nombre a los que no se les escribe nunca.' },
+    campana: campana,
+    pasos: objeto(Object.fromEntries(PASOS_ALTA.map((p) => [p.clave, PASO_MARCA])), [],
+      { description: 'Para marcar un paso: listo (sólo los que se hacen a mano), no_aplica, o esperando una definición (con qué falta y quién lo define).' }),
+    campos_pendientes: objeto(Object.fromEntries(CAMPOS_EMPRESA.map((c) => [c.clave, objeto({ que: { type: 'string', maxLength: 500 }, quien: { type: 'string', maxLength: 120 } }, ['que'])])), [],
+      { description: 'Campos de Empresa que quedan esperando una definición.' }),
+  }, ['cliente']);
+}
+const V_SDR_PROPS = {
+  canal: { enum: ['estable', 'canario'] },
+  calibracion_mails: { type: 'integer', minimum: 0, maximum: 500 },
+  bots_activos: { type: 'array', uniqueItems: true, minItems: 1, items: { enum: ['orquestador', 'prospector', 'seguimiento', 'whatsapp'] } },
+  zona_horaria: { type: 'string', maxLength: 64 },
+  modo: { enum: ['operado', 'autogestionado'] },
+  tope_cuentas_dia: { type: ['integer', 'null'], minimum: 0, maximum: 100 },
+  aprueba: { enum: ['bigua', 'cliente_y_bigua', 'cliente'] },
+};
+let validarFicha;
+
+// Revisa la ficha contra lo que hay y arma el plan, sin escribir nada. Devuelve { plan, errores }.
+async function planDelAlta(user, f) {
+  const plan = [];
+  const errores = [];
+  const prueba = (que, fn) => { try { return fn(); } catch (e) { errores.push(`${que}: ${e.message}`); return undefined; } };
+  const id = f.cliente.id;
+  const { existe, cfg, nombre, usuarios, campanasExistentes } = await asOwner(async (c) => {
+    const cl = (await c.query(`select name from mailgw.client where id = $1`, [id])).rows[0];
+    return {
+      existe: Boolean(cl), nombre: cl?.name,
+      cfg: (await c.query(`select * from sdr.cliente_config where client_id = $1`, [id])).rows[0] ?? null,
+      usuarios: (await c.query(`select email, client_id from mailgw.admin_user where email = any($1::text[])`,
+        [(f.usuarios ?? []).map((u) => String(u.email).trim().toLowerCase())])).rows,
+      campanasExistentes: (await c.query(`select nombre from sdr.campana where client_id = $1`, [id])).rows.map((r) => r.nombre),
+    };
+  });
+  if (!existe) plan.push({ paso: 'cliente', que: `Crear el cliente ${id} («${f.cliente.nombre}»).` });
+  else if (nombre !== f.cliente.nombre) plan.push({ paso: 'cliente', que: `Ya existe como «${nombre}»: el nombre no se cambia desde acá.`, sin_cambios: true });
+  else plan.push({ paso: 'cliente', que: 'Ya existe.', sin_cambios: true });
+
+  if (f.sdr || !cfg) {
+    const b = prueba('Activar el SDR', () => { const x = V.sdrConfig(f.sdr && Object.keys(f.sdr).length ? f.sdr : { canal: 'estable' }); if (x.zona_horaria) checkTimezone(x.zona_horaria); return x; });
+    if (b) plan.push({ paso: 'sdr', que: cfg ? `Cambiar la configuración del SDR: ${Object.keys(b).join(', ')}.` : `Activar el SDR${f.sdr ? ` (${Object.entries(b).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join('+') : v}`).join(', ')})` : ' con los valores por defecto'}.` });
+  }
+  let empresaNueva = cfg?.ajustes ?? {};
+  if (f.empresa && Object.keys(f.empresa).length) {
+    const nuevo = prueba('Empresa', () => FORMULARIO_EMPRESA.aplicar(cfg?.ajustes ?? {}, f.empresa, { esBigua: true, autogestion: true }));
+    if (nuevo) {
+      empresaNueva = nuevo;
+      const cambios = diferencias(cfg?.ajustes ?? {}, nuevo);
+      plan.push(cambios.length ? { paso: 'empresa', que: `Empresa: ${cambios.map(tituloDe).join(', ')}.` } : { paso: 'empresa', que: 'Empresa: sin cambios.', sin_cambios: true });
+    }
+  }
+  for (const u of f.usuarios ?? []) {
+    const b = prueba(`Usuario ${u.email}`, () => V.user({ email: u.email.trim().toLowerCase(), name: u.nombre }));
+    if (!b) continue;
+    const ya = usuarios.find((x) => x.email === b.email);
+    if (ya && ya.client_id !== id) errores.push(`Usuario ${b.email}: ya existe en otro cliente o en el equipo de Biguá.`);
+    else plan.push(ya ? { paso: 'usuario', que: `${b.email} ya existe.`, sin_cambios: true } : { paso: 'usuario', que: `Crear el usuario ${b.email}.` });
+  }
+  const nc = (f.no_contactar ?? []).filter((x) => prueba(`No contactar «${x.valor}»`, () => {
+    if (!noContactar.normalizar(x.valor, { empresa: true })) throw new Error('no es un dominio, un mail ni el nombre de una empresa.');
+    return true;
+  }));
+  if (nc.length) plan.push({ paso: 'exclusiones', que: `No contactar: ${nc.length} (los que ya estén se dejan).` });
+  if (f.campana) {
+    const { ajustes: aj = {}, ...cols } = f.campana;
+    if (campanasExistentes.includes(cols.nombre)) {
+      plan.push({ paso: 'campana', que: `Ya hay una campaña «${cols.nombre}»: no se crea otra.`, sin_cambios: true });
+    } else {
+      const permiso = { esBigua: true, autogestion: true };
+      const ok = prueba('Campaña', () => {
+        aplicarColumnasCampana(null, { tipo: 'prospeccion', ...cols }, permiso, { tope: f.sdr?.tope_cuentas_dia ?? cfg?.tope_cuentas_dia ?? null });
+        aplicarCambiosCampana({}, aj, permiso, { empresa: empresaNueva });
+        return true;
+      });
+      if (ok) plan.push({ paso: 'campana', que: `Crear la campaña «${cols.nombre}» (${TIPOS[cols.tipo ?? 'prospeccion'].titulo}) en borrador.` });
+    }
+  }
+  for (const [clave, m] of Object.entries(f.pasos ?? {})) {
+    const p = PASOS_ALTA.find((x) => x.clave === clave);
+    if (m.estado === 'listo' && !p.manual) { errores.push(`Paso «${p.titulo}»: queda listo solo, cuando los datos están completos; no se marca a mano.`); continue; }
+    if (m.estado === 'esperando' && !m.que?.trim()) { errores.push(`Paso «${p.titulo}»: falta qué definir.`); continue; }
+    plan.push({ paso: clave, que: `«${p.titulo}»: ${m.estado === 'listo' ? 'listo' : m.estado === 'no_aplica' ? 'no aplica' : `espera: ${m.que}${m.quien ? ` (lo define ${m.quien})` : ''}`}.` });
+  }
+  for (const [clave, m] of Object.entries(f.campos_pendientes ?? {})) {
+    plan.push({ paso: 'campo', que: `«${tituloDe(clave)}» espera: ${m.que}${m.quien ? ` (lo define ${m.quien})` : ''}.` });
+  }
+  return { plan, errores, existe, cfg };
+}
+
+export const altaCargar = async ({ user, body }) => {
+  requireBigua(user);
+  validarFicha ??= validator(objeto({ ficha: esquemaFichaAlta(), confirmar: { type: 'boolean', default: false } }, ['ficha']));
+  const { ficha: f, confirmar } = validarFicha(body ?? {});
+  const { plan, errores, existe, cfg } = await planDelAlta(user, f);
+  if (errores.length) return { aplicado: false, errores, plan };
+  if (!confirmar) return { vista_previa: true, plan, confirmar: 'Así queda. Para cargarlo, repetí la llamada con confirmar: true.' };
+
+  const id = f.cliente.id;
+  const params = { client: id };
+  const hecho = [];
+  try {
+    if (!existe) { await clienteCrear({ user, body: { id, name: f.cliente.nombre } }); hecho.push('cliente'); }
+    if (f.sdr || !cfg) { await sdrConfig({ user, params, body: f.sdr && Object.keys(f.sdr).length ? f.sdr : { canal: 'estable' } }); hecho.push('sdr'); }
+    if (f.empresa && Object.keys(f.empresa).length) {
+      const r = await guardarAjustes(user, id, f.empresa, 'Cargado desde Claude (alta)');
+      if (r.cambios.length) hecho.push('empresa');
+    }
+    for (const u of f.usuarios ?? []) {
+      try { await usuarioClienteCrear({ user, params, body: { email: u.email.trim().toLowerCase(), name: u.nombre } }); hecho.push(`usuario ${u.email}`); }
+      catch (e) { if (e.code !== 'conflict') throw e; }
+    }
+    if (f.no_contactar?.length) {
+      for (const x of f.no_contactar) await noContactarAgregar({ user, params, body: { valor: x.valor, ...(x.motivo ? { motivo: x.motivo } : {}) } });
+      hecho.push('no_contactar');
+    }
+    if (f.campana && plan.some((p) => p.paso === 'campana' && !p.sin_cambios)) {
+      const { ajustes: aj = {}, ...cols } = f.campana;
+      await campanaCrear({ user, params, body: { tipo: 'prospeccion', ...cols, ajustes: aj, nota: 'Creada desde Claude (alta)' } });
+      hecho.push('campana');
+    }
+    for (const [clave, m] of Object.entries(f.pasos ?? {})) {
+      await asistentePasoGuardar({ user, params: { client: id, ambito: 'alta', paso: clave }, body: m });
+    }
+    for (const [clave, m] of Object.entries(f.campos_pendientes ?? {})) {
+      await asistentePasoGuardar({ user, params: { client: id, ambito: 'alta', paso: `campo:${clave}` }, body: { estado: 'esperando', ...m } });
+    }
+  } catch (e) {
+    // Lo hecho queda hecho: volver a llamar con la misma ficha completa lo que falta sin duplicar.
+    if (e instanceof GatewayError) {
+      throw new GatewayError(e.code, `${e.message} Quedó cargado: ${hecho.join(', ') || 'nada'}. Corregí y volvé a llamar: lo hecho no se repite.`, e.status, e.extra);
+    }
+    throw e;
+  }
+  const alta = await altaVer({ user, params });
+  return {
+    aplicado: true, hecho,
+    alta: { listos: alta.listos, total: alta.total, esperando: alta.esperando,
+      pasos: alta.pasos.map(({ clave, titulo, estado, falta, que, quien }) => ({ clave, titulo, estado, falta, que, quien })) },
+    fuera_del_chat: alta.pasos.filter((p) => !['listo', 'no_aplica'].includes(p.estado) && ALTA_DESDE_CLAUDE[p.clave]?.como === 'fuera')
+      .map((p) => ({ paso: p.titulo, motivo: ALTA_DESDE_CLAUDE[p.clave].motivo })),
+    notas: hecho.some((h) => h.startsWith('usuario')) ? [ALTA_DESDE_CLAUDE.usuario.nota] : [],
+  };
 };
