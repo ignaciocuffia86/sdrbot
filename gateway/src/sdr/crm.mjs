@@ -114,7 +114,9 @@ function problemasDeMapeo(cx, props) {
     }
     return null;
   };
-  if (cx.origen_campo) revisar(cx.origen_campo, cx.origen_valor, 'Origen');
+  if (cx.origen_campo && MINIMO_PROPS.includes(cx.origen_campo)) {
+    out.push(`Origen: «${cx.origen_campo}» lo completa la carga con los datos del prospecto; elegí otra propiedad.`);
+  } else if (cx.origen_campo) revisar(cx.origen_campo, cx.origen_valor, 'Origen');
   for (const [k, v] of Object.entries(cx.campos_fijos ?? {})) {
     if (MINIMO_PROPS.includes(k)) out.push(`Campos fijos: «${k}» ya lo completa la carga.`);
     else revisar(k, v, 'Campos fijos');
@@ -136,9 +138,9 @@ async function conexion(c, clientId) {
   return rows[0];
 }
 
-const hsDe = (cx, fetchImpl) => {
+const hsDe = (cx, fetchImpl, hasta) => {
   if (!cx.token_enc) throw errorsCrm.sinToken();
-  return hubspot.cliente(decryptSecret(cx.token_enc, aadCrm(cx.client_id)), { fetchImpl });
+  return hubspot.cliente(decryptSecret(cx.token_enc, aadCrm(cx.client_id)), { fetchImpl, hasta });
 };
 
 // El número de portal sólo sirve para armar el enlace al contacto: si la app privada no puede leer
@@ -330,9 +332,12 @@ export function vencimientoTarea(desde = new Date()) {
 // El mínimo, armado a partir del registro. Es lo mismo que muestra la vista previa.
 export function armar(d, cx, { ahora = new Date() } = {}) {
   const { firstname, lastname } = partirNombre(d.p.nombre);
-  const contacto = { email: d.p.email ?? null, firstname, lastname, jobtitle: d.p.cargo ?? '', company: d.cuenta?.nombre ?? '' };
-  if (cx.origen_campo) contacto[cx.origen_campo] = cx.origen_valor;
-  for (const [k, v] of Object.entries(cx.campos_fijos ?? {})) contacto[k] = String(v);
+  // El origen y los campos fijos van primero: nunca pisan el email, el nombre, el cargo ni la
+  // empresa del prospecto, aunque la configuración guardada los nombrara.
+  const contacto = {};
+  for (const [k, v] of Object.entries(cx.campos_fijos ?? {})) if (!MINIMO_PROPS.includes(k)) contacto[k] = String(v);
+  if (cx.origen_campo && !MINIMO_PROPS.includes(cx.origen_campo)) contacto[cx.origen_campo] = cx.origen_valor;
+  Object.assign(contacto, { email: d.p.email ?? null, firstname, lastname, jobtitle: d.p.cargo ?? '', company: d.cuenta?.nombre ?? '' });
   for (const k of Object.keys(contacto)) if (contacto[k] === '' || contacto[k] === null) delete contacto[k];
 
   const canal = CANALES[d.respuesta?.canal ?? d.positivo?.canal] ?? d.respuesta?.canal ?? d.positivo?.canal ?? 'otro canal';
@@ -397,7 +402,8 @@ const ejemplo = (clientId) => ({
 // Una vuelta del reloj: toma cargas de a una mientras haya tiempo.
 export async function procesarCola({ hasta = Date.now() + 15_000, fetchImpl } = {}) {
   const hechas = [];
-  for (let i = 0; i < POR_VUELTA && Date.now() < hasta; i++) {
+  // Una carga necesita varios pedidos: con menos de 3 segundos no se empieza otra.
+  for (let i = 0; i < POR_VUELTA && hasta - Date.now() > 3_000; i++) {
     const { rows } = await asOwner((c) => c.query(
       `update sdr.crm_carga k set estado = 'en_curso', tomada_at = now(), intentos = k.intentos + 1
         where k.id = (
@@ -409,7 +415,7 @@ export async function procesarCola({ hasta = Date.now() + 15_000, fetchImpl } = 
         returning k.id, k.client_id`, [TOMADA_VENCE_MIN]));
     if (!rows.length) break;
     const { id, client_id: clientId } = rows[0];
-    hechas.push({ cliente: clientId, carga: Number(id), ...(await cargarUna(clientId, Number(id), { fetchImpl })) });
+    hechas.push({ cliente: clientId, carga: Number(id), ...(await cargarUna(clientId, Number(id), { fetchImpl, hasta })) });
   }
   return hechas;
 }
@@ -422,7 +428,7 @@ async function guardarPaso(clientId, id, ids, cambio) {
 
 const vacio = (v) => v === null || v === undefined || String(v).trim() === '';
 
-export async function cargarUna(clientId, id, { fetchImpl } = {}) {
+export async function cargarUna(clientId, id, { fetchImpl, hasta } = {}) {
   let carga;
   let cx;
   let d;
@@ -446,7 +452,7 @@ export async function cargarUna(clientId, id, { fetchImpl } = {}) {
         '(registro_guardar_prospecto) o cargalo a mano, y reintentá.');
     }
     if (d.p.estado === 'baja') throw new Bloqueo('El prospecto pidió la baja: no se carga.');
-    const hs = hsDe(cx, fetchImpl);
+    const hs = hsDe(cx, fetchImpl, hasta);
     const m = armar(d, cx);
     const ids = { ...carga.crm_ids };
 
@@ -529,6 +535,8 @@ async function devolver(clientId, id, minutos, motivo) {
 
 async function fallar(clientId, id, e, d) {
   const msg = String(e?.message ?? e).slice(0, 1000);
+  // Se terminó el tiempo de la vuelta: lo hecho quedó guardado y sigue en la próxima, sin gastar intento.
+  if (e instanceof hubspot.CrmError && e.tipo === 'tiempo') return devolver(clientId, id, 0, msg);
   if (e instanceof hubspot.CrmError && ['credencial', 'permisos'].includes(e.tipo)) {
     await anotar(clientId, { estado: 'credencial_vencida', ultimo_error: msg.slice(0, 500) });
     return devolver(clientId, id, 0, msg);

@@ -28,7 +28,7 @@ const P = {};
 function hubspotFalso() {
   const s = {
     token: TOKEN, pedidos: [], contactos: new Map(), empresas: new Map(), notas: [], tareas: [], asociaciones: [],
-    proximo: 1000, buscadorAtrasado: false, fallas: [], // [{ ruta: RegExp, status, veces }]
+    proximo: 1000, buscadorAtrasado: false, demora: 0, fallas: [], // [{ ruta: RegExp, status, veces }]
     duenos: [{ id: '101', email: 'vendedor@cliente.test', firstName: 'Vera', lastName: 'Vendedora' }, { id: '202', email: 'otra@cliente.test', firstName: 'Otra' }],
     propiedades: [
       { name: 'email', label: 'Email', type: 'string' }, { name: 'firstname', label: 'Nombre', type: 'string' },
@@ -55,6 +55,8 @@ function hubspotFalso() {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     s.pedidos.push({ method: req.method, path: p, body });
+    if (s.demora) await new Promise((r) => { setTimeout(r, s.demora); });
+    if (res.destroyed) return;
     const json = (status, b) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(b === undefined ? '' : JSON.stringify(b)); };
     if (req.headers.authorization !== `Bearer ${s.token}`) {
       return json(401, { status: 'error', category: 'INVALID_AUTHENTICATION', message: 'Authentication credentials not found.' });
@@ -221,6 +223,14 @@ test('conectar: el token queda cifrado, el origen y el dueño se validan contra 
   await assert.rejects(crm.configurar(C, { dueno_defecto: '999' }), /No hay un dueño con id 999/);
   await assert.rejects(crm.configurar(C, { campos_fijos: { hs_calculada: 'x' } }), /sólo lectura/);
   await assert.rejects(crm.configurar(C, { campos_fijos: { email: 'x' } }), /ya lo completa la carga/);
+  // El origen no puede ser una propiedad del mínimo: pisaría el email (o el nombre) del prospecto.
+  await assert.rejects(crm.configurar(C, { origen_campo: 'email', origen_valor: 'otro@ejemplo.com' }), /lo completa la carga/);
+  // Y aunque una configuración vieja lo tuviera, armar no deja que pise el email.
+  const a = crm.armar({ cliente: 'X', p: { id: 'p', nombre: 'Ana', email: 'ana@x.test' }, cuenta: null },
+    { origen_campo: 'email', origen_valor: 'otro@ejemplo.com', campos_fijos: { firstname: 'Pisado', segmento: 'pyme' } });
+  assert.equal(a.contacto.email, 'ana@x.test');
+  assert.equal(a.contacto.firstname, 'Ana');
+  assert.equal(a.contacto.segmento, 'pyme');
   const ok1 = await crm.configurar(C, { origen_campo: 'origen_lead', origen_valor: 'sdr_bigua', dueno_defecto: '101' });
   assert.equal(ok1.portal_id, '4242');
 
@@ -427,6 +437,26 @@ test('sin email se bloquea sin tocar HubSpot; después de todos los reintentos q
   assert.equal(otra.carga.estado, 'pendiente');
   await crm.procesarCola();
   assert.equal((await carga(x.p.id)).estado, 'hecha');
+});
+
+test('HubSpot lento: la vuelta respeta su tiempo, la carga sigue en la próxima sin gastar intento ni duplicar', async () => {
+  const x = await positivo('lenta');
+  await aprobar(x.ap);
+  hs.s.demora = 2_500;
+  const inicio = Date.now();
+  const [v] = await crm.procesarCola({ hasta: inicio + 4_500 });
+  const tardo = Date.now() - inicio;
+  hs.s.demora = 0;
+  assert.ok(tardo < 5_000, `la vuelta tardó ${tardo} ms`);
+  assert.equal(v.estado, 'pendiente');
+  let k = await carga(x.p.id);
+  assert.equal(k.intentos, 0);
+  assert.match(k.error, /tiempo de esta vuelta/);
+  assert.deepEqual(await crm.procesarCola({ hasta: Date.now() + 2_000 }), [], 'con menos de 3 segundos no empieza otra');
+  await crm.procesarCola();
+  k = await carga(x.p.id);
+  assert.equal(k.estado, 'hecha', k.error);
+  assert.equal([...hs.s.contactos.values()].filter((c) => c.properties.email === 'lenta@empresa-lenta.test').length, 1);
 });
 
 test('tope por día: lo que pasa del tope espera sin gastar intentos', async () => {

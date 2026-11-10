@@ -10,6 +10,7 @@
 //   rechazo     400/422: el dato no entra (propiedad o valor que no existen). La carga se bloquea.
 //   conflicto   409: el contacto ya existe (HubSpot dice cuál, en existe_id).
 //   no_existe   404.
+//   tiempo      se terminó el tiempo de esta vuelta del reloj antes de pedir (con `hasta`).
 
 const base = () => (process.env.MAILGW_HUBSPOT_URL || 'https://api.hubapi.com').replace(/\/+$/, '');
 
@@ -41,17 +42,25 @@ function errorDe(status, json, texto) {
   return new CrmError('rechazo', `HubSpot rechazó el dato (HTTP ${status}): ${msg}`);
 }
 
-export function cliente(token, { fetchImpl = fetch } = {}) {
+// Con `hasta` (un instante en ms), ningún pedido pasa de ese límite: el reloj tiene un tiempo
+// fijo por vuelta y una carga lenta no puede comerse el de la lectura de los buzones.
+export function cliente(token, { fetchImpl = fetch, hasta = Infinity } = {}) {
   async function api(method, path, body) {
+    const queda = hasta - Date.now();
+    if (queda < 1_000) throw new CrmError('tiempo', 'Se terminó el tiempo de esta vuelta: la carga sigue en la próxima.');
+    const plazo = Math.min(20_000, queda);
     let res;
     try {
       res = await fetchImpl(`${base()}${path}`, {
         method,
         headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...(body ? { 'content-type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(plazo),
       });
     } catch (e) {
+      if (e.name === 'TimeoutError' && plazo < 20_000) {
+        throw new CrmError('tiempo', 'Se terminó el tiempo de esta vuelta esperando a HubSpot: la carga sigue en la próxima.');
+      }
       throw new CrmError('caido', e.name === 'TimeoutError' ? 'HubSpot no contestó en 20 segundos.' : `No se pudo llegar a HubSpot: ${e.message}`);
     }
     const texto = await res.text();
