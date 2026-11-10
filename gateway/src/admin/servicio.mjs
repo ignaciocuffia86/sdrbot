@@ -26,6 +26,7 @@ import { configurarDespertador, verDespertador, BOTS_CON_AVISO } from '../sdr/co
 import * as dripify from '../sdr/dripify.mjs';
 import * as crm from '../sdr/crm.mjs';
 import * as campanas from '../sdr/campanas.mjs';
+import * as carga from '../sdr/carga.mjs';
 import { createUser, resetSetup, revocarConexiones, tomarUsuario } from './auth.mjs';
 
 const ajv = new Ajv({ allErrors: true, useDefaults: true, strict: false });
@@ -135,6 +136,15 @@ const V = {
       tope_dia: { type: 'integer', minimum: 1, maximum: 500 },
       aprobar_primero: { type: 'boolean' },
       reanudar: { type: 'boolean' },
+    } }),
+  carga: validator({ type: 'object', required: ['archivo', 'nombre'], additionalProperties: false,
+    properties: {
+      // El archivo en base64: hasta 3 MB (carga.MAX_BYTES), que en base64 son unos 4 millones de caracteres.
+      archivo: { type: 'string', minLength: 1, maxLength: 4_200_000 },
+      nombre: { type: 'string', minLength: 1, maxLength: 300 },
+      hoja: { type: 'string', maxLength: 200 },
+      mapeo: { type: 'object', additionalProperties: { type: ['integer', 'null'] } },
+      huella: { type: 'string', maxLength: 64 },
     } }),
   noContactarBaja: validator({ type: 'object', required: ['valores'], additionalProperties: false,
     properties: { valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'string', maxLength: 300 } } } }),
@@ -851,7 +861,7 @@ const OPS_PANEL = {
   'admin.sdr.crm': 'conexión con el CRM', 'admin.sdr.crm.cargar': 'carga en el CRM pedida', 'admin.sdr.crm.reintentar': 'carga en el CRM reintentada',
   'admin.token.create': 'token generado', 'admin.token.revoke': 'token revocado',
   'admin.sdr.campana.crear': 'campaña creada', 'admin.sdr.campana.guardar': 'campaña cambiada',
-  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.conexion.revocar': 'conexión de Claude desconectada',
+  'admin.sdr.campana.duplicar': 'campaña duplicada', 'admin.sdr.carga': 'carga de un archivo', 'admin.conexion.revocar': 'conexión de Claude desconectada',
 };
 
 export const monitorVer = async ({ user, params }) => {
@@ -971,6 +981,172 @@ export const noContactarQuitar = async ({ user, params, body }) => {
     return { quitados: rowCount, ...(await listaNoContactar(c, params.client)) };
   });
 };
+
+// ----- carga por archivo (docs/26): la lista de no contactar o las semillas de una campaña
+
+const nombreArchivo = (n) => String(n).split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200) || 'archivo';
+const MAX_FILAS_VISTA = 200;
+
+// Lo que el panel muestra de la lectura: hojas, encabezados, mapeo y la muestra (sin las filas).
+const lectura = (prep) => ({ hojas: prep.hojas, hoja: prep.hoja, encabezados: prep.encabezados, mapeo: prep.mapeo,
+  campos: prep.campos, muestra: prep.muestra, huella: prep.huella });
+
+const invalidasDe = (filas) => filas.filter((f) => f.error).slice(0, 50).map((f) => ({ renglon: f.renglon, motivo: f.error }));
+const avisosDe = (filas) => filas.filter((f) => f.avisos?.length).slice(0, 50).map((f) => ({ renglon: f.renglon, avisos: f.avisos }));
+
+function exigirHuella(b, prep) {
+  if (b.huella !== prep.huella) {
+    throw new GatewayError('carga_cambio', 'El archivo, la hoja o las columnas cambiaron desde la vista previa: volvé a verla antes de confirmar.', 409);
+  }
+}
+
+async function noContactarDeArchivo(user, clientId, b) {
+  const prep = carga.prepararFilas({ ...b, destino: 'no_contactar' });
+  const plan = await scoped(user, clientId, async (c) => {
+    await clienteExiste(c, clientId);
+    return carga.planNoContactar(c, clientId, prep.filas);
+  });
+  const porRenglon = new Map();
+  for (const e of plan.entradas) {
+    const x = porRenglon.get(e.renglon) ?? [];
+    x.push(e);
+    porRenglon.set(e.renglon, x);
+  }
+  const filas = prep.filas.map((f) => {
+    const es = porRenglon.get(f.renglon) ?? [];
+    const sinClave = plan.sinClave.some((x) => x.renglon === f.renglon);
+    return { ...f, error: f.error ?? (sinClave && !es.length ? 'el nombre de la empresa queda vacío sin la forma societaria' : undefined),
+      entradas: es.map((e) => ({ tipo: e.tipo, valor: e.tipo === 'empresa' ? e.nombre : e.valor, resultado: e.resultado })) };
+  });
+  const cuenta = (r) => plan.entradas.filter((e) => e.resultado === r).length;
+  const totales = {
+    filas: filas.length, invalidas: filas.filter((f) => f.error).length,
+    nuevas: plan.nuevas.length, ya_estaban: cuenta('ya_estaba'), repetidas: cuenta('repetida'),
+    por_dominio: plan.nuevas.filter((e) => e.tipo === 'dominio').length,
+    por_nombre: plan.nuevas.filter((e) => e.tipo === 'empresa').length,
+    mails: plan.nuevas.filter((e) => e.tipo === 'email').length,
+  };
+  return { prep, plan, filas, totales };
+}
+
+export const noContactarCargaPrevia = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep, plan, filas, totales } = await noContactarDeArchivo(user, params.client, b);
+  const efecto = await registro.aplicarNoContactar(params.client, plan.nuevas, { simular: true });
+  return { ...lectura(prep), totales, efecto, invalidas: invalidasDe(filas), avisos: avisosDe(filas),
+    filas: filas.slice(0, MAX_FILAS_VISTA).map((f) => ({ renglon: f.renglon, empresa: f.empresa, motivo: f.motivo ?? null,
+      error: f.error ?? null, entradas: f.entradas })) };
+};
+
+export const noContactarCargaAplicar = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep, plan, totales } = await noContactarDeArchivo(user, params.client, b);
+  exigirHuella(b, prep);
+  if (!plan.nuevas.length && !totales.ya_estaban) throw errors.invalid('El archivo no tiene ninguna fila para cargar.');
+  const r = await scoped(user, params.client, async (c) => {
+    const { rows: [lote] } = await c.query(
+      `insert into sdr.lote_carga (client_id, destino, archivo, hoja, mapeo, resumen, por_email)
+       values ($1, 'no_contactar', $2, $3, $4, $5, $6) returning id, archivo, creado_at`,
+      [params.client, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, totales, user.email]);
+    const nuevas = await carga.insertarEnTandas(plan.nuevas, (t) => insertarNoContactar(c, params.client, t, user.email, lote.id));
+    // Entre la vista previa y acá otra persona pudo cargar la misma fila: el resumen dice lo que entró.
+    const resumen = { ...totales, nuevas: nuevas.length, ya_estaban: totales.ya_estaban + (plan.nuevas.length - nuevas.length) };
+    await c.query(`update sdr.lote_carga set resumen = $3 where client_id = $1 and id = $2`, [params.client, lote.id, resumen]);
+    await audit(c, user, params.client, 'admin.sdr.carga', { destino: 'no_contactar', lote: lote.id, ...resumen });
+    return { lote: { ...lote, resumen }, nuevas };
+  });
+  const efecto = await despuesDeNoContactar(user, params.client, r.nuevas);
+  return { lote: r.lote, efecto, ...(await scoped(user, params.client, (c) => listaNoContactar(c, params.client))) };
+};
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function campanaDeCarga(c, clientId, id) {
+  if (!UUID.test(String(id))) throw notFound('No existe esa campaña.');
+  const { rows } = await c.query(`select id, nombre, estado from sdr.campana where client_id = $1 and id = $2`, [clientId, id]);
+  if (!rows.length) throw notFound('No existe esa campaña.');
+  if (rows[0].estado === 'terminada') throw errors.invalid('La campaña está terminada: no toma cuentas.');
+  return rows[0];
+}
+
+async function semillasDeArchivo(user, clientId, campanaId, b) {
+  await scoped(user, clientId, (c) => clienteExiste(c, clientId));
+  const prep = carga.prepararFilas({ ...b, destino: 'campana', campanaId });
+  return { prep };
+}
+
+const totalesSemillas = (filas) => {
+  const r = carga.resumirFilas(filas);
+  return { filas: filas.length, invalidas: r.invalida ?? 0, nuevas: r.nueva ?? 0, ya_en_registro: r.ya_en_registro ?? 0,
+    ya_eran_semilla: r.ya_era_semilla ?? 0, repetidas: r.repetida ?? 0,
+    sin_dominio: filas.filter((f) => f.resultado === 'nueva' && !f.dominio).length,
+    en_no_contactar: filas.filter((f) => f.en_no_contactar).length };
+};
+
+export const campanaCargaPrevia = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep } = await semillasDeArchivo(user, params.client, params.id, b);
+  const campana = await asRole('mailgw_app', params.client, async (c) => {
+    const k = await campanaDeCarga(c, params.client, params.id);
+    await carga.planSemillas(c, params.client, k, prep.filas);
+    return k;
+  });
+  const filas = prep.filas;
+  return { ...lectura(prep), campana: { id: campana.id, nombre: campana.nombre }, uso: 'semilla', totales: totalesSemillas(filas),
+    invalidas: invalidasDe(filas), avisos: avisosDe(filas),
+    filas: filas.slice(0, MAX_FILAS_VISTA).map((f) => ({ renglon: f.renglon, empresa: f.empresa, dominio: f.dominio ?? null,
+      vertical: f.vertical ?? null, error: f.error ?? null, resultado: f.resultado ?? null, existente: f.existente ?? null,
+      en_no_contactar: Boolean(f.en_no_contactar) })) };
+};
+
+export const campanaCargaAplicar = async ({ user, params, body }) => {
+  const b = V.carga(body);
+  const { prep } = await semillasDeArchivo(user, params.client, params.id, b);
+  exigirHuella(b, prep);
+  // Las cuentas son del registro: se escriben con el rol de la aplicación y el cliente fijado, ya
+  // comprobado que la persona ve este cliente. El lote nace en la misma transacción.
+  const r = await asRole('mailgw_app', params.client, async (c) => {
+    const k = await campanaDeCarga(c, params.client, params.id);
+    const { nuevas } = await carga.planSemillas(c, params.client, k, prep.filas);
+    if (!nuevas.length) throw errors.invalid('No hay cuentas nuevas para cargar: todas ya estaban en el registro o tienen errores.');
+    const totales = totalesSemillas(prep.filas);
+    const { rows: [lote] } = await c.query(
+      `insert into sdr.lote_carga (client_id, destino, campana_id, archivo, hoja, mapeo, resumen, por_email)
+       values ($1, 'campana', $2, $3, $4, $5, $6, $7) returning id, archivo, creado_at`,
+      [params.client, k.id, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, totales, user.email]);
+    const motivo = `Semilla del ICP de la campaña ${citaCliente(k.nombre, 120)}: no se le escribe.`;
+    const creadas = await carga.insertarEnTandas(nuevas, async (t) => (await c.query(
+      `insert into sdr.cuenta (client_id, nombre, dominio, pais, vertical, tamano, tesis, estado, estado_motivo, campana_id,
+                               origen, uso, lote_id, datos_origen, prioridad)
+       select $1, x.nombre, x.dominio, x.pais, x.vertical, x.tamano, x.tesis, 'excluida', $2, $3, 'archivo', 'semilla', $4,
+              coalesce(x.datos_origen, '{}'::jsonb), x.prioridad
+         from jsonb_to_recordset($5::jsonb) as x(nombre text, dominio text, pais text, vertical text, tamano text, tesis text,
+                                                 datos_origen jsonb, prioridad int)
+       on conflict do nothing returning id`,
+      [params.client, motivo, k.id, lote.id, JSON.stringify(t.map((f) => ({ nombre: f.empresa, dominio: f.dominio ?? null,
+        pais: f.pais, vertical: f.vertical, tamano: f.tamano, tesis: f.nota, datos_origen: f.datos_origen, prioridad: f.prioridad })))])).rows);
+    const resumen = { ...totales, nuevas: creadas.length, ya_en_registro: totales.ya_en_registro + (nuevas.length - creadas.length) };
+    await c.query(`update sdr.lote_carga set resumen = $3 where client_id = $1 and id = $2`, [params.client, lote.id, resumen]);
+    await registro.insertarEvento(c, params.client, { tipo: 'nota',
+      datos: { carga: lote.id, campana: k.id, semillas: creadas.length, archivo: lote.archivo } }, { bot: 'panel', tarea: 'carga' });
+    return { lote: { ...lote, resumen }, campana: k };
+  });
+  await scoped(user, params.client, (c) => audit(c, user, params.client, 'admin.sdr.carga',
+    { destino: 'campana', campana: r.campana.id, lote: r.lote.id, ...r.lote.resumen }));
+  await avisarCampana(user, params.client, r.campana.id,
+    `El cliente cargó ${r.lote.resumen.nuevas} semilla(s) del ICP en la campaña ${citaCliente(r.campana.nombre)} desde un archivo. ` +
+    'Son cuentas modelo: quedan excluidas en el registro y no se les escribe.');
+  return { lote: r.lote };
+};
+
+export const cargasListar = async ({ user, params }) => scoped(user, params.client, async (c) => {
+  await clienteExiste(c, params.client);
+  const { rows } = await c.query(
+    `select l.id, l.destino, l.campana_id, k.nombre as campana, l.archivo, l.hoja, l.resumen, l.estado, l.por_email, l.creado_at
+       from sdr.lote_carga l left join sdr.campana k on k.id = l.campana_id and k.client_id = l.client_id
+      where l.client_id = $1 order by l.creado_at desc limit 100`, [params.client]);
+  return { cargas: rows };
+});
 
 // ----- resumen: lo que necesita atención, para la primera pantalla del cliente
 

@@ -78,16 +78,18 @@ alter table sdr.no_contactar add column if not exists lote_id uuid references sd
 
 alter table sdr.lote_carga enable row level security;
 
--- El panel crea el lote (con el rol del portal o el del dueño) y escribe las filas de no contactar;
--- las cuentas del registro las escribe con el rol de la aplicación y el cliente fijado, como las
--- aprobaciones: el portal no gana permisos sobre el registro.
+-- Una carga a la lista de no contactar la escribe el panel con el rol del portal (o el del dueño),
+-- como el alta a mano. Una carga a una campaña escribe cuentas del registro: corre con el rol de la
+-- aplicación y el cliente fijado, como las aprobaciones, y crea su lote ahí mismo, en la misma
+-- transacción. El portal no gana permisos sobre el registro.
 grant select, insert, update on sdr.lote_carga to mailgw_portal;
-grant select on sdr.lote_carga to mailgw_app;
+grant select, insert on sdr.lote_carga to mailgw_app;
+grant update (resumen) on sdr.lote_carga to mailgw_app;
 grant execute on function sdr.empresa_clave(text) to mailgw_app, mailgw_portal;
 
 drop policy if exists por_cliente on sdr.lote_carga;
-create policy por_cliente on sdr.lote_carga for select to mailgw_app
-  using (client_id = mailgw.current_client());
+create policy por_cliente on sdr.lote_carga for all to mailgw_app
+  using (client_id = mailgw.current_client()) with check (client_id = mailgw.current_client());
 drop policy if exists portal_por_cliente on sdr.lote_carga;
 create policy portal_por_cliente on sdr.lote_carga for all to mailgw_portal
   using (client_id = mailgw.current_client()) with check (client_id = mailgw.current_client());

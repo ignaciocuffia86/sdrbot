@@ -59,6 +59,7 @@ export const limits = {
   connectionTimeoutMs: int(process.env.MAILGW_CONNECT_TIMEOUT_MS, 15_000),
   socketTimeoutMs: int(process.env.MAILGW_SOCKET_TIMEOUT_MS, 40_000),
   maxBodyBytes: 1024 * 1024,
+  maxCargaBytes: 4_400_000,
 };
 
 export const VERSION = '0.1.0';

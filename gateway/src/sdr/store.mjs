@@ -519,13 +519,14 @@ export async function guardarCuenta(clientId, a, meta) {
 //   - Lo que ya está en marcha en Dripify se frena: la próxima vuelta del reloj (frenarPendientes)
 //     pone en la lista negra de Dripify a cada persona de esas empresas, o con ese mail, que esté
 //     cargada. Lo nuevo (mails, personas, cargas) ya lo frenan los controles de siempre.
-// Corre con el rol de la aplicación y el cliente fijado.
-export async function aplicarNoContactar(clientId, filas, meta = { bot: 'panel', tarea: 'no_contactar' }) {
+// Corre con el rol de la aplicación y el cliente fijado. Con simular, sólo cuenta (la vista previa
+// de una carga): no cambia nada.
+export async function aplicarNoContactar(clientId, filas, { meta = { bot: 'panel', tarea: 'no_contactar' }, simular = false } = {}) {
   const valores = (t) => [...new Set(filas.filter((f) => f.tipo === t).map((f) => f.valor))];
   const dominios = valores('dominio');
   const empresas = valores('empresa');
   const emails = valores('email');
-  if (!dominios.length && !empresas.length && !emails.length) return { cuentas_excluidas: 0, cuentas_en_marcha: 0, frenos: 0 };
+  if (!dominios.length && !empresas.length && !emails.length) return { cuentas_excluidas: 0, cuentas_en_marcha: 0, frenos: 0, cuentas: [] };
   return asClient(clientId, async (c) => {
     const version = await versionActual(c, clientId);
     const { rows: cuentas } = await c.query(
@@ -539,6 +540,18 @@ export async function aplicarNoContactar(clientId, filas, meta = { bot: 'panel',
           and ((k.dominio is not null and exists (select 1 from unnest($2::text[]) d where k.dominio = d or k.dominio like '%.' || d))
             or k.nombre_clave = any($3))`,
       [clientId, dominios, empresas]);
+    const enMarcha = cuentas.filter((x) => ['en_contacto', 'en_pausa'].includes(x.estado)).length;
+    const muestra = cuentas.slice(0, 20).map((k) => ({ nombre: k.nombre, estado: k.estado }));
+    const frenar = `from sdr.prospecto
+        where client_id = $1 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')
+          and (cuenta_id = any($2::uuid[]) or email = any($3)
+            or exists (select 1 from unnest($4::text[]) d where split_part(email, '@', 2) = d or split_part(email, '@', 2) like '%.' || d))`;
+    const args = [clientId, cuentas.map((k) => k.id), emails, dominios];
+    if (simular) {
+      const { rows } = await c.query(`select count(*)::int as n ${frenar}`, args);
+      return { cuentas_excluidas: cuentas.filter((x) => x.estado === 'en_investigacion').length, cuentas_en_marcha: enMarcha,
+        frenos: rows[0].n, cuentas: muestra };
+    }
     let excluidas = 0;
     for (const k of cuentas.filter((x) => x.estado === 'en_investigacion')) {
       const motivo = `No contactar: ${k.por}`.slice(0, 500);
@@ -550,16 +563,9 @@ export async function aplicarNoContactar(clientId, filas, meta = { bot: 'panel',
     const { rowCount: frenos } = await c.query(
       `update sdr.prospecto
           set dripify = dripify || jsonb_build_object('freno', jsonb_build_object('pendiente', true, 'motivo', 'está en la lista de no contactar del cliente', 'desde', now()))
-        where client_id = $1 and dripify->>'estado' = 'cargado' and not (dripify ? 'freno')
-          and (cuenta_id = any($2::uuid[]) or email = any($3)
-            or exists (select 1 from unnest($4::text[]) d where split_part(email, '@', 2) = d or split_part(email, '@', 2) like '%.' || d))`,
-      [clientId, cuentas.map((k) => k.id), emails, dominios]);
-    return {
-      cuentas_excluidas: excluidas,
-      // En contacto o en pausa: no cambian de estado, pero ya no sale nada nuevo para ellas.
-      cuentas_en_marcha: cuentas.filter((x) => ['en_contacto', 'en_pausa'].includes(x.estado)).length,
-      frenos,
-    };
+        ${frenar.replace(/^from sdr\.prospecto/, '')}`, args);
+    // En contacto o en pausa: no cambian de estado, pero ya no sale nada nuevo para ellas.
+    return { cuentas_excluidas: excluidas, cuentas_en_marcha: enMarcha, frenos, cuentas: muestra };
   });
 }
 

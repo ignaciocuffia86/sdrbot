@@ -62,7 +62,11 @@ function send(res, status, body) {
 
 const fail = (res, e) => send(res, e.status ?? 500, { ok: false, error: { code: e.code, message: e.message, ...(e.extra ?? {}) } });
 
-async function readBody(req) {
+// Las cargas de archivos (docs/26) mandan el archivo en base64: hasta 3 MB, unos 4 MB en el cuerpo.
+// Vercel corta en 4,5 MB antes de llegar acá.
+const RUTA_CARGA = /^\/admin\/api\/clients\/[^/]+\/(no-contactar|sdr\/campanas\/[^/]+)\/cargas(\/previa)?$/;
+
+async function readBody(req, max = limits.maxBodyBytes) {
   // Vercel ya parsea el JSON en req.body (y tira una excepción al leerlo si no es JSON
   // válido); el servidor local no lo parsea.
   let parsed;
@@ -77,7 +81,7 @@ async function readBody(req) {
   let size = 0;
   for await (const c of req) {
     size += c.length;
-    if (size > limits.maxBodyBytes) throw errors.tooLarge();
+    if (size > max) throw errors.tooLarge();
     chunks.push(c);
   }
   const raw = Buffer.concat(chunks).toString('utf8');
@@ -120,7 +124,7 @@ export async function handle(req, res) {
     if (path === '/admin' || path.startsWith('/admin/')) {
       for (const [k, v] of Object.entries(ADMIN_HEADERS)) res.setHeader(k, v);
       if (path.startsWith('/admin/api/') || path === '/admin/api') {
-        const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req) : {};
+        const body = ['POST', 'PATCH', 'PUT'].includes(req.method) ? await readBody(req, RUTA_CARGA.test(path) ? limits.maxCargaBytes : undefined) : {};
         const data = await handleAdminApi(req, res, path, body);
         return send(res, 200, { ok: true, data: data ?? {} });
       }
