@@ -84,6 +84,21 @@ lo dicen. El rol del portal sólo ve y escribe las filas de las campañas de su 
 | `GET /admin/api/clients/:client/asistente/campana:<id>` | Los pasos y campos pausados de una campaña |
 | `PUT /admin/api/clients/:client/asistente/:ambito/:paso` | `{ estado: "esperando" \| "listo" \| "no_aplica" \| null, que, quien }` |
 
+## Pestañas
+
+Cada dato vive en un solo lugar, según quién lo carga y para qué:
+
+| Pestaña | Qué tiene | Quién |
+|---|---|---|
+| Resumen | Lo que necesita atención (con el avance del alta, para Biguá), los números y el estado de cada canal | Los dos |
+| Aprobaciones | Los mensajes que esperan un OK | Los dos |
+| Campañas | Cada campaña, su asistente y sus cuentas | Los dos |
+| Empresa | Lo común a todas las campañas: quién es, cómo habla, casos, interesados, exclusiones y No contactar | Los dos |
+| Canales | Lo que el cliente conecta y ve: buzones con su firma, dominios, CRM y el estado de LinkedIn y WhatsApp | Los dos |
+| Actividad | El monitor y la auditoría | Los dos |
+| Alta | El asistente de alta | Biguá |
+| ⚙ Administración | Operación, bots y despertadores, **LinkedIn y WhatsApp** (la API key, la campaña y el webhook de Dripify; las reglas del turno de WhatsApp), usuarios y tokens | Biguá |
+
 ## Que no se quede atrás
 
 Cada PR que toque la configuración de un cliente o de una campaña suma lo nuevo al paso que le
@@ -92,5 +107,4 @@ una sección de la campaña o algo que puede faltar para activarla no está en n
 
 ## Lo que sigue
 
-- Reordenar las pestañas: Canales sólo con lo del cliente y lo técnico en Administración.
 - Cerrar la migración del formulario viejo de Empresa (clientes de antes de la `014`).
