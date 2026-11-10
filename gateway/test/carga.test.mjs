@@ -326,6 +326,12 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   assert.equal(m.campana_id, principal.id, 'la cuenta de otra campaña no se mueve');
   assert.equal(m.uso, null);
 
+  // El bot no reabre una semilla ni la mueve de campaña.
+  await assert.rejects(sdr.guardarCuenta(A, { dominio: 'hortifrut.test', estado: 'en_investigacion' }, meta), (e) => e.code === 'cuenta_semilla');
+  await assert.rejects(sdr.guardarCuenta(A, { dominio: 'hortifrut.test', campana: 'principal' }, meta), (e) => e.code === 'cuenta_semilla');
+  const anotada = await sdr.guardarCuenta(A, { dominio: 'hortifrut.test', vertical: 'Berries y cerezas' }, meta);
+  assert.equal(anotada.cuenta.estado, 'excluida');
+
   // Subirlo de nuevo no duplica nada.
   const otra = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'semillas.csv' }));
   assert.equal(otra.totales.ya_eran_semilla, 2);

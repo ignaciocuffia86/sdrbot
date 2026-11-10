@@ -466,6 +466,12 @@ export async function guardarCuenta(clientId, a, meta) {
         [clientId, a.dominio ?? null, a.asci_id ?? null]);
       actual = rows[0] ?? null;
     }
+    // Una semilla del ICP (docs/26 §2) es una cuenta modelo que cargó el cliente: no se le escribe ni
+    // cambia de campaña. El bot la puede leer y anotar, pero no reabrirla.
+    if (actual?.uso === 'semilla' && ((a.estado && a.estado !== 'excluida') || a.campana)) {
+      throw new GatewayError('cuenta_semilla',
+        `${actual.nombre} es una semilla del ICP que cargó el cliente: es un modelo de lo que se busca, no se le escribe ni se mueve de campaña.`, 409);
+    }
     const version = await versionActual(c, clientId);
     // Una empresa de la lista de no contactar queda en el registro como excluida, para que nadie
     // la vuelva a investigar ni le revele contactos.
