@@ -340,6 +340,7 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
       throw new GatewayError('no_contactar',
         `El cliente pidió no escribirle a ${noContactar.describir(nc)}: está en su lista de no contactar.`, 409);
     }
+    if (kind === 'reply') return controlarRespuesta(c, clientId, emails, prospectoId);
     if (kind !== 'send') return;
     const { rows } = await c.query(
       `select p.id, p.email, p.estado,
@@ -358,6 +359,33 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
       }
     }
   });
+}
+
+// Una respuesta se controla con sus destinatarios de verdad (los del mail que se contesta, y los de
+// la copia con reply_all), no sólo con el prospecto_id que manda quien llama: si no, contestarle a
+// un positivo sin prospecto_id, o con el de otra persona, salteaba la aprobación obligatoria y los
+// controles de su campaña. Sólo para clientes con el SDR.
+async function controlarRespuesta(c, clientId, emails, prospectoId) {
+  const { rowCount: conSdr } = await c.query(`select 1 from sdr.cliente_config where client_id = $1`, [clientId]);
+  if (!conSdr) return;
+  const { rows } = await c.query(
+    `select id, nombre, email, estado from sdr.prospecto where client_id = $1 and email = any($2)`, [clientId, emails]);
+  if (prospectoId) {
+    const { rows: p } = await c.query(`select id, nombre, email from sdr.prospecto where client_id = $1 and id = $2`, [clientId, prospectoId]);
+    if (p[0] && (!p[0].email || !emails.includes(p[0].email))) {
+      throw new GatewayError('destinatario_no_coincide',
+        `La respuesta no va a ${p[0].nombre ?? 'el prospecto'} (${p[0].email ?? 'sin mail en el registro'}): pasá el prospecto_id de quien escribió el mail que contestás.`, 422);
+    }
+  } else if (rows.length) {
+    throw new GatewayError('prospecto_requerido',
+      `La respuesta va a ${rows.map((r) => r.email).join(', ')}, que está en el registro: pasá su prospecto_id.`, 422);
+  }
+  const otroPositivo = rows.find((r) => r.estado === 'positivo' && r.id !== prospectoId);
+  if (otroPositivo) {
+    throw new GatewayError('aprobacion_requerida',
+      `La respuesta también le llega a ${otroPositivo.email}, que es un positivo: a un positivo se le contesta en su propia respuesta, ` +
+      'con su prospecto_id y una aprobación respuesta_positivo. Sacalo de la copia (reply_all: false).', 409);
+  }
 }
 
 // ---------------------------------------------------------------- despertador (dueño)

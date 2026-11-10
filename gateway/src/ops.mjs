@@ -295,7 +295,9 @@ const MAIL_OPS = [
     op: 'reply', mcp: 'responder', scope: 'send',
     description: 'Responde un mensaje recibido en el mismo hilo (Re:, In-Reply-To, References), desde el mismo ' +
       'buzón, con la cita del original salvo quote=false, guarda la copia en Enviados y marca el original como ' +
-      'respondido. Respeta el cupo diario y la clave de idempotencia. Sólo enviar lo que ya está aprobado.',
+      'respondido. Respeta el cupo diario y la clave de idempotencia. Sólo enviar lo que ya está aprobado. Si la ' +
+      'respuesta va a alguien del registro, exige su prospecto_id (prospecto_requerido, destinatario_no_coincide); a un ' +
+      'positivo, con su aprobación respuesta_positivo.',
     schema: obj({
       mailbox, folder, uid, text, html: text,
       reply_all: { type: 'boolean', default: false },

@@ -371,6 +371,13 @@ test('respuesta a un positivo: exige aprobación aunque la calibración haya ter
   const sin = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: ids.laura, idempotency_key: `${ids.laura}:respuesta-1` });
   assert.equal(sin.error.code, 'aprobacion_requerida');
   assert.match(sin.error.message, /positivo/);
+  // Sin prospecto_id, o con el de otra persona, la aprobación no se saltea: el gateway mira a quién
+  // va la respuesta de verdad.
+  const sinId = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, idempotency_key: `${ids.laura}:respuesta-sin-id` });
+  assert.equal(sinId.error.code, 'prospecto_requerido');
+  const otra = (await ok(tok.a, 'registro_guardar_prospecto', { nombre: 'Otra persona', email: 'otra.persona@prospecto.test', bot: 'seguimiento' })).prospecto;
+  const ajeno = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: otra.id, idempotency_key: `${ids.laura}:respuesta-ajena` });
+  assert.equal(ajeno.error.code, 'destinatario_no_coincide');
   const ap = await ok(tok.a, 'registro_pedir_aprobacion', { bot: 'seguimiento', tipo: 'respuesta_positivo', prospecto_id: ids.laura, contenido: { buzon: BUZON, texto } });
   await ok(tok.a, 'registro_aprobar', { id: ap.aprobacion.id, decision: 'aprobada', operador: 'Ignacio' });
   const r = await ok(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: ids.laura, aprobacion_id: ap.aprobacion.id, idempotency_key: `${ids.laura}:respuesta-1` });
