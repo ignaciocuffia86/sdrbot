@@ -2290,10 +2290,14 @@ async function altaPaso(v, alta, sdr, i) {
     const ok = await busy(ev.currentTarget, () => marcarPaso(clientId, 'alta', p.clave, body));
     if (ok) reload();
   } }, label);
+  const formulario = {};
+  const contenido = await contenidoAlta(v, alta, sdr, p, siguiente, formulario);
   const acciones = [];
   if (p.estado === 'esperando' && p.que) acciones.push(accion('Ya está definido', { estado: null }));
   if (p.estado !== 'esperando' && p.estado !== 'no_aplica') {
-    acciones.push(h('button', { class: 'sm', onclick: () => pausaDialog(clientId, 'alta', p.clave, p.titulo, { despues: reload }) }, 'Lo definimos después'));
+    // Si el paso tiene formulario, lo que se cargó se guarda antes de pausar.
+    acciones.push(h('button', { class: 'sm', onclick: () => pausaDialog(clientId, 'alta', p.clave, p.titulo,
+      { antes: () => formulario.guardar?.(), despues: reload }) }, 'Lo definimos después'));
   }
   if (PUEDE_NO_APLICAR.has(p.clave)) acciones.push(p.estado === 'no_aplica' ? accion('Vuelve a aplicar', { estado: null }) : accion('No aplica', { estado: 'no_aplica' }));
   const total = alta.pasos.length;
@@ -2303,17 +2307,17 @@ async function altaPaso(v, alta, sdr, i) {
   if (p.manual && !p.campos.length) {
     extra.push(p.estado === 'listo' ? accion('Desmarcar', { estado: null }) : accion('Marcar hecho', { estado: 'listo' }, 'primary'));
   }
-  return [cab, await contenidoAlta(v, alta, sdr, p, siguiente), pieNavegacion(i ? ir(alta.pasos[i - 1].clave) : `${base}/alta`, siguiente, extra)];
+  return [cab, contenido, pieNavegacion(i ? ir(alta.pasos[i - 1].clave) : `${base}/alta`, siguiente, extra)];
 }
 
 const faltaSdr = (base) => h('div', { class: 'card empty' }, h('p', {}, 'Primero hay que activar el SDR.'),
   h('a', { class: 'btn primary', href: `${base}/alta/sdr` }, 'Ir a «Activar el SDR»'));
 
-async function contenidoAlta(v, alta, sdr, p, siguiente) {
+async function contenidoAlta(v, alta, sdr, p, siguiente, formulario = {}) {
   const { clientId, data, base, reload } = v;
   if (p.campos.length) {
     if (!sdr.activo) return faltaSdr(base);
-    const form = camposAlta(v, alta, sdr, p, siguiente);
+    const form = camposAlta(v, alta, sdr, p, siguiente, formulario);
     return p.clave === 'exclusiones' ? h('div', { class: 'stack' }, form, await noContactarCard(clientId)) : form;
   }
   if (LISTA_ALTA[p.clave]) {
@@ -2347,7 +2351,7 @@ async function contenidoAlta(v, alta, sdr, p, siguiente) {
 }
 
 // Los ajustes de Empresa de un paso, cada uno con su «lo definimos después».
-function camposAlta(v, alta, sdr, p, siguiente) {
+function camposAlta(v, alta, sdr, p, siguiente, formulario = {}) {
   const { clientId, reload } = v;
   const campos = sdr.campos.filter((c) => p.campos.includes(c.clave));
   const pend = new Map(alta.campos_pendientes.map((x) => [x.clave, x]));
@@ -2357,6 +2361,7 @@ function camposAlta(v, alta, sdr, p, siguiente) {
     const r = await api('PUT', `/clients/${enc(clientId)}/sdr/ajustes`, { ajustes: leerCampos(form, campos), nota: `Alta: ${p.titulo}` });
     return r;
   };
+  formulario.guardar = guardar;
   const ctx = { clientId, ambito: 'alta', antes: guardar, despues: reload };
   form.append(...campos.map((c) => campoConPausa(field(conCandado(c), campoInput(c, sdr.ajustes[c.clave]), c.ayuda), c, pend.get(c.clave), ctx)));
   const btnGuardar = h('button', { type: 'submit', value: 'guardar' }, 'Guardar');
