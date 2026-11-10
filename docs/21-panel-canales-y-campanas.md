@@ -562,8 +562,8 @@ punto donde se retoma.
      calibración se cuenta por campaña. La «principal» sigue con el número de Administración.
    - **Clientes sin el SDR** (sólo el gateway de correo): no tienen campañas ni estos controles.
 2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho (PR #9) y
-   publicado en canario como `2026.11.10-1`. Estable sigue en `2026.11.05-6` hasta pasar a
-   BairesQA a las reglas nuevas.
+   publicado en canario como `2026.11.10-1` (y después `2026.11.10-2`, paso 3). El 10/11 pasó a
+   estable (ver «Primera versión», abajo).
    - `reglas_manual` arma, al final del índice, «Ajustes de este cliente: Empresa»
      (`ajustes-cliente`), «Campañas de este cliente» (`campanas`: clave, id, estado, cuentas por
      día, calibración y buzones de cada una) y una «Campaña: <nombre>» (`campana-<clave>`) por
@@ -613,12 +613,29 @@ punto donde se retoma.
    abrir la pestaña (paso 5).~~ **Aplicada el 10/11/2026**, después del merge del PR #13. BairesQA:
    Empresa con nombre, descripción, tono, idioma, firma, exclusiones, objeciones y extrapolados;
    la «principal» con propuesta, ICP, cargos, señal, ventana del aviso, llamado a la acción y
-   positivos, y 4 cuentas por día. Sus reglas estables (`2026.11.05-6`) siguen recibiendo todo en
-   «Ajustes de este cliente», con lo de la principal. Para volver atrás: Biguá restaura la
-   versión «Antes de la migración 014» del historial de Empresa.
+   positivos, y 4 cuentas por día. Para volver atrás: Biguá restaura la versión «Antes de la
+   migración 014» del historial de Empresa.
 
-**C1 terminado.** Queda pasar a BairesQA a las reglas que leen la campaña (publicar la versión
-de canario en estable) cuando se decida.
+**C1 terminado.**
+
+### 7.3 Primera versión (10/11/2026)
+
+Todo quedó nivelado como punto de partida:
+
+- **Reglas:** `estable` y `canario` en `2026.11.10-2` (48 secciones, 8 routines), igual a
+  `playbooks/` en `main`.
+- **Base:** migraciones `001` a `014` aplicadas, las mismas que hay en `gateway/db/migrations`.
+- **Gateway:** producción corre `main`.
+- **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
+
+**Lo que existe pero no se probó todavía**, porque hasta ahora no hubo un cliente real:
+
+- El circuito canario → estable con un cliente en canario: hasta hoy las versiones se
+  publicaron en canario sin ningún cliente ahí.
+- La vuelta atrás de la `014` (restaurar «Antes de la migración 014»): cubierta por las pruebas,
+  no ejercitada en producción.
+- La sección única de las reglas viejas (`seccionesCliente` con `porCampana: false`): ya no la usa
+  ninguna versión publicada en un canal; queda para un cliente con versión fija vieja.
 
 **Pendientes chicos, vistos al construir:**
 
