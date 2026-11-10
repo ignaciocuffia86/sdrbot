@@ -830,11 +830,24 @@ export const resumenVer = async ({ user, params }) => {
     // Lo del SDR se lee con el rol de la aplicación y el cliente fijado: el portal no ve el registro.
     Object.assign(out, await asRole('mailgw_app', params.client, async (c) => {
       const n = async (sql) => (await c.query(sql, [params.client])).rows[0].n;
-      const usadas = await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`);
-      const semana = Object.fromEntries((await c.query(
-        `select tipo, count(*)::int as n from sdr.evento where client_id = $1 and at > now() - interval '7 days'
-            and tipo in ('mail.enviado', 'linkedin.cargado', 'respuesta', 'positivo') group by tipo`, [params.client])).rows
-        .map((r) => [r.tipo, r.n]));
+      // Los números de la semana, del cliente y de cada campaña (docs/21 §3.1).
+      const porTipo = (await c.query(
+        `select campana_id, tipo, count(*)::int as n from sdr.evento where client_id = $1 and at > now() - interval '7 days'
+            and tipo in ('mail.enviado', 'linkedin.cargado', 'respuesta', 'positivo') group by campana_id, tipo`, [params.client])).rows;
+      const numeros = (de) => {
+        const t = (tipo) => porTipo.filter((r) => r.tipo === tipo && (!de || r.campana_id === de)).reduce((x, r) => x + r.n, 0);
+        return { enviados: t('mail.enviado'), linkedin: t('linkedin.cargado'), respuestas: t('respuesta'), positivos: t('positivo') };
+      };
+      const usadasPor = new Map((await c.query(
+        `select campana_id, count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'
+          group by campana_id`, [params.client])).rows.map((r) => [r.campana_id, r.n]));
+      const campanasDelCliente = (await c.query(
+        `select id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails from sdr.campana
+          where client_id = $1 and estado in ('activa', 'pausada') order by (clave = 'principal') desc, estado, nombre`, [params.client])).rows;
+      const totalDe = (k) => (k.clave === 'principal' ? base.cfg.calibracion_mails : k.calibracion_mails);
+      const calibDe = (k) => ({ usados: Math.min(usadasPor.get(k.id) ?? 0, totalDe(k)), total: totalDe(k) });
+      const principal = campanasDelCliente.find((k) => k.clave === 'principal');
+      const usadas = principal ? usadasPor.get(principal.id) ?? 0 : [...usadasPor.values()].reduce((x, y) => x + y, 0);
       const d = (await c.query(
         `select (api_key_enc is not null) as cargado, activo, campana_id, ultimo_ok_at, ultimo_error from sdr.dripify_cuenta where client_id = $1`,
         [params.client])).rows[0] ?? null;
@@ -843,8 +856,9 @@ export const resumenVer = async ({ user, params }) => {
         aprobaciones_pendientes: await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and estado = 'pendiente'`),
         correo_sin_atender: await n(`select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`),
         linkedin_sin_atender: await n(`select count(*)::int as n from sdr.linkedin_respuesta where client_id = $1 and estado = 'nuevo'`),
-        semana: { enviados: semana['mail.enviado'] ?? 0, linkedin: semana['linkedin.cargado'] ?? 0,
-          respuestas: semana.respuesta ?? 0, positivos: semana.positivo ?? 0 },
+        semana: numeros(null),
+        campanas: campanasDelCliente.map((k) => ({ clave: k.clave, nombre: k.nombre, tipo: k.tipo, estado: k.estado,
+          cuentas_por_dia: k.cuentas_por_dia, calibracion: calibDe(k), semana: numeros(k.id) })),
         dripify: d ? { cargado: d.cargado, activo: d.activo, campana: d.campana_id !== null, ultimo_ok_at: d.ultimo_ok_at,
           ultimo_error: d.ultimo_error } : null,
         corridas_con_error: isBigua(user) ? (await c.query(

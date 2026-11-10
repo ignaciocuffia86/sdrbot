@@ -519,7 +519,7 @@ perfiles (§6.1). D, cuando haya una campaña de evento o de reactivación que l
   cliente cambia volumen, buzones, extrapolados y antigüedad del aviso, con las cuentas por día
   hasta el tope. La activación de campañas por el cliente llega con la etapa C.
 
-### 7.2 C1: lo hecho y lo que falta (en pausa desde el 09/11/2026)
+### 7.2 C1: lo hecho y lo que falta
 
 C1 quedó en pausa el 09/11/2026 para resolver los hallazgos abiertos de Vercel Security Review;
 las correcciones entraron con el PR #6 y las reglas, en canario (`2026.11.09-2`). Este es el
@@ -588,14 +588,37 @@ punto donde se retoma.
    - El panel muestra en Resumen la tabla «Campañas · últimos 7 días» (activas y en pausa), por
      ahora sólo a Biguá, como la pestaña Campañas.
    - El orquestador cuenta los números por campaña en el resumen del día.
-4. **Migración `014`** (§6.2, paso 3):
-   - `descripcion` de Empresa;
-   - borrar de Empresa las claves que pasaron a la campaña, salvo `acepta_mails_extrapolados`;
-   - sacar `ajustes.buzones`;
-   - el formulario de Empresa pasa a `CAMPOS_EMPRESA`.
-5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
-   transición.
-6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña.
+4. ~~**Migración `014`** (§6.2, paso 3).~~ Escrita (`014_empresa_sin_claves_de_campana.sql`); se
+   aplica en el paso 6. Por cliente (`sdr.migrar_empresa_014`, idempotente):
+   - la «principal» toma los valores de Empresa de hoy (Empresa gana: es lo que se siguió
+     editando después de la `012`), `oferta` como `propuesta` y las cuentas por día en su
+     columna; deja su copia de `acepta_mails_extrapolados`, que hereda de Empresa;
+   - Empresa estrena `descripcion` (copia de `oferta`) y pierde esas claves, `cuentas_por_dia` y
+     `buzones`. Antes, una foto «Antes de la migración 014» en el historial;
+   - `sdr.cliente_config.formulario` pasa a `empresa`: el panel muestra `CAMPOS_EMPRESA`. Los
+     clientes nuevos siguen en `transicion` hasta el paso 5.
+   - El Resumen pide «Revisar la descripción de la empresa» mientras sea igual a la propuesta de
+     la principal.
+   - Las reglas de antes de las campañas (las estables de hoy) siguen recibiendo todo en
+     «Ajustes de este cliente», con lo de la principal y sus nombres de antes.
+   - Vuelta atrás: Biguá restaura la versión «Antes de la migración 014»; Empresa recupera las
+     claves y el panel vuelve al formulario de la transición.
+   - El historial de Empresa ya no muestra ni restaura versiones de una campaña.
+5. ~~**Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
+   transición.~~ Hecho. El aviso queda sólo para un cliente que todavía no migró (Empresa con
+   las claves de la principal): dice que lo de la principal se edita en Empresa. Los clientes
+   nuevos arrancan en el formulario de la transición; pasarlos al de Empresa sola queda para
+   después de C1.
+6. ~~**Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
+   abrir la pestaña (paso 5).~~ **Aplicada el 10/11/2026**, después del merge del PR #13. BairesQA:
+   Empresa con nombre, descripción, tono, idioma, firma, exclusiones, objeciones y extrapolados;
+   la «principal» con propuesta, ICP, cargos, señal, ventana del aviso, llamado a la acción y
+   positivos, y 4 cuentas por día. Sus reglas estables (`2026.11.05-6`) siguen recibiendo todo en
+   «Ajustes de este cliente», con lo de la principal. Para volver atrás: Biguá restaura la
+   versión «Antes de la migración 014» del historial de Empresa.
+
+**C1 terminado.** Queda pasar a BairesQA a las reglas que leen la campaña (publicar la versión
+de canario en estable) cuando se decida.
 
 **Pendientes chicos, vistos al construir:**
 

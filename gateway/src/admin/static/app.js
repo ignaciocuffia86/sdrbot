@@ -237,9 +237,9 @@ function newClientDialog() {
 const VIEJAS = { sdr: ['empresa'], buzones: ['canales'], dominios: ['canales'], usuarios: ['admin', 'usuarios'], tokens: ['admin', 'tokens'] };
 const TABS = [['resumen', 'Resumen'], ['campanas', 'Campañas'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
 
-// Mientras los bots no lean las campañas (etapa C1, docs/21 §7), lo que se cambia en la pestaña
-// Campañas no cambia lo que hacen: la ve sólo Biguá. Pasa a true cuando las reglas lean la campaña.
-const CAMPANAS_PARA_CLIENTES = false;
+// La pestaña Campañas la ven también los clientes desde que las reglas leen la campaña (docs/21
+// §7.2, paso 5). Qué puede tocar cada uno lo decide el gateway (ajustes.mjs).
+const CAMPANAS_PARA_CLIENTES = true;
 
 async function renderClient(clientId, tab, sub) {
   if (VIEJAS[tab]) [tab, sub = sub] = VIEJAS[tab];
@@ -287,6 +287,10 @@ async function resumenView({ clientId, bigua, base }) {
     if (d.status === 'error') aviso('err', `${d.domain} tiene SPF, DKIM o DMARC mal: los mails pueden ir a spam.`, `${base}/canales`, 'Ver cómo arreglarlo');
   }
   if (r.sdr_activo) {
+    if (r.revisar_descripcion) {
+      aviso('warn', 'Revisar la descripción de la empresa: arrancó como una copia de la oferta. Contá qué hace la empresa en general; lo de cada campaña va en su propuesta.',
+        `${base}/empresa`, 'Revisarla');
+    }
     if (r.aprobaciones_pendientes) aviso('warn', `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')} en el chat del orquestador.`);
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
@@ -421,7 +425,9 @@ async function empresaView({ clientId, bigua, base, reload }) {
       bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
   }
   const auto = sdr.modo === 'autogestionado';
-  const notaModo = auto
+  const notaModo = sdr.formulario === 'empresa'
+    ? 'A quién se le escribe, la propuesta, el volumen y los buzones son de cada campaña: se editan en su campaña. Esto vale para las campañas que no digan otra cosa.'
+    : auto
     ? `Este cliente es autogestionado: el volumen y los buzones los decide el cliente${sdr.tope_cuentas_dia !== null ? `, hasta ${sdr.tope_cuentas_dia} cuentas nuevas por día` : ''}.`
     : 'Este cliente lo opera Biguá: el volumen y los buzones los decide Biguá.';
   const err = h('p', { class: 'err', role: 'alert' });
@@ -464,10 +470,12 @@ async function empresaView({ clientId, bigua, base, reload }) {
 const ESTADO_CAMPANA = { borrador: ['borrador', 'b-mute'], activa: ['activa', 'b-ok'], pausada: ['pausada', 'b-warn'], terminada: ['terminada', 'b-mute'] };
 const estadoBadge = (e) => { const [label, cls] = ESTADO_CAMPANA[e] ?? [e, 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
 
-function transicionNota() {
-  return h('p', { class: 'note' }, 'Transición: los bots todavía escriben con los ajustes de Empresa y no reparten el volumen por campaña. ',
-    'El gateway ya hace cumplir cada campaña: en una que no está activa no salen mails nuevos, no se carga a nadie en LinkedIn ',
-    'ni se toman personas nuevas; los mails salen sólo por sus buzones y con sus links permitidos.');
+// Antes de la migración 014, Empresa todavía tiene lo de la «principal» (a quién, la oferta, el
+// volumen) y la principal lo usa de ahí: se sigue editando en Empresa.
+function transicionNota(d, base) {
+  if (!d.transicion) return null;
+  return h('p', { class: 'note' }, 'Lo de la campaña «Principal» (a quién se le escribe, la oferta, los positivos y las cuentas por día) ',
+    'todavía se edita en ', h('a', { href: `${base}/empresa` }, 'Empresa'), ': mientras esté ahí, es lo que usan los bots.');
 }
 
 async function campanasView({ clientId, bigua, base, reload }) {
@@ -506,7 +514,7 @@ async function campanasView({ clientId, bigua, base, reload }) {
     h('td', { class: 'num' }, String(k.respondieron)),
     h('td', {}, k.pendientes ? h('span', { class: 'badge b-warn' }, plural(k.pendientes, 'pendiente', 'pendientes')) : h('span', { class: 'muted small' }, '—'))));
   return h('div', { class: 'stack' },
-    transicionNota(),
+    transicionNota(d, base),
     h('div', { class: 'row spread' },
       h('p', { class: 'muted small m0' }, volumen,
         d.puede_activar ? '' : ' Este cliente lo opera Biguá: el cliente arma borradores y Biguá los activa.'),
@@ -708,7 +716,7 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
       h('div', {}, h('h2', { class: 'first' }, k.nombre, ' ', estadoBadge(k.estado)),
         h('p', { class: 'small muted mono m0' }, k.clave)),
       h('div', { class: 'row' }, acciones)),
-    transicionNota(),
+    transicionNota(d, base),
     terminada ? h('p', { class: 'note' }, `Terminada el ${fmtDate(k.terminada_at)}. No se edita ni se reactiva: para repetirla, duplicala.`) : null,
     errEstado,
     h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, faltan, vista)),

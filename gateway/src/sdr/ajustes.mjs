@@ -325,6 +325,19 @@ export const aplicarCambios = (actuales, cambios, permiso) => aplicar(CAMPOS, ac
 export const ordenar = (a) => ordenarSegun(CAMPOS, a);
 
 export const aplicarCambiosEmpresa = (actuales, cambios, permiso) => aplicar(CAMPOS_EMPRESA, actuales, cambios, permiso);
+
+// Las claves de Empresa que la migración 014 pasa a la «principal» (docs/21 §6.2, paso 3).
+export const LEGADO_EMPRESA = ['oferta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion', 'links_permitidos',
+  'positivos', 'cuentas_por_dia', 'buzones'];
+export const tieneLegado = (ajustes) => LEGADO_EMPRESA.some((k) => ajustes?.[k] !== undefined);
+
+// El formulario de Empresa del panel, según sdr.cliente_config.formulario (migración 014): el de la
+// transición, que edita también lo de la «principal», o el de Empresa sola (CAMPOS_EMPRESA), con lo
+// de cada campaña en su campaña. Si Biguá vuelve a una versión de antes de la 014, Empresa recupera
+// esas claves y el panel vuelve al de la transición, que las muestra.
+export const formularioEmpresa = (cfg) => (cfg?.formulario !== 'empresa' || tieneLegado(cfg?.ajustes)
+  ? { bloques: BLOQUES, campos: CAMPOS, aplicar: aplicarCambios, transicion: true }
+  : { bloques: BLOQUES_EMPRESA, campos: CAMPOS_EMPRESA, aplicar: aplicarCambiosEmpresa, transicion: false });
 export const ordenarEmpresa = (a) => ordenarSegun(CAMPOS_EMPRESA, a);
 
 // Los ajustes de una campaña. empresa: los ajustes de Empresa (para elegir los casos).
