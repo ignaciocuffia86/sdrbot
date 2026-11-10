@@ -290,7 +290,8 @@ export async function buscar(clientId, q) {
     const digitos = q.whatsapp ? String(q.whatsapp).replace(/\D/g, '') : '';
     if (digitos.length >= 8) {
       // Un número se compara entero, en su forma internacional: los que vienen sin código de país se
-      // completan con el del cliente (su zona horaria). Por el final no se cruza nunca. La consulta
+      // completan con el del cliente (su zona horaria). Por el final no se cruza nunca. Al cruce va el número
+      // como vino, con su «+» o «00»: sin ellos no se sabe si ya trae el código de país. La consulta
       // por los últimos 8 dígitos sólo junta candidatos; el cruce lo hace mismoWhatsapp.
       const pais = paisDeZona((await configDe(c, clientId))?.zona_horaria);
       const { rows } = await c.query(
@@ -298,7 +299,7 @@ export async function buscar(clientId, q) {
           where p.client_id = $1 and p.whatsapp is not null
             and right(regexp_replace(p.whatsapp, '\\D', '', 'g'), 8) = right($2, 8)
           order by p.actualizado_at desc limit 50`, [clientId, digitos]);
-      const iguales = rows.filter((p) => mismoWhatsapp(p.whatsapp, digitos, pais));
+      const iguales = rows.filter((p) => mismoWhatsapp(p.whatsapp, q.whatsapp, pais));
       if (iguales.length === 1) prospectos.push(...iguales);
       else if (iguales.length > 1) {
         aviso = `El número ${q.whatsapp} está cargado en ${iguales.length} personas: no se elige ninguna. Buscá por otro dato.`;

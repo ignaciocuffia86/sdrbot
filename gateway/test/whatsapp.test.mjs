@@ -261,6 +261,11 @@ test('buscar por WhatsApp: números de países distintos con el mismo final no s
   // Un prospecto cargado con número local argentino no se iguala con uno extranjero del mismo final.
   const loc = (await ok(tok.w, 'registro_guardar_prospecto', { nombre: 'Local AR', email: 'local@ar-w.test', whatsapp: '11 4000 0099' })).prospecto;
   assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+1 114 000 0099' })).prospectos, []);
+  // Un número internacional corto (con «+») no se completa con el país del cliente aunque, sin el
+  // «+», tenga la forma de uno local: «+1140000099» no es «+54 11 4000 0099».
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+1140000099' })).prospectos, []);
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '00 1140000099' })).prospectos, []);
+  assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '011 4000-0099' })).prospectos.map((p) => p.id), [loc.id]);
   assert.deepEqual((await ok(tok.w, 'registro_buscar', { whatsapp: '+54 9 11 4000 0099' })).prospectos.map((p) => p.id), [loc.id]);
   // El mismo número en dos personas: no se elige ninguna.
   await ok(tok.w, 'registro_guardar_prospecto', { nombre: 'Pat bis', email: 'pat.bis@us-w.test', whatsapp: '+1 555 123 4567' });
