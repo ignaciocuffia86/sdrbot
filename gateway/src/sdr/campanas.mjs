@@ -30,9 +30,13 @@ const columnasSql = (obj) => {
   return k;
 };
 
+// Siempre sobre «sdr.campana k». cuentas_de_lista: las cuentas para prospectar que se cargaron por
+// archivo (docs/26 §5.1), según los lotes aplicados, que el portal sí puede leer.
 const COLS = `id, client_id, clave, nombre, tipo, estado, ajustes, dripify_campana_id, cuentas_por_dia, calibracion_mails,
   to_char(inicio, 'YYYY-MM-DD') as inicio, to_char(fin, 'YYYY-MM-DD') as fin, duplicada_de, terminada_at,
-  creado_at, actualizado_at`;
+  creado_at, actualizado_at,
+  (select coalesce(sum((l.resumen->>'prospectar')::int), 0) from sdr.lote_carga l
+    where l.client_id = k.client_id and l.campana_id = k.id and l.estado = 'aplicado')::int as cuentas_de_lista`;
 
 // La configuración del cliente que hace falta para decidir: modo, tope y los ajustes de Empresa.
 // Con bloquear, toma la fila para que dos guardados a la vez no pasen juntos el tope.
@@ -48,7 +52,7 @@ const permisoDe = (esBigua, cfg) => ({ esBigua, autogestion: cfg.modo === 'autog
 
 async function fila(c, clientId, id, { bloquear = false } = {}) {
   if (!UUID.test(String(id))) throw noExiste();
-  const { rows } = await c.query(`select ${COLS} from sdr.campana where client_id = $1 and id = $2${bloquear ? ' for update' : ''}`,
+  const { rows } = await c.query(`select ${COLS} from sdr.campana k where client_id = $1 and id = $2${bloquear ? ' for update of k' : ''}`,
     [clientId, id]);
   if (!rows.length) throw noExiste();
   const buzones = (await c.query(`select account_id from sdr.campana_buzon where client_id = $1 and campana_id = $2 order by account_id`,

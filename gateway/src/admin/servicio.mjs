@@ -1063,80 +1063,106 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function campanaDeCarga(c, clientId, id) {
   if (!UUID.test(String(id))) throw notFound('No existe esa campaña.');
-  const { rows } = await c.query(`select id, nombre, estado from sdr.campana where client_id = $1 and id = $2`, [clientId, id]);
+  const { rows } = await c.query(`select id, nombre, estado, tipo from sdr.campana where client_id = $1 and id = $2`, [clientId, id]);
   if (!rows.length) throw notFound('No existe esa campaña.');
   if (rows[0].estado === 'terminada') throw errors.invalid('La campaña está terminada: no toma cuentas.');
   return rows[0];
 }
 
-async function semillasDeArchivo(user, clientId, campanaId, b) {
+async function cuentasDeArchivo(user, clientId, campanaId, b) {
   await scoped(user, clientId, (c) => clienteExiste(c, clientId));
-  const prep = carga.prepararFilas({ ...b, destino: 'campana', campanaId });
-  return { prep };
+  return carga.prepararFilas({ ...b, destino: 'campana', campanaId });
 }
 
-const totalesSemillas = (filas) => {
+const totalesCampana = (filas) => {
   const r = carga.resumirFilas(filas);
-  return { filas: filas.length, invalidas: r.invalida ?? 0, nuevas: r.nueva ?? 0, ya_en_registro: r.ya_en_registro ?? 0,
+  const nuevas = filas.filter((f) => f.resultado === 'nueva');
+  const personas = carga.resumirFilas(filas.filter((f) => f.persona?.resultado).map((f) => f.persona));
+  return { filas: filas.length, invalidas: r.invalida ?? 0, nuevas: nuevas.length,
+    prospectar: nuevas.filter((f) => f.uso === 'prospectar' && !f.en_no_contactar).length,
+    semillas: nuevas.filter((f) => f.uso === 'semilla').length,
+    suma_a_existente: r.suma_a_existente ?? 0, ya_en_registro: r.ya_en_registro ?? 0,
     ya_eran_semilla: r.ya_era_semilla ?? 0, repetidas: r.repetida ?? 0,
-    sin_dominio: filas.filter((f) => f.resultado === 'nueva' && !f.dominio).length,
-    en_no_contactar: filas.filter((f) => f.en_no_contactar).length };
+    sin_dominio: nuevas.filter((f) => !f.dominio).length,
+    en_no_contactar: filas.filter((f) => f.en_no_contactar).length,
+    personas: personas.nueva ?? 0, personas_ya_existen: personas.ya_existe ?? 0,
+    personas_bloqueadas: (personas.no_contactar ?? 0) + (personas.suprimida ?? 0) };
 };
 
 export const campanaCargaPrevia = async ({ user, params, body }) => {
   const b = V.carga(body);
-  const { prep } = await semillasDeArchivo(user, params.client, params.id, b);
+  const prep = await cuentasDeArchivo(user, params.client, params.id, b);
   const campana = await asRole('mailgw_app', params.client, async (c) => {
     const k = await campanaDeCarga(c, params.client, params.id);
-    await carga.planSemillas(c, params.client, k, prep.filas);
+    await carga.planCampana(c, params.client, k, prep.filas);
     return k;
   });
   const filas = prep.filas;
-  return { ...lectura(prep), campana: { id: campana.id, nombre: campana.nombre }, uso: 'semilla', totales: totalesSemillas(filas),
+  return { ...lectura(prep), campana: { id: campana.id, nombre: campana.nombre, tipo: campana.tipo },
+    uso: campana.tipo === 'lista' ? 'prospectar' : 'semilla', totales: totalesCampana(filas),
     invalidas: invalidasDe(filas), avisos: avisosDe(filas),
     filas: filas.slice(0, MAX_FILAS_VISTA).map((f) => ({ renglon: f.renglon, empresa: f.empresa, dominio: f.dominio ?? null,
-      vertical: f.vertical ?? null, error: f.error ?? null, resultado: f.resultado ?? null, existente: f.existente ?? null,
-      en_no_contactar: Boolean(f.en_no_contactar) })) };
+      vertical: f.vertical ?? null, uso: f.uso ?? null, error: f.error ?? null, resultado: f.resultado ?? null, existente: f.existente ?? null,
+      en_no_contactar: Boolean(f.en_no_contactar),
+      persona: f.persona ? { nombre: f.persona.nombre, cargo: f.persona.cargo ?? null, email: f.persona.email ?? null,
+        linkedin_url: f.persona.linkedin_url ?? null, resultado: f.persona.resultado ?? null } : null })) };
 };
 
 export const campanaCargaAplicar = async ({ user, params, body }) => {
   const b = V.carga(body);
-  const { prep } = await semillasDeArchivo(user, params.client, params.id, b);
+  const prep = await cuentasDeArchivo(user, params.client, params.id, b);
   exigirHuella(b, prep);
-  // Las cuentas son del registro: se escriben con el rol de la aplicación y el cliente fijado, ya
-  // comprobado que la persona ve este cliente. El lote nace en la misma transacción.
+  // Las cuentas y personas son del registro: se escriben con el rol de la aplicación y el cliente
+  // fijado, ya comprobado que la persona ve este cliente. El lote nace en la misma transacción.
   const r = await asRole('mailgw_app', params.client, async (c) => {
     const k = await campanaDeCarga(c, params.client, params.id);
-    const { nuevas } = await carga.planSemillas(c, params.client, k, prep.filas);
-    if (!nuevas.length) throw errors.invalid('No hay cuentas nuevas para cargar: todas ya estaban en el registro o tienen errores.');
-    const totales = totalesSemillas(prep.filas);
+    const plan = await carga.planCampana(c, params.client, k, prep.filas);
+    if (!plan.cuentasNuevas.length && !plan.personasNuevas.length) {
+      throw errors.invalid('No hay nada nuevo para cargar: todas las cuentas y personas ya estaban en el registro o tienen errores.');
+    }
+    const totales = totalesCampana(prep.filas);
     const { rows: [lote] } = await c.query(
       `insert into sdr.lote_carga (client_id, destino, campana_id, archivo, hoja, mapeo, resumen, por_email)
        values ($1, 'campana', $2, $3, $4, $5, $6, $7) returning id, archivo, creado_at`,
       [params.client, k.id, nombreArchivo(b.nombre), prep.hoja, prep.mapeo, totales, user.email]);
-    const motivo = `Semilla del ICP de la campaña ${citaCliente(k.nombre, 120)}: no se le escribe.`;
-    const creadas = await carga.insertarEnTandas(nuevas, async (t) => (await c.query(
-      `insert into sdr.cuenta (client_id, nombre, dominio, pais, vertical, tamano, tesis, estado, estado_motivo, campana_id,
-                               origen, uso, lote_id, datos_origen, prioridad)
-       select $1, x.nombre, x.dominio, x.pais, x.vertical, x.tamano, x.tesis, 'excluida', $2, $3, 'archivo', 'semilla', $4,
-              coalesce(x.datos_origen, '{}'::jsonb), x.prioridad
-         from jsonb_to_recordset($5::jsonb) as x(nombre text, dominio text, pais text, vertical text, tamano text, tesis text,
-                                                 datos_origen jsonb, prioridad int)
-       on conflict do nothing returning id`,
-      [params.client, motivo, k.id, lote.id, JSON.stringify(t.map((f) => ({ nombre: f.empresa, dominio: f.dominio ?? null,
-        pais: f.pais, vertical: f.vertical, tamano: f.tamano, tesis: f.nota, datos_origen: f.datos_origen, prioridad: f.prioridad })))])).rows);
-    const resumen = { ...totales, nuevas: creadas.length, ya_en_registro: totales.ya_en_registro + (nuevas.length - creadas.length) };
+    const hecho = await carga.aplicarCampana(c, params.client, k, plan, {
+      loteId: lote.id,
+      motivoSemilla: `Semilla del ICP de la campaña ${citaCliente(k.nombre, 120)}: no se le escribe.`,
+      motivoNoContactar: 'Está en la lista de no contactar del cliente: vino en el archivo, pero no se le escribe.',
+    });
+    const resumen = { ...totales, nuevas: hecho.cuentas, prospectar: hecho.prospectar, semillas: hecho.semillas, personas: hecho.personas };
     await c.query(`update sdr.lote_carga set resumen = $3 where client_id = $1 and id = $2`, [params.client, lote.id, resumen]);
     await registro.insertarEvento(c, params.client, { tipo: 'nota',
-      datos: { carga: lote.id, campana: k.id, semillas: creadas.length, archivo: lote.archivo } }, { bot: 'panel', tarea: 'carga' });
+      datos: { carga: lote.id, campana: k.id, cuentas: hecho.cuentas, prospectar: hecho.prospectar, semillas: hecho.semillas,
+        personas: hecho.personas, archivo: lote.archivo } }, { bot: 'panel', tarea: 'carga' });
     return { lote: { ...lote, resumen }, campana: k };
   });
   await scoped(user, params.client, (c) => audit(c, user, params.client, 'admin.sdr.carga',
     { destino: 'campana', campana: r.campana.id, lote: r.lote.id, ...r.lote.resumen }));
+  const x = r.lote.resumen;
   await avisarCampana(user, params.client, r.campana.id,
-    `El cliente cargó ${r.lote.resumen.nuevas} semilla(s) del ICP en la campaña ${citaCliente(r.campana.nombre)} desde un archivo. ` +
-    'Son cuentas modelo: quedan excluidas en el registro y no se les escribe.');
+    `El cliente cargó un archivo en la campaña ${citaCliente(r.campana.nombre)}: ${x.prospectar} cuenta(s) para prospectar, ` +
+    `${x.semillas} semilla(s) del ICP y ${x.personas} persona(s).` +
+    (x.prospectar ? ' Las cuentas para prospectar salen con registro_cuentas_de_lista.' : ' Las semillas no reciben nada.'));
   return { lote: r.lote };
+};
+
+// Cómo viene la lista de una campaña: cuántas cuentas cargadas quedan sin trabajar. Con el rol de
+// la aplicación (el portal no lee el registro), ya comprobado que la persona ve este cliente.
+export const campanaListaVer = async ({ user, params }) => {
+  await scoped(user, params.client, (c) => clienteExiste(c, params.client));
+  return asRole('mailgw_app', params.client, async (c) => {
+    if (!UUID.test(String(params.id))) throw notFound('No existe esa campaña.');
+    const { rows } = await c.query(
+      `select count(*) filter (where k.uso = 'prospectar')::int as cargadas,
+              count(*) filter (where ${registro.SQL_SIN_TRABAJAR})::int as sin_trabajar,
+              count(*) filter (where k.uso = 'prospectar' and k.estado not in ('excluida', 'descartada')
+                                 and not (${registro.SQL_SIN_TRABAJAR}))::int as en_curso,
+              count(*) filter (where k.uso = 'prospectar' and k.estado in ('excluida', 'descartada'))::int as cerradas,
+              count(*) filter (where k.uso = 'semilla')::int as semillas
+         from sdr.cuenta k where k.client_id = $1 and k.campana_id = $2 and k.origen = 'archivo'`, [params.client, params.id]);
+    return { lista: rows[0] };
+  });
 };
 
 export const cargasListar = async ({ user, params }) => scoped(user, params.client, async (c) => {

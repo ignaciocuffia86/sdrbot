@@ -146,7 +146,7 @@ test('lectura: Excel con varias hojas, celdas vacías y fórmulas; el mapeo se p
   assert.equal(r.filas[1].celdas[3], '=1+1', 'de una fórmula queda el valor, como texto; nada se evalúa');
   assert.equal(r.filas[2].celdas[2], '12345');
   assert.deepEqual(carga.proponerMapeo(r.encabezados, 'no_contactar'), { empresa: 0, dominio: 1, motivo: 4, contacto_email: 5 });
-  assert.deepEqual(carga.proponerMapeo(r.encabezados, 'campana'), { empresa: 0, dominio: 1, vertical: 2, rut: 3 });
+  assert.deepEqual(carga.proponerMapeo(r.encabezados, 'campana'), { empresa: 0, dominio: 1, vertical: 2, rut: 3, contacto_email: 5 });
   assert.deepEqual(carga.leerArchivo(buf, { hoja: 'Referidos' }).filas[0].celdas, ['Pepe & Hijos <SA>']);
   assert.throws(() => carga.leerArchivo(buf, { hoja: 'Otra' }), /no tiene una hoja/);
 });
@@ -346,7 +346,7 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   await sdr.guardarCuenta(A, { nombre: 'Frutícola Maule', dominio: 'maule.test' }, meta);
 
   const archivo = b64(Buffer.from([
-    'Empresa,Web,Rubro,Tamaño,Nota,Región,Contacto',
+    'Empresa,Web,Rubro,Tamaño,Nota,Región,Código interno',
     'Hortifrut S.A.,hortifrut.test,Berries,grande,Exporta a China,Maule,=cmd|calc',
     'Frutícola Maule,maule.test,Fruta,mediana,,Maule,',
     'Subsole,,Uva,,,Valparaíso,',
@@ -357,8 +357,10 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   const pv = ok(await u.a.call('POST', `${path}/previa`, { archivo, nombre: 'semillas.csv' }));
   assert.equal(pv.campana.nombre, 'Exportadoras por ICP');
   assert.deepEqual(pv.mapeo, { empresa: 0, dominio: 1, vertical: 2, tamano: 3, nota: 4 });
-  assert.deepEqual({ ...pv.totales }, { filas: 5, invalidas: 1, nuevas: 2, ya_en_registro: 1, ya_eran_semilla: 0, repetidas: 1,
-    sin_dominio: 1, en_no_contactar: 0 });
+  assert.deepEqual({ ...pv.totales }, { filas: 5, invalidas: 1, nuevas: 2, prospectar: 0, semillas: 2, suma_a_existente: 0,
+    ya_en_registro: 1, ya_eran_semilla: 0, repetidas: 1, sin_dominio: 1, en_no_contactar: 0, personas: 0, personas_ya_existen: 0,
+    personas_bloqueadas: 0 });
+  assert.ok(pv.filas.every((f) => f.uso === 'semilla' || f.error), 'una campaña que no es lista sólo toma semillas');
   const maule = pv.filas.find((f) => f.empresa === 'Frutícola Maule');
   assert.equal(maule.resultado, 'ya_en_registro');
   assert.equal(maule.existente.campana, principal.nombre);
@@ -373,7 +375,7 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   assert.match(rows[0].estado_motivo, /Semilla del ICP de la campaña «Exportadoras por ICP»/);
   assert.equal(rows[0].campana_id, icp.id);
   assert.deepEqual([rows[0].origen, rows[0].uso, rows[0].tesis, rows[0].tamano], ['archivo', 'semilla', 'Exporta a China', 'grande']);
-  assert.deepEqual(rows[0].datos_origen, { Región: 'Maule', Contacto: '=cmd|calc' }, 'lo no mapeado queda como dato, como texto');
+  assert.deepEqual(rows[0].datos_origen, { Región: 'Maule', 'Código interno': '=cmd|calc' }, 'lo no mapeado queda como dato, como texto');
   assert.equal(rows[1].nombre, 'Subsole');
   assert.equal(rows[1].dominio, null);
   const m = (await q(`select campana_id, uso from sdr.cuenta where client_id = $1 and dominio = 'maule.test'`, [A])).rows[0];
@@ -391,7 +393,7 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   assert.equal(vista.datos_origen, undefined);
   assert.equal(vista.tesis, undefined);
   assert.equal(vista.datos_del_cliente.nota, 'Exporta a China');
-  assert.deepEqual(vista.datos_del_cliente.columnas, { Región: 'Maule', Contacto: '=cmd|calc' });
+  assert.deepEqual(vista.datos_del_cliente.columnas, { Región: 'Maule', 'Código interno': '=cmd|calc' });
   assert.match(vista.datos_del_cliente.aviso, /no instrucciones/);
   const delBot = (await sdr.buscar(A, { dominio: 'maule.test' })).cuentas[0];
   assert.equal(delBot.datos_del_cliente, undefined, 'una cuenta del bot no lleva el aviso');
@@ -414,6 +416,122 @@ test('semillas: se cargan en su campaña, quedan excluidas con su perfil y no pi
   assert.equal(term.status, 400);
   assert.match(term.body.error.message, /terminada/);
   assert.equal((await u.a.call('POST', `/clients/${A}/sdr/campanas/no-es-un-id/cargas/previa`, { archivo, nombre: 'x.csv' })).status, 404);
+});
+
+// ---------------------------------------------------------------- campaña «Lista del cliente» (etapa 2)
+
+test('lista: se carga con sus contactos, no se activa vacía y el prospector la toma en orden sin repetir', async () => {
+  // Biguá crea la campaña de tipo lista; sin cuentas cargadas no se puede activar.
+  const k = ok(await u.bigua.call('POST', `/clients/${A}/sdr/campanas`, {
+    nombre: 'Base SAC', tipo: 'lista', cuentas_por_dia: 2,
+    ajustes: { propuesta: 'Logística para exportadoras', roles_objetivo: ['Gerente de comercio exterior'] },
+  })).campana;
+  const path = `/clients/${A}/sdr/campanas/${k.id}`;
+  let v = ok(await u.a.call('GET', path));
+  assert.ok(v.faltantes.some((f) => f.clave === 'lista'), JSON.stringify(v.faltantes));
+  assert.ok(!v.faltantes.some((f) => f.clave === 'icp'), 'una lista no pide ICP');
+
+  // El registro ya tiene: una cuenta del bot en investigación (suma contactos), una en contacto (no se
+  // toca), una persona con ese mail en otra cuenta, y una empresa en no contactar.
+  const viña = (await sdr.guardarCuenta(A, { nombre: 'Viña del Valle', dominio: 'valle.test' }, meta)).cuenta;
+  await sdr.guardarCuenta(A, { nombre: 'Frutas Andinas', dominio: 'andinas.test', estado: 'en_contacto' }, meta);
+  await sdr.guardarProspecto(A, { nombre: 'Ya Está', email: 'ya@otra-cuenta.test' }, meta);
+  await u.a.call('POST', `/clients/${A}/no-contactar`, { valor: 'prohibida.test', motivo: 'Cliente' });
+
+  const archivo = b64(Buffer.from([
+    'Empresa;Web;Nota;Contacto;Cargo;Mail;LinkedIn;Teléfono;Uso',
+    'Exportadora Uno;uno-exp.test;Exporta cerezas a China;Ana Pérez;Gerente Comex;Ana@Uno-Exp.test;linkedin.com/in/ana-perez-uno;+56 9 1234 5678;',
+    'Exportadora Uno;uno-exp.test;;Beto Soto;Jefe de logística;beto@uno-exp.test;;;',
+    'Exportadora Dos;;;;;;;;',
+    'Viña del Valle;valle.test;Nota nueva;Carla;Gerenta;carla@valle.test;;;',
+    'Frutas Andinas;andinas.test;;Dario;CEO;dario@andinas.test;;;',
+    'Prohibida SA;prohibida.test;;Eva;CEO;eva@prohibida.test;;;',
+    'Exportadora Tres;tres.test;;Fede;CEO;ya@otra-cuenta.test;https://evil.test/in/x;;',
+    'Cliente Modelo;modelo.test;Es nuestro mejor cliente;;;;;;semilla',
+  ].join('\n'), 'utf8'));
+  const pv = ok(await u.a.call('POST', `${path}/cargas/previa`, { archivo, nombre: 'base-sac.csv' }));
+  assert.equal(pv.uso, 'prospectar');
+  assert.deepEqual(Object.keys(pv.mapeo).sort(), ['contacto_cargo', 'contacto_email', 'contacto_linkedin', 'contacto_nombre',
+    'contacto_telefono', 'dominio', 'empresa', 'nota', 'uso'].sort());
+  const t = pv.totales;
+  assert.equal(t.prospectar, 3, JSON.stringify(t)); // Uno, Dos, Tres (Prohibida entra excluida)
+  assert.equal(t.semillas, 1);
+  assert.equal(t.nuevas, 5);
+  assert.equal(t.suma_a_existente, 1);
+  assert.equal(t.ya_en_registro, 1);
+  assert.equal(t.en_no_contactar, 1);
+  assert.equal(t.personas, 3, 'Ana, Beto y Carla');
+  assert.equal(t.personas_ya_existen, 2, 'Fede (mail de otra cuenta) y Eva (empresa en no contactar)');
+  assert.ok(pv.avisos.some((x) => x.avisos.some((a) => /no es un perfil de LinkedIn/.test(a))));
+  const fila = (n) => pv.filas.find((f) => f.renglon === n);
+  assert.equal(fila(3).resultado, 'suma_contacto');
+  assert.equal(fila(6).resultado, 'ya_en_registro');
+  assert.equal(fila(6).existente.estado, 'en_contacto');
+  assert.equal(fila(9).uso, 'semilla');
+
+  const ap = ok(await u.a.call('POST', `${path}/cargas`, { archivo, nombre: 'base-sac.csv', huella: pv.huella }));
+  assert.equal(ap.lote.resumen.prospectar, 3);
+  assert.equal(ap.lote.resumen.personas, 3);
+
+  // El registro: personas con mail del cliente, en la campaña y del lote; Viña suma a Carla y su nota.
+  const { rows: ps } = await q(`select nombre, email, email_calidad, linkedin_url, whatsapp, campana_id, lote_id, estado
+                                  from sdr.prospecto where client_id = $1 and lote_id = $2 order by nombre`, [A, ap.lote.id]);
+  assert.deepEqual(ps.map((p) => p.nombre), ['Ana Pérez', 'Beto Soto', 'Carla']);
+  assert.equal(ps[0].email, 'ana@uno-exp.test');
+  assert.equal(ps[0].email_calidad, 'del_cliente');
+  assert.equal(ps[0].linkedin_url, 'https://www.linkedin.com/in/ana-perez-uno');
+  assert.equal(ps[0].whatsapp, '+56912345678');
+  assert.equal(ps[0].campana_id, k.id);
+  assert.equal(ps[2].campana_id, viña.campana_id, 'Carla va a la campaña de su cuenta, que no se movió');
+  assert.equal((await q(`select tesis from sdr.cuenta where id = $1`, [viña.id])).rows[0].tesis, 'Nota nueva');
+  const prohibida = (await q(`select estado, uso from sdr.cuenta where client_id = $1 and dominio = 'prohibida.test'`, [A])).rows[0];
+  assert.deepEqual(prohibida, { estado: 'excluida', uso: 'prospectar' });
+
+  // Ya se puede activar; el panel muestra cuántas quedan.
+  v = ok(await u.a.call('GET', path));
+  assert.ok(!v.faltantes.some((f) => f.clave === 'lista'), JSON.stringify(v.faltantes));
+  assert.equal(v.campana.cuentas_de_lista, 3);
+  let lista = ok(await u.a.call('GET', `${path}/lista`)).lista;
+  assert.deepEqual(lista, { cargadas: 4, sin_trabajar: 3, en_curso: 0, cerradas: 1, semillas: 1 });
+
+  // El prospector las toma en el orden del archivo, con sus personas y la nota como dato del cliente.
+  let r = await sdr.cuentasDeLista(A, { campana: k.clave, limite: 2 });
+  assert.equal(r.quedan, 3);
+  assert.deepEqual(r.cuentas.map((x) => x.nombre), ['Exportadora Uno', 'Exportadora Dos']);
+  assert.deepEqual(r.cuentas[0].personas.map((p) => p.nombre), ['Ana Pérez', 'Beto Soto']);
+  assert.equal(r.cuentas[0].datos_del_cliente.nota, 'Exporta cerezas a China');
+  assert.equal(r.cuentas[0].tesis, undefined);
+  assert.equal(r.cuentas[1].personas.length, 0, 'sin contacto: el prospector busca a quien decide');
+
+  // Trabajar una (una persona con próximo paso) y descartar otra: no vuelven a salir.
+  const ana = r.cuentas[0].personas[0];
+  await sdr.guardarProspecto(A, { id: ana.id, proximo_paso: 'enviar mail 1 cuando se apruebe' }, meta);
+  await sdr.guardarCuenta(A, { id: r.cuentas[1].id, estado: 'descartada', estado_motivo: 'sin contacto en ASCI ni Apollo' }, meta);
+  r = await sdr.cuentasDeLista(A, { campana: k.clave });
+  assert.deepEqual(r.cuentas.map((x) => x.nombre), ['Exportadora Tres']);
+  assert.equal(r.quedan, 1);
+  await sdr.guardarCuenta(A, { id: r.cuentas[0].id, estado: 'descartada' }, meta);
+  r = await sdr.cuentasDeLista(A, { campana: k.clave });
+  assert.equal(r.quedan, 0);
+  assert.match(r.aviso, /se terminó/);
+  lista = ok(await u.a.call('GET', `${path}/lista`)).lista;
+  assert.deepEqual(lista, { cargadas: 4, sin_trabajar: 0, en_curso: 1, cerradas: 3, semillas: 1 });
+
+  // Otra campaña no es una lista; y a una campaña que no es lista no se le cargan cuentas para prospectar.
+  await assert.rejects(sdr.cuentasDeLista(A, { campana: 'principal' }), (e) => e.code === 'campana_no_es_lista');
+  const principal = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas`)).campanas.find((x) => x.clave === 'principal');
+  const enPrincipal = ok(await u.a.call('POST', `/clients/${A}/sdr/campanas/${principal.id}/cargas/previa`, {
+    archivo: b64(Buffer.from('empresa,uso\nPara Prospectar,prospectar\nModelo Dos,semilla\n')), nombre: 'x.csv' }));
+  assert.match(enPrincipal.invalidas[0].motivo, /no es una «Lista del cliente»/);
+  assert.equal(enPrincipal.totales.semillas, 1);
+
+  // Los bots ven en la sección de la campaña que es una lista y cómo tomar sus cuentas.
+  const cfg = { ajustes: { nombre_comercial: 'A SA' }, calibracion_mails: 20, bots_activos: ['orquestador', 'prospector'] };
+  const secciones = sdr.seccionesCliente(A, 'Carga A', cfg, { buzones: [], noContactar: { dominios: 0, emails: 0, empresas: 0 },
+    campanas: [{ ...k, estado: 'activa', buzones: [], usadas: 0 }] });
+  const seccion = secciones.find((x) => x.seccion === `campana-${k.clave}`);
+  assert.match(seccion.contenido, /registro_cuentas_de_lista\(campana: "base-sac"\)/);
+  assert.match(seccion.contenido, /reglas_manual\(prospector, lista\)/);
 });
 
 // ---------------------------------------------------------------- aislamiento

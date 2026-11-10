@@ -1,7 +1,7 @@
 # Carga de cuentas y contactos por Excel
 
-Estado: **etapa 1 construida, 10/11/2026** (ver §0: lo que cambió respecto del diseño original);
-las etapas 2 y 3 siguen en diseño. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
+Estado: **etapas 1 y 2 construidas, 10/11/2026** (ver §0: lo que cambió respecto del diseño
+original); la etapa 3 sigue en diseño. Sale de la reunión con Alberto Veloso (09/11): trabaja con un Excel
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
@@ -30,6 +30,19 @@ plan); `no_contactar.mjs` (empresas por nombre, coincidencias por cuenta y por n
 `admin/api.mjs` (`POST …/no-contactar/cargas/previa`, `POST …/no-contactar/cargas`,
 `POST …/sdr/campanas/:id/cargas/previa`, `POST …/sdr/campanas/:id/cargas`, `GET …/cargas`, auditoría
 `admin.sdr.carga` con conteos); el panel (`static/app.js`); y `test/carga.test.mjs`.
+
+### Etapa 2: la campaña «Lista del cliente»
+
+| Tema | Cómo quedó |
+|---|---|
+| Tipo de campaña | `lista` en `TIPOS` (migración `019_campana_lista.sql`). No pide ICP ni señal; pide propuesta, cargos y **al menos una cuenta cargada** (`cuentas_de_lista`, que sale de los lotes aplicados). El tipo lo elige Biguá, como siempre |
+| Qué se sube en una campaña | Una lista prospecta por defecto; la columna opcional **Uso** («semilla») marca una empresa modelo. Una campaña que no es lista sólo toma semillas: una fila `prospectar` ahí es un error de la fila (decisión 2) |
+| Contactos del archivo | Una persona por fila (nombre, cargo, mail, teléfono, LinkedIn), con **mail o LinkedIn**; si no, la fila entra sin persona y el `prospector` busca a quien decide. El mail queda con calidad **`del_cliente`** (decisión 1: ni verificado ni deducido). Dos filas de la misma empresa son una cuenta con dos personas. No se carga una persona que ya está en el registro, en la supresión o en no contactar |
+| Choques (§4.3) | Cuenta en investigación: suma los contactos y la nota, y queda en su campaña. En otro estado: no se toca. En no contactar: entra `excluida`, sin personas |
+| `acepta_mails_del_cliente` | Ajuste de la campaña («Acepta los mails del archivo»), sí si no dice nada. Lo aplica el `prospector` (como los extrapolados), no el gateway |
+| `registro_cuentas_de_lista(campana, limite)` | Las próximas cuentas **sin trabajar**, en el orden del archivo, con sus personas y lo del cliente en `datos_del_cliente`. Sin trabajar: en investigación y ninguna de sus personas avanzó (otro estado, próximo paso, Dripify o una aprobación), así una cuenta que espera su aprobación no se repite. `quedan` dice cuántas faltan; con 0, un aviso. Una campaña de otro tipo: `campana_no_es_lista` |
+| Reglas | `prospector/lista.md` (tomar, completar dominio y decisor, escribir con la nota del cliente, descartar si no hay a quién); `prospector/diaria.md` deriva ahí; `orquestador/diaria.md` pide como a las demás y avisa cuando la lista se termina; `comun.md` suma `campana_no_es_lista`. La sección de cada campaña lista se lo dice al bot |
+| Panel | En una campaña lista, la tarjeta «Cuentas de la lista» con cuántas quedan sin trabajar, en curso y cerradas (`GET …/sdr/campanas/:id/lista`), y la vista previa con el uso y el contacto de cada fila |
 
 **Quedan para la etapa 3:** deshacer un lote, el informe descargable por renglón, el mapeo
 guardado por cliente y `cargas_listar` en el MCP del panel.
@@ -274,7 +287,7 @@ días).
 | Etapa | Qué | Sale cuando |
 |---|---|---|
 | **1** (construida) | Migración, `carga.mjs`, panel con previa y aplicación, usos `no_contactar` (a la lista de siempre, con empresas por nombre) y `semilla`, y el arreglo de §4.4 | La lista de referidos y clientes de Alberto queda cargada y el bot no la toca |
-| **2** | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
+| **2** (construida) | Tipo de campaña `lista`, `registro_cuentas_de_lista`, `prospector/lista.md` | El `prospector` escribe a 4 cuentas de la base del SAC con aprobación |
 | **3** | Deshacer, informe descargable, mapeo guardado, `cargas_listar` en el MCP del panel | El cliente sube su archivo solo |
 
 La etapa 1 es lo que hace falta antes del kickoff con Alberto; la 2, antes de que salga su primer

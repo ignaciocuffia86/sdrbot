@@ -178,6 +178,11 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
     const c = [`Campaña ${enCampana.citaNombre(k.nombre)} (\`${k.clave}\`), ${k.tipo}, **${k.estado}**. Vale para las cuentas y personas de esta ` +
       'campaña, junto con lo de Empresa (las exclusiones y las objeciones de acá ya suman las de Empresa).',
     `Calibración: ${textoCalibracion(total(k), k.usadas)}`];
+    if (k.tipo === 'lista') {
+      c.push('', '**Lista del cliente:** esta campaña no busca cuentas por avisos. Sus cuentas son las que cargó el cliente desde un ' +
+        `archivo: salen con \`registro_cuentas_de_lista(campana: "${k.clave}")\`, en su orden. Para trabajarlas, seguí la tarea ` +
+        '`lista` del prospector (`reglas_manual(prospector, lista)`).');
+    }
     if (Object.keys(propios).length) c.push('', AVISO_DATOS_CLIENTE, ...lineasDeAjustes(propios, tituloCampana));
     out.push({ seccion: `campana-${k.clave}`, titulo: `Campaña: ${enCampana.citaNombre(k.nombre)}`,
       resumen: `Lo de la campaña ${enCampana.citaNombre(k.nombre)} (${k.estado}): propuesta, a quién, qué es positivo.`, contenido: c.join('\n') });
@@ -586,6 +591,41 @@ export async function aplicarNoContactar(clientId, filas, { meta = { bot: 'panel
         ${frenar.replace(/^from sdr\.prospecto/, '')}`, args);
     // En contacto o en pausa: no cambian de estado, pero ya no sale nada nuevo para ellas.
     return { cuentas_excluidas: excluidas, cuentas_en_marcha: enMarcha, frenos, cuentas: muestra };
+  });
+}
+
+// Las próximas cuentas de una campaña «Lista del cliente» (docs/26 §5): las que el cliente cargó
+// para prospectar, en el orden del archivo, que nadie trabajó todavía. Trabajada: la cuenta salió de
+// investigación, o alguna de sus personas ya avanzó (otro estado, un próximo paso, Dripify o una
+// aprobación pedida). Así una cuenta que espera su aprobación no vuelve a salir al otro día.
+export const LIMITE_LISTA = 50;
+// Sobre «sdr.cuenta k», con $1 el cliente y $2 la campaña. La usan el bot y el panel.
+export const SQL_SIN_TRABAJAR = `k.client_id = $1 and k.campana_id = $2 and k.origen = 'archivo' and k.uso = 'prospectar'
+        and k.estado = 'en_investigacion'
+        and not exists (select 1 from sdr.prospecto p where p.client_id = k.client_id and p.cuenta_id = k.id
+              and (p.estado <> 'investigado' or p.proximo_paso is not null or p.dripify is not null
+                   or exists (select 1 from sdr.aprobacion a where a.client_id = p.client_id and a.prospecto_id = p.id)))`;
+export async function cuentasDeLista(clientId, { campana, limite }) {
+  return asClient(clientId, async (c) => {
+    const k = await enCampana.porClave(c, clientId, campana);
+    if (k.tipo !== 'lista') {
+      throw new GatewayError('campana_no_es_lista',
+        `La campaña ${enCampana.citaNombre(k.nombre)} no es una «Lista del cliente»: sus cuentas salen de la búsqueda de siempre.`, 409);
+    }
+    const tope = Math.min(Math.max(1, limite ?? k.cuentas_por_dia ?? 5), LIMITE_LISTA);
+    const sinTrabajar = SQL_SIN_TRABAJAR;
+    const { rows: cuentas } = await c.query(
+      `select k.* from sdr.cuenta k where ${sinTrabajar} order by k.prioridad nulls last, k.creado_at limit $3`, [clientId, k.id, tope]);
+    const { rows: [{ quedan }] } = await c.query(`select count(*)::int as quedan from sdr.cuenta k where ${sinTrabajar}`, [clientId, k.id]);
+    const { rows: personas } = await c.query(
+      `select id, cuenta_id, nombre, cargo, email, email_calidad, linkedin_url, whatsapp, estado from sdr.prospecto
+        where client_id = $1 and cuenta_id = any($2) order by creado_at`, [clientId, cuentas.map((x) => x.id)]);
+    return {
+      campana: k.clave,
+      quedan,
+      cuentas: cuentas.map((x) => ({ ...cuentaParaBot(x), personas: personas.filter((p) => p.cuenta_id === x.id) })),
+      ...(quedan === 0 ? { aviso: 'La lista de esta campaña se terminó: no quedan cuentas cargadas sin trabajar. Avisale al orquestador.' } : {}),
+    };
   });
 }
 

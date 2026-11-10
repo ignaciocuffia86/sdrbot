@@ -850,11 +850,27 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
     h('section', {}, h('h2', {}, 'Historial de cambios'), historial));
 }
 
-// Las cuentas de la campaña que vienen de un archivo. En la etapa 1, semillas del ICP (docs/26 §2):
-// empresas modelo que no reciben nada.
+// Las cuentas de la campaña que vienen de un archivo (docs/26): en una «Lista del cliente», las que
+// el SDR prospecta en el orden del archivo; en cualquier campaña, las semillas del ICP (empresas
+// modelo que no reciben nada).
+// Los lotes de la etapa 1 sólo traían semillas, contadas en «nuevas».
+const semillasDe = (r) => r.semillas ?? (r.prospectar === undefined ? r.nuevas ?? 0 : 0);
+
 async function semillasCard({ clientId, path, k, terminada }) {
   const card = h('section', { class: 'card' });
   const lista = h('div');
+  const esLista = k.tipo === 'lista';
+  const estado = h('div');
+  const pintarEstado = async () => {
+    if (!esLista) return;
+    const { lista: x } = await api('GET', `${path}/lista`);
+    estado.replaceChildren(...[h('ul', { class: 'carga-totales' },
+      [[x.sin_trabajar, 'sin trabajar'], [x.en_curso, 'en curso'], [x.cerradas, 'excluida o descartada', 'excluidas o descartadas'],
+        [x.semillas, 'semilla', 'semillas']]
+        .map(([n, uno, varios]) => h('li', {}, h('strong', {}, String(n)), ' ', n === 1 || !varios ? uno : varios))),
+    x.cargadas && !x.sin_trabajar ? h('p', { class: 'note' }, 'La lista se terminó: cargá más cuentas o terminá la campaña.') : null]
+      .filter(Boolean));
+  };
   const pintarLotes = async () => {
     const { cargas } = await api('GET', `/clients/${enc(clientId)}/cargas`);
     const deEsta = cargas.filter((x) => x.campana_id === k.id);
@@ -862,22 +878,32 @@ async function semillasCard({ clientId, path, k, terminada }) {
       ? h('table', {}, h('thead', {}, h('tr', {}, ['Archivo', 'Cuándo', 'Quién', 'Resultado'].map((x) => h('th', {}, x)))),
         h('tbody', {}, deEsta.map((x) => h('tr', {}, h('td', {}, x.archivo, x.hoja ? h('div', { class: 'small muted' }, `hoja «${x.hoja}»`) : null),
           h('td', { class: 'small' }, fmtDate(x.creado_at)), h('td', { class: 'small' }, x.por_email),
-          h('td', { class: 'small' }, `${plural(x.resumen.nuevas ?? 0, 'semilla nueva', 'semillas nuevas')}` +
-            `${x.resumen.ya_en_registro ? `, ${plural(x.resumen.ya_en_registro, 'ya estaba', 'ya estaban')} en el registro` : ''}`)))))
+          h('td', { class: 'small' }, [x.resumen.prospectar ? plural(x.resumen.prospectar, 'cuenta para prospectar', 'cuentas para prospectar') : null,
+            semillasDe(x.resumen) ? plural(semillasDe(x.resumen), 'semilla', 'semillas') : null,
+            x.resumen.personas ? plural(x.resumen.personas, 'persona', 'personas') : null,
+            x.resumen.ya_en_registro ? `${plural(x.resumen.ya_en_registro, 'ya estaba', 'ya estaban')} en el registro` : null]
+            .filter(Boolean).join(', ') || 'nada nuevo')))))
       : h('p', { class: 'muted small' }, 'Todavía no se cargó ningún archivo en esta campaña.'));
   };
   const subir = h('button', { type: 'button', disabled: terminada || null, onclick: () => cargaArchivoDialog({
-    titulo: `Subir semillas a «${k.nombre}»`, path: `${path}/cargas`, destino: 'campana',
-    ayuda: 'Empresas que son el modelo de lo que busca esta campaña (clientes o empresas ideales). Quedan en el registro con su rubro, tamaño ' +
-      'y nota, marcadas como semillas: el SDR no les escribe. Una empresa que ya está en el registro no se toca. Nada se guarda hasta confirmar.',
-    alTerminar: () => pintarLotes(),
+    titulo: esLista ? `Subir cuentas a «${k.nombre}»` : `Subir semillas a «${k.nombre}»`, path: `${path}/cargas`, destino: 'campana',
+    ayuda: esLista
+      ? 'Cada fila es una empresa que el SDR va a prospectar, en el orden del archivo, con la persona de la fila si la trae (si no, busca a ' +
+        'quien decide). La nota para el bot es el motivo del primer mail. Con la columna «Uso» en «semilla», la fila es una empresa modelo y ' +
+        'no recibe nada. Una empresa que ya está en el registro no se mueve. Nada se guarda hasta confirmar.'
+      : 'Empresas que son el modelo de lo que busca esta campaña (clientes o empresas ideales). Quedan en el registro con su rubro, tamaño ' +
+        'y nota, marcadas como semillas: el SDR no les escribe. Una empresa que ya está en el registro no se toca. Nada se guarda hasta confirmar.',
+    alTerminar: () => { pintarLotes(); pintarEstado(); },
   }) }, 'Subir Excel o CSV');
   card.append(
-    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, 'Semillas del ICP'), subir),
-    h('p', { class: 'small muted' }, 'Las cuentas modelo de esta campaña, cargadas desde un archivo. Para que el SDR no toque a una empresa en ' +
-      'ninguna campaña (un cliente o un referido), va a Empresa → No contactar.'),
-    lista);
-  await pintarLotes();
+    h('div', { class: 'row spread' }, h('h2', { class: 'first' }, esLista ? 'Cuentas de la lista' : 'Semillas del ICP'), subir),
+    h('p', { class: 'small muted' }, esLista
+      ? 'Las empresas que esta campaña prospecta, cargadas desde un archivo. Para que el SDR no toque a una empresa en ninguna campaña ' +
+        '(un cliente o un referido), va a Empresa → No contactar.'
+      : 'Las cuentas modelo de esta campaña, cargadas desde un archivo. Para prospectar una lista dada, la campaña tiene que ser de tipo ' +
+        '«Lista del cliente». Para que el SDR no toque a una empresa en ninguna campaña, va a Empresa → No contactar.'),
+    estado, lista);
+  await Promise.all([pintarLotes(), pintarEstado()]);
   return card;
 }
 
@@ -897,7 +923,10 @@ function aBase64(buf) {
 const RESULTADO_CARGA = {
   nueva: ['entra', 'b-ok'], ya_estaba: ['ya estaba', 'b-mute'], repetida: ['repetida en el archivo', 'b-mute'],
   ya_en_registro: ['ya está en el registro', 'b-warn'], ya_era_semilla: ['ya era semilla', 'b-mute'],
+  suma_contacto: ['otra persona de la misma empresa', 'b-ok'], suma_a_existente: ['ya estaba: suma el contacto', 'b-ok'],
+  ya_existe: ['la persona ya está', 'b-mute'], no_contactar: ['en no contactar', 'b-err'], suprimida: ['pidió la baja', 'b-err'],
 };
+const USO_CARGA = { prospectar: 'prospectar', semilla: 'semilla' };
 const resultadoBadge = (r) => { const [label, cls] = RESULTADO_CARGA[r] ?? [r ?? '—', 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
 const ENTRA_COMO = { dominio: 'dominio', empresa: 'nombre', email: 'mail' };
 const ESTADO_CUENTA = { en_investigacion: 'en investigación', en_contacto: 'en contacto', en_pausa: 'en pausa', excluida: 'excluida', descartada: 'descartada' };
@@ -965,9 +994,13 @@ function cargaArchivoDialog({ titulo, path, destino, ayuda, alTerminar }) {
       ? [[t.nuevas, 'entra a la lista', 'entran a la lista'], [t.por_dominio, 'por dominio'], [t.por_nombre, 'por nombre, sin dominio'],
         [t.mails, 'mail de un contacto', 'mails de contactos'], [t.ya_estaban, 'ya estaba', 'ya estaban'],
         [t.repetidas, 'repetida en el archivo', 'repetidas en el archivo'], [t.invalidas, 'fila con errores', 'filas con errores']]
-      : [[t.nuevas, 'semilla nueva', 'semillas nuevas'], [t.sin_dominio, 'sin dominio'],
+      : [[t.prospectar, 'cuenta para prospectar', 'cuentas para prospectar'], [t.semillas, 'semilla nueva', 'semillas nuevas'],
+        [t.personas, 'persona nueva', 'personas nuevas'], [t.sin_dominio, 'sin dominio'],
+        [t.suma_a_existente, 'ya estaba en investigación (suma sus contactos)', 'ya estaban en investigación (suman sus contactos)'],
         [t.ya_en_registro, 'ya está en el registro (no se toca)', 'ya están en el registro (no se tocan)'],
         [t.ya_eran_semilla, 'ya era semilla', 'ya eran semillas'], [t.repetidas, 'repetida en el archivo', 'repetidas en el archivo'],
+        [t.personas_ya_existen, 'persona ya estaba', 'personas ya estaban'],
+        [t.personas_bloqueadas, 'persona en no contactar o con baja', 'personas en no contactar o con baja'],
         [t.en_no_contactar, 'también en no contactar'], [t.invalidas, 'fila con errores', 'filas con errores']];
     const efecto = p.efecto && (p.efecto.cuentas_excluidas || p.efecto.cuentas_en_marcha || p.efecto.frenos) ? h('div', { class: 'note' },
       h('strong', {}, 'Al confirmar: '),
@@ -986,14 +1019,17 @@ function cargaArchivoDialog({ titulo, path, destino, ayuda, alTerminar }) {
   function filasUI(p) {
     const problemas = [...p.invalidas.map((x) => `renglón ${x.renglon}: ${x.motivo}`),
       ...p.avisos.map((x) => `renglón ${x.renglon}: ${x.avisos.join('; ')}`)];
-    const cabeza = destino === 'no_contactar' ? ['Renglón', 'Empresa', 'Entra como', 'Motivo'] : ['Renglón', 'Empresa', 'Dominio', 'Rubro', 'Qué pasa'];
+    const cabeza = destino === 'no_contactar' ? ['Renglón', 'Empresa', 'Entra como', 'Motivo'] : ['Renglón', 'Empresa', 'Dominio', 'Uso', 'Contacto', 'Qué pasa'];
     const fila = (f) => (destino === 'no_contactar'
       ? h('tr', {}, h('td', { class: 'small' }, String(f.renglon)), h('td', {}, f.empresa ?? '—'),
         h('td', { class: 'small' }, f.error ? h('span', { class: 'badge b-err' }, f.error)
           : f.entradas.map((e) => h('div', {}, `${ENTRA_COMO[e.tipo]}: `, h('span', { class: 'mono' }, e.valor), ' ', resultadoBadge(e.resultado)))),
         h('td', { class: 'small' }, f.motivo ?? '—'))
-      : h('tr', {}, h('td', { class: 'small' }, String(f.renglon)), h('td', {}, f.empresa ?? '—'), h('td', { class: 'small mono' }, f.dominio ?? '—'),
-        h('td', { class: 'small' }, f.vertical ?? '—'),
+      : h('tr', {}, h('td', { class: 'small' }, String(f.renglon)),
+        h('td', {}, f.empresa ?? '—', f.vertical ? h('div', { class: 'small muted' }, f.vertical) : null), h('td', { class: 'small mono' }, f.dominio ?? '—'),
+        h('td', { class: 'small' }, USO_CARGA[f.uso] ?? '—'),
+        h('td', { class: 'small' }, f.persona ? [h('div', {}, f.persona.nombre, f.persona.cargo ? ` · ${f.persona.cargo}` : ''),
+          f.persona.email ? h('div', { class: 'mono' }, f.persona.email) : null, f.persona.resultado ? resultadoBadge(f.persona.resultado) : null] : '—'),
         h('td', { class: 'small' }, f.error ? h('span', { class: 'badge b-err' }, f.error) : resultadoBadge(f.resultado),
           f.existente ? h('div', { class: 'muted' }, `${ESTADO_CUENTA[f.existente.estado] ?? f.existente.estado}${f.existente.campana ? `, campaña «${f.existente.campana}»` : ''}`) : null,
           f.en_no_contactar ? h('div', { class: 'muted' }, 'está en no contactar') : null)));

@@ -14,6 +14,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { GatewayError } from '../errors.mjs';
 import * as noContactar from './no_contactar.mjs';
+import { normalizeLinkedin } from './linkedin.mjs';
 
 export const MAX_BYTES = 3 * 1024 * 1024;
 export const MAX_FILAS = 2000;
@@ -40,10 +41,16 @@ export const CAMPOS = {
   nota: { titulo: 'Nota para el bot', nombres: ['nota para el bot', 'nota', 'notas', 'comentario', 'comentarios', 'observaciones', 'por que'] },
   motivo: { titulo: 'Motivo', nombres: ['motivo', 'razon', 'por que no', 'observacion', 'observaciones', 'comentario'] },
   contacto_email: { titulo: 'Mail del contacto', nombres: ['mail', 'email', 'e mail', 'correo', 'correo electronico', 'mail contacto'] },
+  uso: { titulo: 'Uso (prospectar o semilla)', nombres: ['uso', 'tipo de fila', 'semilla'] },
+  contacto_nombre: { titulo: 'Contacto: nombre', nombres: ['contacto', 'nombre contacto', 'nombre del contacto', 'persona', 'nombre y apellido'] },
+  contacto_cargo: { titulo: 'Contacto: cargo', nombres: ['cargo', 'puesto', 'rol', 'titulo', 'position', 'title'] },
+  contacto_telefono: { titulo: 'Contacto: teléfono', nombres: ['telefono', 'celular', 'movil', 'whatsapp', 'phone', 'tel'] },
+  contacto_linkedin: { titulo: 'Contacto: LinkedIn', nombres: ['linkedin', 'perfil linkedin', 'url linkedin', 'linkedin url'] },
 };
 
 export const CAMPOS_DE = {
-  campana: ['empresa', 'dominio', 'pais', 'vertical', 'tamano', 'rut', 'nota'],
+  campana: ['empresa', 'dominio', 'pais', 'vertical', 'tamano', 'rut', 'nota', 'uso',
+    'contacto_nombre', 'contacto_cargo', 'contacto_email', 'contacto_telefono', 'contacto_linkedin'],
   no_contactar: ['empresa', 'dominio', 'motivo', 'contacto_email'],
 };
 
@@ -415,6 +422,38 @@ function normalizarFila(f, mapeo, encabezados, destino) {
     }
     return fila;
   }
+  const uso = normalizarEncabezado(v('uso'));
+  if (uso) {
+    if (/^(semilla|modelo|icp|referencia)/.test(uso)) fila.uso = 'semilla';
+    else if (/^(prospect|contact|escrib|lista)/.test(uso) || /^(si|s)$/.test(uso)) fila.uso = 'prospectar';
+    else avisos.push(`«${v('uso').slice(0, 40)}» no es un uso (prospectar o semilla): va el de la campaña`);
+  }
+  // Una persona por fila (docs/26 §3.2). Sin nombre, el mail o el perfil hacen de nombre.
+  const persona = {};
+  const mail = v('contacto_email');
+  if (mail) {
+    const n = noContactar.normalizar(mail);
+    if (n?.tipo === 'email') persona.email = n.valor;
+    else avisos.push(`«${mail.slice(0, 60)}» no es un mail: no se carga`);
+  }
+  const li = v('contacto_linkedin');
+  if (li) {
+    try { persona.linkedin_url = normalizeLinkedin(li); } catch { avisos.push(`«${li.slice(0, 80)}» no es un perfil de LinkedIn: no se carga`); }
+  }
+  const tel = v('contacto_telefono');
+  if (tel) {
+    const t = tel.replace(/[ ().-]/g, '');
+    if (/^\+?[0-9]{6,20}$/.test(t)) persona.whatsapp = t;
+    else avisos.push(`«${tel.slice(0, 30)}» no es un teléfono: no se carga`);
+  }
+  persona.cargo = recortar(v('contacto_cargo'), 200);
+  persona.nombre = recortar(v('contacto_nombre'), 200);
+  if (persona.email || persona.linkedin_url) {
+    persona.nombre = persona.nombre || persona.email || persona.linkedin_url.split('/in/')[1];
+    fila.persona = persona;
+  } else if (persona.nombre || persona.cargo || persona.whatsapp) {
+    avisos.push('el contacto no tiene mail ni LinkedIn: no se carga (el prospector busca a quien decide)');
+  }
   fila.pais = recortar(v('pais'), 80);
   fila.vertical = recortar(v('vertical'), 200);
   fila.tamano = recortar(v('tamano'), 80);
@@ -493,16 +532,28 @@ export async function planNoContactar(c, clientId, filas) {
   return { entradas: conClave, nuevas, sinClave: invalidas };
 }
 
-// ---------------------------------------------------------------- semillas de una campaña
+// ---------------------------------------------------------------- cuentas de una campaña
 
-// Qué pasa con cada fila en una campaña: una cuenta nueva, o una que ya está en el registro (no se
-// toca: una cuenta está en una sola campaña, docs/21 §4.3). c: con el rol de la aplicación.
-export async function planSemillas(c, clientId, campana, filas) {
-  const validas = filas.filter((f) => !f.error);
+// Qué pasa con cada fila en una campaña (docs/26 §4.3). El uso de la fila (prospectar o semilla)
+// sale de su columna o, si no la trae, de la campaña: una «Lista del cliente» prospecta; las demás
+// sólo toman semillas (decisión 2). c: con el rol de la aplicación. Deja en cada fila:
+//   resultado  nueva | suma_contacto (otra fila de la misma empresa) | suma_a_existente (ya estaba
+//              en investigación: se le suman los contactos y la nota) | ya_en_registro (en otro
+//              estado: no se toca) | ya_era_semilla | repetida (semilla repetida en el archivo)
+//   persona.resultado  nueva | ya_existe | repetida | no_contactar | suprimida
+export async function planCampana(c, clientId, campana, filas) {
+  const esLista = campana.tipo === 'lista';
+  const validas = [];
+  for (const f of filas) {
+    if (f.error) continue;
+    f.uso = f.uso ?? (esLista ? 'prospectar' : 'semilla');
+    if (f.uso === 'prospectar' && !esLista) { f.error = 'esta campaña no es una «Lista del cliente»: sólo toma semillas'; continue; }
+    validas.push(f);
+  }
   const ks = await noContactar.claves(c, validas.map((f) => f.empresa));
   validas.forEach((f, i) => { f.clave = ks[i]; });
   const { rows: existentes } = await c.query(
-    `select k.id, k.nombre, k.dominio, k.nombre_clave, k.estado, k.uso, k.campana_id, cp.nombre as campana
+    `select k.id, k.nombre, k.dominio, k.nombre_clave, k.estado, k.uso, k.campana_id, k.tesis, cp.nombre as campana
        from sdr.cuenta k left join sdr.campana cp on cp.id = k.campana_id and cp.client_id = k.client_id
       where k.client_id = $1 and (k.dominio = any($2) or k.nombre_clave = any($3))`,
     [clientId, validas.map((f) => f.dominio).filter(Boolean), validas.map((f) => f.clave).filter(Boolean)]);
@@ -512,25 +563,113 @@ export async function planSemillas(c, clientId, campana, filas) {
   const nc = await noContactar.coincidencias(c, clientId, validas.map((f) => f.dominio).filter(Boolean),
     { nombres: validas.map((f) => f.empresa) });
   const enLista = new Set(nc.map((r) => r.para));
-  const vistas = new Set();
-  const nuevas = [];
+
+  // Las personas: las que ya están en el registro (mismo mail o LinkedIn), en la supresión o en no contactar.
+  const personas = validas.filter((f) => f.persona && f.uso === 'prospectar').map((f) => f.persona);
+  const mails = personas.map((p) => p.email).filter(Boolean);
+  const perfiles = personas.map((p) => p.linkedin_url).filter(Boolean);
+  const { rows: yaPersonas } = await c.query(
+    `select email, linkedin_url from sdr.prospecto where client_id = $1 and (email = any($2) or linkedin_url = any($3))`,
+    [clientId, mails, perfiles]);
+  const personaExiste = new Set([...yaPersonas.map((r) => r.email), ...yaPersonas.map((r) => r.linkedin_url)].filter(Boolean));
+  const { rows: sup } = await c.query(`select email from sdr.supresion where client_id = $1 and email = any($2)`, [clientId, mails]);
+  const suprimidos = new Set(sup.map((r) => r.email));
+  const mailsNc = new Set((await noContactar.coincidencias(c, clientId, mails)).map((r) => r.para));
+
+  const porLlave = new Map();
+  const cuentasNuevas = [];
+  const personasNuevas = [];
+  const vistasPersonas = new Set();
   let orden = 0;
   for (const f of validas) {
     if (!f.clave) { f.error = 'el nombre de la empresa queda vacío sin la forma societaria'; continue; }
     const llave = f.dominio ?? `#${f.clave}`;
-    // Sin dominio, la cuenta del registro con el mismo nombre (si no tiene un dominio distinto).
     const k = f.dominio ? porDominio.get(f.dominio) : porClave.get(f.clave);
-    if (vistas.has(llave)) f.resultado = 'repetida';
-    else if (k && k.uso === 'semilla' && k.campana_id === campana.id) f.resultado = 'ya_era_semilla';
-    else if (k) { f.resultado = 'ya_en_registro'; f.existente = { estado: k.estado, campana: k.campana, uso: k.uso }; } else {
+    f.en_no_contactar = enLista.has(f.empresa) || Boolean(f.dominio && enLista.has(f.dominio));
+    const previa = porLlave.get(llave);
+    // La cuenta destino de las personas de esta fila: { nueva: fila } o { id, campana_id } o nada.
+    let destino = null;
+    if (previa) {
+      if (f.uso === 'semilla' || previa.uso === 'semilla') f.resultado = 'repetida';
+      else { f.resultado = 'suma_contacto'; destino = previa.destino; }
+    } else if (k && k.uso === 'semilla' && k.campana_id === campana.id && f.uso === 'semilla') {
+      f.resultado = 'ya_era_semilla';
+    } else if (k && f.uso === 'prospectar' && k.estado === 'en_investigacion') {
+      f.resultado = 'suma_a_existente';
+      f.existente = { estado: k.estado, campana: k.campana, uso: k.uso };
+      f.cuenta_id = k.id;
+      destino = { id: k.id, campana_id: k.campana_id };
+    } else if (k) {
+      f.resultado = 'ya_en_registro';
+      f.existente = { estado: k.estado, campana: k.campana, uso: k.uso };
+    } else {
       f.resultado = 'nueva';
       f.prioridad = ++orden;
-      nuevas.push(f);
+      cuentasNuevas.push(f);
+      // Una cuenta para prospectar que está en no contactar entra excluida y sin personas.
+      if (!(f.uso === 'prospectar' && f.en_no_contactar)) destino = { nueva: f };
     }
-    if (enLista.has(f.empresa) || (f.dominio && enLista.has(f.dominio))) f.en_no_contactar = true;
-    vistas.add(llave);
+    if (!previa) porLlave.set(llave, { uso: f.uso, destino });
+    const p = f.persona;
+    if (p && f.uso === 'prospectar' && destino) {
+      const llaves = [p.email, p.linkedin_url].filter(Boolean);
+      if (llaves.some((x) => vistasPersonas.has(x))) p.resultado = 'repetida';
+      else if (llaves.some((x) => personaExiste.has(x))) p.resultado = 'ya_existe';
+      else if (p.email && suprimidos.has(p.email)) p.resultado = 'suprimida';
+      else if (p.email && mailsNc.has(p.email)) p.resultado = 'no_contactar';
+      else { p.resultado = 'nueva'; personasNuevas.push({ persona: p, destino, fila: f }); }
+      llaves.forEach((x) => vistasPersonas.add(x));
+    } else if (p && f.uso === 'prospectar') {
+      p.resultado = f.en_no_contactar ? 'no_contactar' : 'ya_existe';
+    }
   }
-  return { nuevas };
+  return { cuentasNuevas, personasNuevas, sumarNota: validas.filter((f) => f.resultado === 'suma_a_existente' && f.nota) };
+}
+
+// Escribe lo que planCampana decidió, en la transacción de quien llama (rol de la aplicación).
+// Devuelve cuántas cuentas y personas entraron de verdad (otra carga pudo ganar una fila).
+export async function aplicarCampana(c, clientId, campana, plan, { loteId, motivoSemilla, motivoNoContactar }) {
+  const idDe = new Map();
+  const creadas = await insertarEnTandas(plan.cuentasNuevas, async (t) => {
+    const { rows } = await c.query(
+      `insert into sdr.cuenta (client_id, nombre, dominio, pais, vertical, tamano, tesis, estado, estado_motivo, campana_id,
+                               origen, uso, lote_id, datos_origen, prioridad)
+       select $1, x.nombre, x.dominio, x.pais, x.vertical, x.tamano, x.tesis, x.estado, x.estado_motivo, $2, 'archivo', x.uso, $3,
+              coalesce(x.datos_origen, '{}'::jsonb), x.prioridad
+         from jsonb_to_recordset($4::jsonb) as x(nombre text, dominio text, pais text, vertical text, tamano text, tesis text,
+                                                 estado text, estado_motivo text, uso text, datos_origen jsonb, prioridad int)
+       on conflict do nothing returning id, prioridad, uso, estado`,
+      [clientId, campana.id, loteId, JSON.stringify(t.map((f) => ({
+        nombre: f.empresa, dominio: f.dominio ?? null, pais: f.pais, vertical: f.vertical, tamano: f.tamano, tesis: f.nota,
+        uso: f.uso, datos_origen: f.datos_origen, prioridad: f.prioridad,
+        estado: f.uso === 'prospectar' && !f.en_no_contactar ? 'en_investigacion' : 'excluida',
+        estado_motivo: f.uso === 'semilla' ? motivoSemilla : f.en_no_contactar ? motivoNoContactar : null,
+      })))]);
+    return rows;
+  });
+  for (const r of creadas) idDe.set(r.prioridad, r.id);
+  for (const f of plan.sumarNota) {
+    await c.query(`update sdr.cuenta set tesis = coalesce(tesis, $3), actualizado_at = now() where client_id = $1 and id = $2`,
+      [clientId, f.cuenta_id, f.nota]);
+  }
+  const filasPersonas = plan.personasNuevas.map(({ persona: p, destino }) => {
+    const cuentaId = destino.nueva ? idDe.get(destino.nueva.prioridad) : destino.id;
+    if (!cuentaId) return null;
+    return { cuenta_id: cuentaId, campana_id: destino.nueva ? campana.id : destino.campana_id, nombre: p.nombre, cargo: p.cargo,
+      email: p.email ?? null, email_calidad: p.email ? 'del_cliente' : null, linkedin_url: p.linkedin_url ?? null, whatsapp: p.whatsapp ?? null };
+  }).filter(Boolean);
+  const personas = await insertarEnTandas(filasPersonas, async (t) => (await c.query(
+    `insert into sdr.prospecto (client_id, cuenta_id, campana_id, nombre, cargo, email, email_calidad, linkedin_url, whatsapp, lote_id)
+     select $1, x.cuenta_id, x.campana_id, x.nombre, x.cargo, x.email, x.email_calidad, x.linkedin_url, x.whatsapp, $2
+       from jsonb_to_recordset($3::jsonb) as x(cuenta_id uuid, campana_id uuid, nombre text, cargo text, email text,
+                                               email_calidad text, linkedin_url text, whatsapp text)
+     on conflict do nothing returning id`, [clientId, loteId, JSON.stringify(t)])).rows);
+  return {
+    cuentas: creadas.length,
+    prospectar: creadas.filter((r) => r.uso === 'prospectar' && r.estado === 'en_investigacion').length,
+    semillas: creadas.filter((r) => r.uso === 'semilla').length,
+    personas: personas.length,
+  };
 }
 
 // Escribe de a tandas de 200 (una sola consulta grande con 2.000 filas pesa en la base) y junta lo
