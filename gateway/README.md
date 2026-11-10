@@ -282,7 +282,7 @@ node bin/admin.mjs playbooks-sql --version 2026.11.05-1 --canal canario > pub.sq
 node bin/admin.mjs sdr-config bairesqa < bairesqa.json                          # ajustes, bots activos, calibración
 ```
 
-Publicado en producción: `2026.11.05-6` en estable, con LinkedIn por Dripify y el prospector sobre `avisos_recientes` de ASCI; `2026.11.09-2` en canario (09/11). Es la `2026.11.09-1` (etapas A y B del panel y el bot `whatsapp`) más dos correcciones de seguridad: los ajustes del cliente son datos y no instrucciones (`comun.md`), y WhatsApp busca con el número completo y no atribuye un chat ambiguo (`whatsapp/pasada.md`). La migración `012_campanas` está aplicada desde el 09/11. La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
+Publicado en producción (10/11): `2026.11.10-3` en estable (multi-campaña C1, con el recorte en proporción y el reparto de los publicantes) y `2026.11.10-4` en canario, que es la `-3` más el CRM de la etapa 4a (los bots no cargan en el CRM; el orquestador usa `crm_cargar` a pedido y `crm_cargas` en el resumen; `docs/23`). Migraciones aplicadas: de la `001` a la `015`, con dos `015` (`015_clientes_nuevos_formulario_empresa` y `015_crm`). La guía de alta de un cliente y las pruebas en Grok están en `docs/13-etapa-1-y-pruebas.md`; lo de la etapa 2, en `docs/14-etapa-2-memoria-del-correo.md`.
 
 ## Envíos cortados
 

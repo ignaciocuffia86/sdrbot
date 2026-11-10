@@ -1,7 +1,8 @@
 # Carga en el CRM: variante mixta
 
 Estado: **decidido el 09/11/2026; etapa 4a (capa 1 con HubSpot) construida** en el gateway
-(migración `015_crm`, aplicada en producción el 10/11/2026; `src/sdr/crm.mjs`, `test/crm.test.mjs`). Revisa la carga en el CRM de
+(migración `015_crm`, aplicada en producción el 10/11/2026; `src/sdr/crm.mjs`, `test/crm.test.mjs`;
+reglas en canario desde la `2026.11.10-4`). Revisa la carga en el CRM de
 `11-datos-crm-y-seguimiento.md` (§5 y §6). Lo que está construido y cómo se usa está en §13. Lo que no se toca de `11` sigue igual: qué va al CRM (sólo lo positivo, lo que se le
 pida al bot y las bajas de personas que ya estaban), las exclusiones antes de prospectar (§7), las
 credenciales (§6.4) y el dashboard (§8).
