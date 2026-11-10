@@ -4,7 +4,8 @@
 
 1. `registro_agenda()`: prospectos con próximo paso vencido, pedidos pendientes por bot y
    aprobaciones que esperan.
-2. `registro_resumen()` de ayer (`desde` y `hasta` con la fecha de ayer) para ver cómo vino.
+2. `registro_resumen()` de ayer (`desde` y `hasta` con la fecha de ayer) para ver cómo vino, en
+   total y en cada campaña (`por_campana`).
 3. Pedidos al `prospector` con `registro_pedir`, **uno por cada campaña activa** de «Campañas de
    este cliente», con `campana` = su clave:
    - **cuántas cuentas nuevas** hoy: las «Cuentas nuevas por día» de esa campaña (si dice 0, ese

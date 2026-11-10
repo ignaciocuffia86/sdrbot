@@ -334,7 +334,27 @@ async function resumenView({ clientId, bigua, base }) {
     h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
       h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails))),
       h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
-  return h('div', { class: 'stack' }, atencion, semana, h('h2', {}, 'Canales'), canales);
+  // Las campañas activas y en pausa, con sus números de la semana (docs/21 §3.1). Mientras la pestaña
+  // Campañas sea sólo de Biguá, el bloque también.
+  const verCampanas = r.sdr_activo && (r.campanas?.length ?? 0) > 0 && (bigua || CAMPANAS_PARA_CLIENTES);
+  const estadoCamp = { activa: ['b-ok', 'activa'], pausada: ['b-mute', 'en pausa'] };
+  const calibTexto = (x) => (x.total > x.usados ? `${x.usados} de ${x.total}` : 'terminada');
+  const campanas = verCampanas ? h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Campañas · últimos 7 días'),
+    h('table', { class: 'campanas' },
+      h('thead', {}, h('tr', {}, ['Campaña', 'Estado', 'Cuentas por día', 'Mails', 'LinkedIn', 'Respuestas', 'Positivos', 'Calibración']
+        .map((x) => h('th', {}, x)))),
+      h('tbody', {}, r.campanas.map((k) => {
+        const [cls, txt] = estadoCamp[k.estado] ?? ['b-mute', k.estado];
+        return h('tr', {},
+          h('td', {}, h('a', { href: `${base}/campanas` }, k.nombre)),
+          h('td', {}, h('span', { class: `badge ${cls}` }, txt)),
+          h('td', {}, String(k.cuentas_por_dia)),
+          h('td', {}, String(k.semana.enviados)), h('td', {}, String(k.semana.linkedin)),
+          h('td', {}, String(k.semana.respuestas)), h('td', {}, String(k.semana.positivos)),
+          h('td', {}, calibTexto(k.calibracion)));
+      })))) : null;
+  return h('div', { class: 'stack' }, atencion, semana, campanas, h('h2', {}, 'Canales'), canales);
 }
 
 // ----- empresa: los ajustes que leen los bots

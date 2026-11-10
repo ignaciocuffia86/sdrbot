@@ -156,7 +156,7 @@ BairesQA                                                        ⚙
            WhatsApp ○ no configurado          CRM ○ no configurado
 ```
 
-Los números salen de `registro_resumen` (ya existe, por cliente; habría que abrirlo por campaña).
+Los números salen de `registro_resumen`, con el detalle de cada campaña en `por_campana` (§7.2, paso 3).
 
 ### 3.2 Campañas
 
@@ -561,8 +561,9 @@ punto donde se retoma.
    - **Aprobaciones y calibración:** las aprobaciones quedan en la campaña de la persona, y la
      calibración se cuenta por campaña. La «principal» sigue con el número de Administración.
    - **Clientes sin el SDR** (sólo el gateway de correo): no tienen campañas ni estos controles.
-2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho; falta publicar
-   las reglas en canario cuando el código esté en producción.
+2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho (PR #9) y
+   publicado en canario como `2026.11.10-1`. Estable sigue en `2026.11.05-6` hasta pasar a
+   BairesQA a las reglas nuevas.
    - `reglas_manual` arma, al final del índice, «Ajustes de este cliente: Empresa»
      (`ajustes-cliente`), «Campañas de este cliente» (`campanas`: clave, id, estado, cuentas por
      día, calibración y buzones de cada una) y una «Campaña: <nombre>» (`campana-<clave>`) por
@@ -577,7 +578,16 @@ punto donde se retoma.
    - El prospector trabaja cada pedido con la campaña del pedido, guarda con `campana` y carga
      LinkedIn de a una campaña por vez.
    - `seguimiento` lee la sección de la campaña del prospecto.
-3. **`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).
+   - Las cuentas por día de la principal son una sola: su columna. El formulario de Empresa, al
+     guardar `cuentas_por_dia`, la actualiza y controla la suma de las activas contra el tope.
+3. ~~**`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).~~
+   Hecho.
+   - `registro_resumen` trae los números del cliente y `por_campana` (eventos, prospectos por
+     estado y calibración de cada campaña que no es borrador); con `campana`, sólo los de esa
+     campaña. La calibración del cliente es la de su principal. Las corridas son del cliente.
+   - El panel muestra en Resumen la tabla «Campañas · últimos 7 días» (activas y en pausa), por
+     ahora sólo a Biguá, como la pestaña Campañas.
+   - El orquestador cuenta los números por campaña en el resumen del día.
 4. **Migración `014`** (§6.2, paso 3):
    - `descripcion` de Empresa;
    - borrar de Empresa las claves que pasaron a la campaña, salvo `acepta_mails_extrapolados`;

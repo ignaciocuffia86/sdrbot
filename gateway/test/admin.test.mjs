@@ -703,6 +703,12 @@ test('resumen: lo que necesita atención, para Biguá y para el cliente, sin cru
   assert.equal(d.dripify.cargado, true);
   assert.ok(d.despertadores, 'Biguá ve los despertadores');
   assert.ok(Array.isArray(d.corridas_con_error));
+  // Las campañas activas, con sus números de la semana y su calibración (la principal, con la de Administración).
+  const kp = d.campanas.find((k) => k.clave === 'principal');
+  assert.ok(kp, JSON.stringify(d.campanas));
+  assert.deepEqual(Object.keys(kp.semana).sort(), ['enviados', 'linkedin', 'positivos', 'respuestas']);
+  assert.equal(kp.calibracion.total, 20);
+  assert.ok(d.campanas.every((k) => ['activa', 'pausada'].includes(k.estado)));
 
   const cli = await loginCliente('ajustes@cliente-b.test');
   const c = (await cli.call('GET', '/clients/adm-b/resumen')).body.data;
