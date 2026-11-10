@@ -629,6 +629,8 @@ Todo quedó nivelado como punto de partida:
   mergearse. El registro usa el nombre entero, así que no chocan; la del CRM entra a `main` con
   esa rama.
 - **Gateway:** producción corre `main`.
+- **CRM (etapa 4a, `23`):** la rama se mergeó el 10/11 (PR #5) y `canario` pasó a `2026.11.10-4`
+  (la `-3` más las seis secciones del CRM); `estable` sigue en `-3`.
 - **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
 
 **Probado en producción con BairesQA** (10/11, cliente de prueba):
