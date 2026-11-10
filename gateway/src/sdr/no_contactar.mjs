@@ -1,4 +1,4 @@
-// La lista de no contactar del cliente (docs/21 §3.3 y docs/26 §2): dominios, mails y empresas por
+// La lista de no contactar del cliente (docs/21 §3.3 y docs/27 §2): dominios, mails y empresas por
 // nombre a los que el SDR no les escribe nunca. Este módulo normaliza lo que se carga en el panel y
 // busca coincidencias; los que la hacen cumplir son el registro (cuentas y personas), el envío de
 // mails, WhatsApp y la carga en Dripify.

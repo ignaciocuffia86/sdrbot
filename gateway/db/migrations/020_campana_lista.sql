@@ -1,4 +1,4 @@
--- Carga de cuentas por archivo, etapa 2 (docs/26 §5): la campaña de tipo «Lista del cliente».
+-- Carga de cuentas por archivo, etapa 2 (docs/27 §5): la campaña de tipo «Lista del cliente».
 --
 -- Una campaña `lista` no busca cuentas por avisos: trabaja las que el cliente cargó en ella desde
 -- un archivo (sdr.cuenta con origen 'archivo' y uso 'prospectar'), en el orden del archivo.
@@ -16,5 +16,5 @@ alter table sdr.prospecto add constraint prospecto_email_calidad_check
   check (email_calidad is null or email_calidad in ('verificado', 'extrapolado', 'desconocido', 'del_cliente'));
 
 -- La próxima cuenta de una lista sale por campaña y orden del archivo (ya está el índice
--- cuenta_lista de la 018); las personas de una cuenta, por su cuenta.
+-- cuenta_lista de la 019); las personas de una cuenta, por su cuenta.
 create index if not exists prospecto_cuenta on sdr.prospecto (client_id, cuenta_id) where cuenta_id is not null;

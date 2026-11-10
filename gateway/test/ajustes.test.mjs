@@ -16,10 +16,10 @@ const claves = (campos) => campos.map((c) => c.clave);
 
 test('ajustes: cada campo vive en su nivel', () => {
   assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'tono', 'idioma', 'firma', 'excluir',
-    'prueba_social', 'objeciones', 'responsable_positivos', 'link_agenda', 'acepta_mails_extrapolados']);
+    'prueba_social', 'objeciones', 'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_extrapolados']);
   assert.deepEqual(claves(CAMPOS_CAMPANA), ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos',
     'dias_aviso', 'llamado_accion', 'links_permitidos', 'tono', 'idioma', 'positivos', 'objeciones',
-    'responsable_positivos', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
+    'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
   // La firma es del buzón y de Empresa, nunca de la campaña (decisión 11); el texto libre de
   // buzones y la oferta no siguen.
   for (const k of ['firma', 'buzones', 'oferta', 'cuentas_por_dia']) assert.ok(!claves(CAMPOS_CAMPANA).includes(k), k);
@@ -30,7 +30,7 @@ test('ajustes: cada campo vive en su nivel', () => {
     assert.equal(CAMPOS_CAMPANA.find((c) => c.clave === k).hereda, true);
   }
   // El formulario de hoy sigue igual mientras dure la transición.
-  assert.equal(CAMPOS.length, 19);
+  assert.equal(CAMPOS.length, 20);
   assert.ok(claves(CAMPOS).includes('oferta') && claves(CAMPOS).includes('buzones'));
 });
 

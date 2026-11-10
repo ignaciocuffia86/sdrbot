@@ -1,8 +1,8 @@
-// Carga de cuentas por archivo (docs/26), etapa 1. Un Excel (.xlsx) o un CSV que el cliente o un
+// Carga de cuentas por archivo (docs/27), etapa 1. Un Excel (.xlsx) o un CSV que el cliente o un
 // operador sube en el panel, con dos destinos:
 //   campana       las cuentas de una campaña. En la etapa 1, semillas del ICP: quedan en el
 //                 registro como excluidas, con su perfil, para que la campaña busque parecidas
-//                 (docs/27). Nadie les escribe.
+//                 (docs/28). Nadie les escribe.
 //   no_contactar  la lista de no contactar de la empresa, la de siempre (no_contactar.mjs).
 //
 // El archivo no se guarda: se lee en memoria, se arma la vista previa y, al confirmar, el panel lo
@@ -428,7 +428,7 @@ function normalizarFila(f, mapeo, encabezados, destino) {
     else if (/^(prospect|contact|escrib|lista)/.test(uso) || /^(si|s)$/.test(uso)) fila.uso = 'prospectar';
     else avisos.push(`«${v('uso').slice(0, 40)}» no es un uso (prospectar o semilla): va el de la campaña`);
   }
-  // Una persona por fila (docs/26 §3.2). Sin nombre, el mail o el perfil hacen de nombre.
+  // Una persona por fila (docs/27 §3.2). Sin nombre, el mail o el perfil hacen de nombre.
   const persona = {};
   const mail = v('contacto_email');
   if (mail) {
@@ -534,7 +534,7 @@ export async function planNoContactar(c, clientId, filas) {
 
 // ---------------------------------------------------------------- cuentas de una campaña
 
-// Qué pasa con cada fila en una campaña (docs/26 §4.3). El uso de la fila (prospectar o semilla)
+// Qué pasa con cada fila en una campaña (docs/27 §4.3). El uso de la fila (prospectar o semilla)
 // sale de su columna o, si no la trae, de la campaña: una «Lista del cliente» prospecta; las demás
 // sólo toman semillas (decisión 2). c: con el rol de la aplicación. Deja en cada fila:
 //   resultado  nueva | suma_contacto (otra fila de la misma empresa) | suma_a_existente (ya estaba

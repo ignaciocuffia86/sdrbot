@@ -312,7 +312,8 @@ const QUIEN_APRUEBA = {
 function contenidoAprobacion(k) {
   const fila = (t, v) => (v ? h('div', {}, h('span', { class: 'small muted' }, `${t}: `), v) : null);
   return h('div', {},
-    fila('Canal', k.canal), fila('Desde', k.buzon), fila('Para', k.destinatario), fila('Asunto', k.asunto),
+    fila('Canal', k.canal), fila('Desde', k.buzon), fila('Para', k.destinatario),
+    fila('Copia', Array.isArray(k.cc) && k.cc.length ? `${k.cc.join(', ')} (se le deriva el interesado)` : null), fila('Asunto', k.asunto),
     k.texto ? h('pre', { class: 'mensaje' }, k.texto) : null,
     k.linkedin ? h('div', {}, h('div', { class: 'small muted' }, 'LinkedIn'),
       h('pre', { class: 'mensaje' }, `Nota: ${k.linkedin.nota}\n\n1) ${k.linkedin.mensaje1}\n\n2) ${k.linkedin.mensaje2}`)) : null,
@@ -326,6 +327,7 @@ function decidirDialog(v, a, decision) {
     k.asunto !== undefined ? field('Asunto', h('input', { name: 'asunto', value: k.asunto ?? '', maxlength: 500 })) : null,
     k.texto !== undefined ? field('Texto', h('textarea', { name: 'texto', rows: 10, maxlength: 20000 }, k.texto ?? '')) : null,
     k.destinatario ? h('p', { class: 'small muted' }, `Va a ${k.destinatario}. El destinatario no se cambia desde acá: si no es la persona, rechazalo con una nota.`) : null,
+    Array.isArray(k.cc) && k.cc.length ? h('p', { class: 'small muted' }, `Va con copia a ${k.cc.join(', ')}: desde ahí la conversación sigue con esa persona. La copia no se cambia desde acá: si no es la correcta, rechazalo con una nota.`) : null,
   ] : [];
   openDialog(aprobar ? 'Aprobar el mensaje' : 'Rechazar el mensaje', h('div', {},
     ...campos,
@@ -484,6 +486,7 @@ function campoInput(c, valor) {
     return h('label', { class: 'check' }, h('input', { name: c.clave, type: 'checkbox', checked: valor === true, disabled: dis }), 'Sí');
   }
   if (c.tipo === 'url') return h('input', { name: c.clave, type: 'url', maxlength: c.max, value: valor ?? '', disabled: dis, placeholder: 'https://…' });
+  if (c.tipo === 'email') return h('input', { name: c.clave, type: 'email', maxlength: c.max, value: valor ?? '', disabled: dis, placeholder: 'ana@empresa.com' });
   return h('input', { name: c.clave, maxlength: c.max, value: valor ?? '', disabled: dis });
 }
 
@@ -850,7 +853,7 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
     h('section', {}, h('h2', {}, 'Historial de cambios'), historial));
 }
 
-// Las cuentas de la campaña que vienen de un archivo (docs/26): en una «Lista del cliente», las que
+// Las cuentas de la campaña que vienen de un archivo (docs/27): en una «Lista del cliente», las que
 // el SDR prospecta en el orden del archivo; en cualquier campaña, las semillas del ICP (empresas
 // modelo que no reciben nada).
 // Los lotes de la etapa 1 sólo traían semillas, contadas en «nuevas».
@@ -907,7 +910,7 @@ async function semillasCard({ clientId, path, k, terminada }) {
   return card;
 }
 
-// ----- carga de un archivo (docs/26): el mismo paso a paso para la lista de no contactar y para
+// ----- carga de un archivo (docs/27): el mismo paso a paso para la lista de no contactar y para
 // las semillas de una campaña. El archivo se lee en el servidor; la confirmación lo vuelve a mandar
 // con la huella de la vista previa, así se aplica exactamente lo que se vio.
 

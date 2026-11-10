@@ -1,4 +1,4 @@
-// Carga de cuentas por archivo (docs/26, etapa 1): lectura de Excel y CSV, mapeo, la lista de no
+// Carga de cuentas por archivo (docs/27, etapa 1): lectura de Excel y CSV, mapeo, la lista de no
 // contactar de la empresa desde un archivo (con empresas por nombre y el freno de lo que ya está en
 // marcha en Dripify) y las semillas de una campaña; y que un cliente no vea ni toque lo de otro.
 
@@ -290,7 +290,7 @@ test('no contactar por archivo: vista previa, confirmar con la misma huella, emp
   const ev = await q(`select count(*)::int as n from sdr.evento where client_id = $1 and cuenta_id = $2 and tipo = 'cuenta.excluida'`, [A, ortiz.id]);
   assert.equal(ev.rows[0].n, 1);
 
-  // Lo que llega después: una cuenta con el mismo nombre aunque traiga dominio (docs/26 §7, caso 4),
+  // Lo que llega después: una cuenta con el mismo nombre aunque traiga dominio (docs/27 §7, caso 4),
   // una persona de una cuenta de ese nombre y un mail a ella.
   const tarde = await sdr.guardarCuenta(A, { nombre: 'AGRICOLA ORTIZ SpA', dominio: 'ortiz.test' }, meta);
   assert.equal(tarde.no_contactar, true);

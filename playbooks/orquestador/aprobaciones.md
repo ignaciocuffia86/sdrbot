@@ -18,7 +18,8 @@
 
    Si trae `linkedin`, mostrá también los tres textos debajo del mail («LinkedIn · nota: …,
    mensaje 1: …, mensaje 2: …»): se aprueban juntos. Para una respuesta a un positivo, mostrá
-   también lo que escribió el prospecto y por qué canal sale (mail o LinkedIn).
+   también lo que escribió el prospecto y por qué canal sale (mail o LinkedIn). Si trae `cc`,
+   mostrá «Copia: …»: es a quien se le deriva el interesado, y desde ahí la conversación es suya.
 3. Cerrá con cómo contestar: «sí a todo», «sí 1, 3», «no 2», o el texto corregido de una.
 
 ## Registrar lo que decide el operador
@@ -30,6 +31,7 @@
   Grok te va a pedir confirmar cada llamada: es a propósito.
 - Por cada número: `registro_aprobar(id, decision, operador)`, con el **nombre de la persona** que
   decidió (no el del cliente). Si no sabés cómo se llama, preguntáselo una vez antes de registrar.
+- La copia (`cc`) no se corrige: si no es la persona correcta, rechazá con una nota que lo diga.
 - Si el operador corrigió el asunto, el texto o el destinatario, pasá la versión corregida
   **completa**: es la única que el gateway va a dejar mandar. Si corrigió un texto de LinkedIn,
   pasá `linkedin` con los tres textos (`nota`, `mensaje1`, `mensaje2`), también los que no cambió.

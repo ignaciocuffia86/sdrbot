@@ -982,7 +982,7 @@ export const noContactarQuitar = async ({ user, params, body }) => {
   });
 };
 
-// ----- carga por archivo (docs/26): la lista de no contactar o las semillas de una campaña
+// ----- carga por archivo (docs/27): la lista de no contactar o las semillas de una campaña
 
 const nombreArchivo = (n) => String(n).split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200) || 'archivo';
 const MAX_FILAS_VISTA = 200;

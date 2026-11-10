@@ -62,7 +62,7 @@ function send(res, status, body) {
 
 const fail = (res, e) => send(res, e.status ?? 500, { ok: false, error: { code: e.code, message: e.message, ...(e.extra ?? {}) } });
 
-// Las cargas de archivos (docs/26) mandan el archivo en base64: hasta 3 MB, unos 4 MB en el cuerpo.
+// Las cargas de archivos (docs/27) mandan el archivo en base64: hasta 3 MB, unos 4 MB en el cuerpo.
 // Vercel corta en 4,5 MB antes de llegar acá.
 const RUTA_CARGA = /^\/admin\/api\/clients\/[^/]+\/(no-contactar|sdr\/campanas\/[^/]+)\/cargas(\/previa)?$/;
 

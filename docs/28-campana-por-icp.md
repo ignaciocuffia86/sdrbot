@@ -4,7 +4,7 @@ Estado: **diseño, 10/11/2026.** Sale de la reunión con Alberto Veloso (09/11).
 exportadores de agro, alimentos, vino y salmón de Chile (y después Argentina y Perú) afectados por
 la nueva norma de certificación de envases (la «204»). Esas empresas casi no publican avisos de lo
 que él vende, así que la campaña de hoy (`18`, señal = aviso reciente) no le sirve. Complementa a
-`21` §4.2 (tipos de campaña), `18` (lógica del prospector), `19` (pedido a ASCI) y `26` (carga por
+`21` §4.2 (tipos de campaña), `18` (lógica del prospector), `19` (pedido a ASCI) y `27` (carga por
 Excel, que da las semillas y las exclusiones).
 
 ## 1. Qué cambia respecto de la campaña por señal
@@ -41,7 +41,7 @@ Lo que dice esto:
 - **El tamaño falta en un tercio** y el sitio web en un 40 %. Sin dominio no hay
   `registro_guardar_cuenta` con deduplicación ni `buscar_contactos` exacto: hay que completarlo.
 - **«Exporta» no es un campo:** sale del texto de la descripción, de los avisos que la nombran o
-  de la base del cliente (SAC). La base del SAC (`26`) es la mejor fuente para ese dato.
+  de la base del cliente (SAC). La base del SAC (`27`) es la mejor fuente para ese dato.
 - **ASCI no tiene hoy una herramienta para esto.** `prospectar` exige una tecnología (fabricante,
   categoría, producto o ciclo de vida) y ordena por evidencia técnica; `tomadores_de_decision` y
   `buscar_contactos` parten de una empresa ya elegida. Se puede hacer con `consultar`, pero es SQL
@@ -72,12 +72,12 @@ bot pasa a las herramientas.
 
 ### 3.2 Semillas: «empresas como estas»
 
-Las semillas son cuentas que el cliente ya ganó o que le gustan (uso `semilla` de `26`, o la lista
+Las semillas son cuentas que el cliente ya ganó o que le gustan (uso `semilla` de `27`, o la lista
 de la campaña). De cada una ASCI saca su perfil: verticales con peso, industria de LinkedIn,
 tamaño, términos frecuentes de la descripción y de sus avisos, país. La búsqueda por parecido toma
 la unión de esos perfiles y ordena a las demás empresas por cuánto se parecen.
 
-Las semillas **nunca reciben mails**: quedan `excluida` con motivo «semilla» (`26` §2).
+Las semillas **nunca reciben mails**: quedan `excluida` con motivo «semilla» (`27` §2).
 
 ### 3.3 Orden: el ajuste al perfil
 
@@ -105,7 +105,7 @@ que tienen avisos en los últimos 12 meses (señal de actividad, aunque no sea d
 3. **Apollo a través de ASCI** (herramienta nueva, §6.2): búsqueda de empresas por industria,
    palabras clave, país y tamaño, para lo que ASCI no tiene. Gasta cuota de Apollo, no créditos de
    reveal. Las empresas que vuelven quedan cacheadas en ASCI para todos.
-4. **La base del cliente** (`26`): si la campaña es mixta, las filas `prospectar` de la base del
+4. **La base del cliente** (`27`): si la campaña es mixta, las filas `prospectar` de la base del
    SAC entran primero.
 
 El bot no completa con cuentas que no alcanzan el puntaje mínimo de la campaña (`ajuste_min`, 50
@@ -152,7 +152,7 @@ Obligatoria por cuenta, en una o dos líneas, con **un hecho verificable** de es
 - de la descripción («exportan cerezas y arándanos a China y EE. UU.»);
 - de un aviso, aunque no sea del rubro («están buscando un jefe de calidad para la planta de
   Rancagua»);
-- de la base del cliente (la nota de `26`);
+- de la base del cliente (la nota de `27`);
 - del contexto del rubro, solo si aplica a esa empresa («la 204 exige … a quien exporta envases de
   vidrio»).
 
@@ -234,7 +234,7 @@ puntaje legible.
 | Aprobaciones | Tipo nuevo `lista_cuentas` (§4), con decisión por fila; `registro_pedir_aprobacion` lo acepta solo de `prospector` |
 | Registro | `cuenta.senales` admite tipo `perfil` (puntaje, desglose, fuente) además de `aviso`; `cuenta.estado_motivo` para «sin decisor» y «sin tesis» |
 | Topes | `reveals_por_dia` por campaña, contado por el gateway con los eventos `prospecto.revelado` del día |
-| Panel | Campaña de tipo ICP: los campos del perfil, la lista de semillas (de los lotes `semilla` de `26` o escritas a mano), la vista de la lista de la semana con su estado |
+| Panel | Campaña de tipo ICP: los campos del perfil, la lista de semillas (de los lotes `semilla` de `27` o escritas a mano), la vista de la lista de la semana con su estado |
 | `playbooks/prospector/` | `icp_lista.md` (lunes, §4) y `icp_diaria.md` (martes a viernes: revelar, escribir con tesis, cargar en Dripify). Reusan «Escribir los textos de LinkedIn», «Enviar o pedir aprobación» y «Seguimientos» de `diaria` |
 | `playbooks/orquestador/` | Repartir por campaña como hoy; una campaña `icp` con `curar_lista` sin lista aprobada no recibe pedido diario, y el orquestador avisa que hay una lista esperando |
 | `playbooks/rutinas.json` | Routine `icp_lista` los lunes a primera hora de la zona del cliente |
@@ -248,18 +248,18 @@ puntaje legible.
 | Gasto de créditos sin respuesta | `reveals_por_dia`, reveal después de la curación, decisores cacheados primero |
 | Empresas sin dominio | Se completan por Apollo; sin dominio no salen (no hay forma de deduplicar ni de verificar el mail) |
 | El ICP es de corporaciones y Apollo trae pymes | `tamano_min` y el puntaje; el operador cura |
-| Pisar a los referidos y clientes de Alberto | Referidos y clientes cargados en no contactar (`26`) antes de activar la campaña; `excluir` en `cuentas_por_perfil` con todo el registro |
-| Depender de ASCI para construir §6 | Mientras tanto, la lista se puede armar desde el chat con `consultar` (administrador de Biguá) y cargarse por `26` como campaña `lista`: el piloto no espera a la herramienta |
+| Pisar a los referidos y clientes de Alberto | Referidos y clientes cargados en no contactar (`27`) antes de activar la campaña; `excluir` en `cuentas_por_perfil` con todo el registro |
+| Depender de ASCI para construir §6 | Mientras tanto, la lista se puede armar desde el chat con `consultar` (administrador de Biguá) y cargarse por `27` como campaña `lista`: el piloto no espera a la herramienta |
 
 ## 9. Etapas
 
 | Etapa | Qué | Sale cuando |
 |---|---|---|
-| **0 · Puente** | Sin código nuevo en el SDR: un operador de Biguá arma la primera lista de Alberto en ASCI (`consultar` + `personas_por_texto` + `tomadores_de_decision`) y la carga con `26` como campaña `lista` | Salen los primeros mails de Alberto en calibración |
+| **0 · Puente** | Sin código nuevo en el SDR: un operador de Biguá arma la primera lista de Alberto en ASCI (`consultar` + `personas_por_texto` + `tomadores_de_decision`) y la carga con `27` como campaña `lista` | Salen los primeros mails de Alberto en calibración |
 | **1 · ASCI** | `cuentas_por_perfil` y la vertical `pesca_acuicultura` (§6) | Se cumple §6.4 |
 | **2 · SDR** | Tipo `icp`, campos del perfil, `icp_lista` y `icp_diaria`, aprobación `lista_cuentas`, `reveals_por_dia` | La lista del lunes se aprueba en el chat y el prospector escribe de martes a viernes solo con lo aprobado |
 | **3 · Apollo** | `empresas_apollo` y la mezcla de fuentes | La campaña sigue con cuentas cuando ASCI se agota |
 | **4 · Sin curación** | `curar_lista` apagado por campaña, con el aprendizaje de los motivos de rechazo | Cuatro semanas con menos del 10 % de rechazos en la lista |
 
-Para el piloto de Alberto alcanza con la etapa 0 y la etapa 1 de `26`; las demás llegan durante los
+Para el piloto de Alberto alcanza con la etapa 0 y la etapa 1 de `27`; las demás llegan durante los
 tres meses.

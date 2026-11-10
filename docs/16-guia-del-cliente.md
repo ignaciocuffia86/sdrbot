@@ -106,7 +106,8 @@ A la derecha, **«Así lo leen los bots»** muestra el resultado tal cual.
 | Qué le pedimos al prospecto | El pedido del final del primer mail | «Una charla de 20 minutos esta semana» |
 | Objeciones y cómo responderlas | Una por renglón: lo que dicen y cómo se responde | «"Ya tenemos QA": ofrecemos cubrir picos o automatizar lo repetitivo.» |
 | Qué cuenta como respuesta positiva | Uno por renglón | Interesado · Pide reunión · Pide información |
-| Quién toma a los interesados | Nombre y mail de quien sigue la conversación | «Ana Pérez, ana@tuempresa.com» |
+| Quién toma a los interesados | El nombre de quien sigue la conversación | «Ana Pérez» |
+| Mail de quien toma a los interesados | Su casilla del **dominio principal**. Va en copia en la respuesta a un interesado (§7) | `ana@tuempresa.com` |
 | Link de agenda | Para que un interesado elija horario. Va sólo en la respuesta a un positivo | `https://calendly.com/tuempresa/20min` |
 
 **Operación:** cuántas empresas nuevas por día, qué buzón usar para qué y si se escribe a mails
@@ -154,6 +155,15 @@ verificaciones de dominio, cambios de ajustes y lo que hicieron los bots, con fe
 - Las respuestas llegan a **tu buzón** como siempre; además el SDR las lee y decide qué sigue.
 - A una persona **interesada** se le contesta con aprobación de Biguá, en el mismo hilo, desde tu
   buzón. Biguá te avisa de cada interesado y, si conectás tu HubSpot (§7.1), entra solo ahí.
+- **La derivación.** Esa respuesta va con copia a quien toma a los interesados, en su casilla del
+  dominio principal («te sumo a Ana, que lleva esto de nuestro lado»). Ana contesta *a todos*
+  desde su casilla y la conversación sigue con ella. Desde ahí el SDR no le escribe más a esa
+  persona (ni mail ni LinkedIn), y lo que Ana escriba en el hilo no lo toma como una respuesta del
+  prospecto. Si el prospecto le vuelve a escribir a la casilla secundaria, el SDR sólo le recuerda
+  que lo sigue Ana. La copia va sólo a esa casilla o a alguien de su mismo dominio.
+- **Personas reales.** Cada casilla secundaria lleva el nombre de una persona de tu equipo que
+  existe (la misma que toma a los interesados, o alguien de tu equipo comercial), no un nombre
+  inventado: el interesado la va a conocer en la reunión.
 - Si alguien **pide la baja** o el mail **rebota**, el SDR no le vuelve a escribir desde ningún
   buzón de tu empresa.
 - Cuando una persona responde, el SDR no le manda otro mail de la secuencia: lo que sigue lo decide

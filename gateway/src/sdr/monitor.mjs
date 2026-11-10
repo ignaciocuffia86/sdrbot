@@ -40,6 +40,7 @@ export function linea(r, pendientes = new Set()) {
     case 'positivo': return ok('respuestas', `interesado: ${quien(r)}`);
     case 'crm.cargado': return ok('crm', `${quien(r)} cargado en el CRM`);
     case 'baja': return ok('respuestas', `pidió la baja: ${quien(r)}`);
+    case 'derivado': return ok('respuestas', `${quien(r)} derivado a ${[].concat(d.a ?? []).join(', ') || 'el cliente'}`);
     case 'aprobacion.pedida': {
       const canal = CANAL_APROBACION[d.tipo] ?? 'aprobaciones';
       const que = `${QUE_APROBACION[d.tipo] ?? 'aprobación'} a ${quien(r)}`;

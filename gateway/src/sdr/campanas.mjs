@@ -31,7 +31,7 @@ const columnasSql = (obj) => {
 };
 
 // Siempre sobre «sdr.campana k». cuentas_de_lista: las cuentas para prospectar que se cargaron por
-// archivo (docs/26 §5.1), según los lotes aplicados, que el portal sí puede leer.
+// archivo (docs/27 §5.1), según los lotes aplicados, que el portal sí puede leer.
 const COLS = `id, client_id, clave, nombre, tipo, estado, ajustes, dripify_campana_id, cuentas_por_dia, calibracion_mails,
   to_char(inicio, 'YYYY-MM-DD') as inicio, to_char(fin, 'YYYY-MM-DD') as fin, duplicada_de, terminada_at,
   creado_at, actualizado_at,

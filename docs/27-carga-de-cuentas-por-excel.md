@@ -5,7 +5,7 @@ original); la etapa 3 sigue en diseño. Sale de la reunión con Alberto Veloso (
 de empresas exportadoras (la base que le dio el SAC), una lista de referidos y sus tres clientes
 (Copefruit, Agrosuper, Ortiz). Hoy esa información no tiene cómo entrar al SDR. Complementa a
 `21` §4.2 (el tipo «Cuentas objetivo» que quedó para más adelante), a `11` §3 (el registro) y a
-`27` (la campaña por ICP, que usa esta carga como semilla).
+`28` (la campaña por ICP, que usa esta carga como semilla).
 
 ## 0. Lo construido en la etapa 1, y lo que cambió del diseño
 
@@ -22,9 +22,9 @@ abajo:
 | Lector de `.xlsx` | Una dependencia (`read-excel-file`) | **Lector propio** (`sdr/carga.mjs`): abre el zip con `zlib` de Node y recorre los XML con búsquedas hacia adelante, en tiempo lineal (sin expresiones regulares sobre el documento: Vercel 01M7360X214QQ68W26K5AYZAE5). Una etiqueta sin cerrar o enorme se rechaza; hay topes de bytes descomprimidos reales (20 MB), de filas, columnas, textos compartidos y un plazo de 4 s. Sólo valores: de una fórmula queda su último valor como texto; no se evalúa nada, ni macros ni vínculos |
 | Freno de §4.4 | Propuesta | **Construido** para cualquier alta en la lista (a mano, CSV pegado o archivo): las cuentas en investigación de esa empresa quedan `excluidas` con su motivo y las personas cargadas en Dripify se marcan para frenar en la próxima vuelta del reloj (`frenarPendientes`, como una baja). Si el alta la hizo el cliente y tocó algo en marcha, se le avisa al orquestador |
 | Una semilla | Excluida | Excluida, y además el gateway no deja que el bot la reabra ni la mueva de campaña (error `cuenta_semilla`, en `comun.md`) |
-| Migración | `017_carga_de_cuentas.sql` | `018_carga_de_cuentas.sql` (la 017 ya era la de aprobaciones del cliente) |
+| Migración | `017_carga_de_cuentas.sql` | `019_carga_de_cuentas.sql` (la 017 y la 018 son de otras entregas: aprobaciones del cliente y derivación) |
 
-**Piezas:** `db/migrations/018_carga_de_cuentas.sql`; `gateway/src/sdr/carga.mjs` (lectura, mapeo,
+**Piezas:** `db/migrations/019_carga_de_cuentas.sql`; `gateway/src/sdr/carga.mjs` (lectura, mapeo,
 plan); `no_contactar.mjs` (empresas por nombre, coincidencias por cuenta y por nombre);
 `store.mjs` (`aplicarNoContactar`, la protección de las semillas); `admin/servicio.mjs` y
 `admin/api.mjs` (`POST …/no-contactar/cargas/previa`, `POST …/no-contactar/cargas`,
@@ -35,7 +35,7 @@ plan); `no_contactar.mjs` (empresas por nombre, coincidencias por cuenta y por n
 
 | Tema | Cómo quedó |
 |---|---|
-| Tipo de campaña | `lista` en `TIPOS` (migración `019_campana_lista.sql`). No pide ICP ni señal; pide propuesta, cargos y **al menos una cuenta cargada** (`cuentas_de_lista`, que sale de los lotes aplicados). El tipo lo elige Biguá, como siempre |
+| Tipo de campaña | `lista` en `TIPOS` (migración `020_campana_lista.sql`). No pide ICP ni señal; pide propuesta, cargos y **al menos una cuenta cargada** (`cuentas_de_lista`, que sale de los lotes aplicados). El tipo lo elige Biguá, como siempre |
 | Qué se sube en una campaña | Una lista prospecta por defecto; la columna opcional **Uso** («semilla») marca una empresa modelo. Una campaña que no es lista sólo toma semillas: una fila `prospectar` ahí es un error de la fila (decisión 2) |
 | Contactos del archivo | Una persona por fila (nombre, cargo, mail, teléfono, LinkedIn), con **mail o LinkedIn**; si no, la fila entra sin persona y el `prospector` busca a quien decide. El mail queda con calidad **`del_cliente`** (decisión 1: ni verificado ni deducido). Dos filas de la misma empresa son una cuenta con dos personas. No se carga una persona que ya está en el registro, en la supresión o en no contactar |
 | Choques (§4.3) | Cuenta en investigación: suma los contactos y la nota, y queda en su campaña. En otro estado: no se toca. En no contactar: entra `excluida`, sin personas |
@@ -63,7 +63,7 @@ de tres cosas:
 | Uso de la fila | Adónde va | Qué hace el SDR con ella |
 |---|---|---|
 | **`prospectar`** | Registro: cuenta `en_investigacion` en la campaña elegida, con los contactos que traiga la fila | El `prospector` la toma como candidata (salteando la búsqueda en ASCI), completa a quien decide si falta y escribe |
-| **`semilla`** | Registro: cuenta `excluida` con motivo «semilla del ICP» | No se le escribe; sirve de modelo para buscar empresas parecidas (`27` §3) |
+| **`semilla`** | Registro: cuenta `excluida` con motivo «semilla del ICP» | No se le escribe; sirve de modelo para buscar empresas parecidas (`28` §3) |
 | **`no_contactar`** | **La lista de no contactar que ya existe** (`sdr.no_contactar`), con el motivo de la fila: «referido de Juan», «cliente», «no quiere saber nada» | Lo de hoy: el gateway rechaza cuentas, personas, mails y cargas en Dripify de esa empresa |
 
 **Las exclusiones no son una pieza nueva.** Un referido, un conocido o un cliente actual es una fila
@@ -73,7 +73,7 @@ lista, además del CSV pegado de hoy. Lo único que hay que sumarle a la lista e
 **por nombre** cuando no tiene dominio (§4.2 y §6.1).
 
 Una semilla queda en el registro y no en la lista porque tiene que llevar su perfil (rubro, tamaño,
-`asci_id`) para que `27` la use; igual no recibe nada.
+`asci_id`) para que `28` la use; igual no recibe nada.
 
 ## 3. El archivo
 
@@ -93,7 +93,7 @@ Una semilla queda en el registro y no en la lista porque tiene que llevar su per
 | Empresa | **Sí** | `cuenta.nombre` | Tal como la escribe el cliente |
 | Sitio web o dominio | Recomendada | `cuenta.dominio` | Se normaliza como en «No contactar» (`https://www.x.cl/…` → `x.cl`). Sin dominio, ver §4.2 |
 | País | No | `cuenta.pais` | Si falta, el de la campaña |
-| Rubro / vertical | No | `cuenta.vertical` | Texto libre del cliente; sirve como pista para `27` |
+| Rubro / vertical | No | `cuenta.vertical` | Texto libre del cliente; sirve como pista para `28` |
 | Tamaño | No | `cuenta.tamano` | Texto («200-500», «grande») |
 | RUT / identificador fiscal | No | `cuenta.datos_origen.rut` | No se usa para buscar; queda para el cliente |
 | Uso | No | §2 | `prospectar`, `semilla` o `no_contactar`. Si falta, el uso por defecto de la carga |
@@ -182,7 +182,7 @@ archivo la trae).
 | | Prospección por señal (hoy) | Lista del cliente (nueva) |
 |---|---|---|
 | De dónde salen las cuentas | `avisos_recientes` | Las cargadas por archivo en esa campaña |
-| Señal en el primer mail | El aviso, con fecha | La **nota para el bot** de la fila, o la propuesta de la campaña (`27` §5 para el ángulo sin señal) |
+| Señal en el primer mail | El aviso, con fecha | La **nota para el bot** de la fila, o la propuesta de la campaña (`28` §5 para el ángulo sin señal) |
 | A quién | Publicante + decisor | Los contactos de la fila; si no hay, el decisor por `tomadores_de_decision` o `buscar_contactos` con los cargos de la campaña |
 | Obligatorio para activar | ICP, cargos | Propuesta, cargos, al menos un lote cargado |
 | Cuando se acaba la lista | — | El orquestador avisa al operador y deja de pedir cuentas a esa campaña |
@@ -199,7 +199,7 @@ archivo la trae).
 
 ## 6. Cambios técnicos
 
-### 6.1 Base (migración `018_carga_de_cuentas.sql`; lo construido en §0)
+### 6.1 Base (migración `019_carga_de_cuentas.sql`; lo construido en §0)
 
 ```sql
 create table sdr.lote_carga (

@@ -1,4 +1,4 @@
--- Carga de cuentas por archivo, etapa 1 (docs/26 §6.1).
+-- Carga de cuentas por archivo, etapa 1 (docs/27 §6.1).
 --
 -- Dos entradas con el mismo lector (Excel o CSV):
 --   campana       las cuentas de una campaña. En la etapa 1, sólo semillas del ICP: quedan en el
