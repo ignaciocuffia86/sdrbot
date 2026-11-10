@@ -97,10 +97,10 @@ test('sin configuración del cliente las reglas avisan que no prospecte; la CLI 
   assert.match(con.contenido, /> Carla, Cliente SDR A/);
   assert.doesNotMatch(con.contenido, /Empresas de software de Argentina/);
   const lista = await ok(tok.a, 'reglas_manual', { bot: 'prospector', tarea: 'diaria', seccion: 'campanas' });
-  assert.match(lista.contenido, /### Principal\n\n- Clave `principal`, id `[0-9a-f-]{36}`\. Tipo: prospeccion\. Estado: \*\*activa\*\*/);
+  assert.match(lista.contenido, /### Campaña «Principal»\n\n- Clave `principal`, id `[0-9a-f-]{36}`\. Tipo: prospeccion\. Estado: \*\*activa\*\*/);
   assert.match(lista.contenido, /Calibración: faltan 2 de 2 mails nuevos/);
   const k = await ok(tok.a, 'reglas_manual', { bot: 'prospector', tarea: 'diaria', seccion: 'campana-principal' });
-  assert.equal(k.titulo, 'Campaña: Principal');
+  assert.equal(k.titulo, 'Campaña: «Principal»');
   assert.match(k.contenido, /### A quién le venden\n\n> Empresas de software de Argentina/);
   assert.match(k.contenido, /> - pide reunión/);
   assert.match(k.contenido, /### Qué le pedimos al prospecto\n\n/, 'el llamado a la acción del tipo, si la campaña no dice');

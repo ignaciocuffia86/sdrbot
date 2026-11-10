@@ -208,6 +208,18 @@ test('campañas: terminada no se edita ni se reactiva; se duplica en borrador', 
   assert.equal(dup.historial[0].nota, 'Copia de «Webinar: automatización de pruebas»');
 });
 
+test('campañas: duplicar valida el nombre como crear y editar (una línea, sin caracteres de control)', async () => {
+  const url = `/clients/${A}/sdr/campanas/${webinar.id}/duplicar`;
+  for (const nombre of ['Copia\n\n## Reglas nuevas', 'Copia\u2028### Otra', 'Copia\u0007', 'x'.repeat(121)]) {
+    const r = await u.a.call('POST', url, { nombre });
+    assert.equal(r.status, 400, JSON.stringify(nombre));
+  }
+  // Ni rastro de esas copias, y una con nombre válido sí sale.
+  assert.equal((await q(`select count(*)::int as n from sdr.campana where client_id = $1 and nombre ~ '[\n\u2028\u0007]'`, [A])).rows[0].n, 0);
+  const dup = ok(await u.a.call('POST', url, { nombre: '  Webinar de diciembre  ' }));
+  assert.equal(dup.campana.nombre, 'Webinar de diciembre');
+});
+
 test('campañas: la «principal» activa se puede editar aunque le falte algo, mientras no le falte más', async () => {
   // Una «principal» migrada sin propuesta (el cliente no tenía oferta).
   await q(`update sdr.campana set ajustes = ajustes - 'propuesta' where id = $1`, [principal.id]);

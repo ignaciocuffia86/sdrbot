@@ -218,7 +218,10 @@ function limpiarValor(c, v, contexto = {}) {
     case 'parrafo': {
       if (typeof v !== 'string') throw invalido(`«${c.titulo}» tiene que ser texto.`);
       const t = v.replace(/\r\n/g, '\n').trim();
-      if (c.tipo === 'texto' && t.includes('\n')) throw invalido(`«${c.titulo}» va en una sola línea.`);
+      if (c.tipo === 'texto' && /[\n\u2028\u2029]/.test(t)) throw invalido(`«${c.titulo}» va en una sola línea.`);
+      if (/[\u0000-\u0008\u000b-\u001f\u007f]/.test(t) || (c.tipo === 'texto' && t.includes('\t'))) {
+        throw invalido(`«${c.titulo}» tiene caracteres de control.`);
+      }
       if (t.length > c.max) throw invalido(`«${c.titulo}» tiene ${t.length} caracteres; el máximo es ${c.max}.`);
       return t || undefined;
     }
