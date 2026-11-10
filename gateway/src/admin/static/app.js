@@ -264,7 +264,7 @@ function newClientDialog() {
 // La ficha de un cliente (docs/21 §3): Resumen, Empresa, Canales y Actividad; Administración
 // aparte, sólo para Biguá. Las direcciones de las pestañas viejas llevan a su lugar nuevo.
 const VIEJAS = { sdr: ['empresa'], buzones: ['canales'], dominios: ['canales'], usuarios: ['admin', 'usuarios'], tokens: ['admin', 'tokens'] };
-const TABS = [['resumen', 'Resumen'], ['campanas', 'Campañas'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
+const TABS = [['resumen', 'Resumen'], ['aprobaciones', 'Aprobaciones'], ['campanas', 'Campañas'], ['empresa', 'Empresa'], ['canales', 'Canales'], ['actividad', 'Actividad']];
 
 // La pestaña Campañas la ven también los clientes desde que las reglas leen la campaña (docs/21
 // §7.2, paso 5). Qué puede tocar cada uno lo decide el gateway (ajustes.mjs).
@@ -288,11 +288,81 @@ async function renderClient(clientId, tab, sub) {
     body);
   const v = { clientId, data, bigua, base, reload: () => renderClient(clientId, tab, sub) };
   if (tab === 'resumen') body.append(await resumenView(v));
+  if (tab === 'aprobaciones') body.append(await aprobacionesView(v));
   if (tab === 'campanas') body.append(await (sub ? campanaView(v, sub) : campanasView(v)));
   if (tab === 'empresa') body.append(await empresaView(v));
   if (tab === 'canales') body.append(await canalesView(v));
   if (tab === 'actividad') body.append(await monitorView(clientId));
   if (tab === 'admin') body.append(await adminView(v, sub));
+}
+
+// ----- aprobaciones (docs/24 §5): los mensajes que los bots quieren mandar. El cliente los decide si
+// Biguá lo habilitó (Administración → Operación); si no, los ve y los decide Biguá en el chat.
+
+const TIPO_APROBACION = {
+  calibracion_mail: 'Primer contacto', respuesta_positivo: 'Respuesta a un positivo', whatsapp_primero: 'Primer WhatsApp',
+  crm_mapeo: 'Mapeo del CRM', crm_cambio: 'Cambio en el CRM', otro: 'Otra',
+};
+const QUIEN_APRUEBA = {
+  bigua: 'Los mensajes los aprueba Biguá en el chat del orquestador. Acá los ves.',
+  cliente_y_bigua: 'Los mensajes los podés aprobar vos o Biguá: vale la primera decisión.',
+  cliente: 'Los mensajes los aprobás vos. Biguá sólo puede frenarlos.',
+};
+
+function contenidoAprobacion(k) {
+  const fila = (t, v) => (v ? h('div', {}, h('span', { class: 'small muted' }, `${t}: `), v) : null);
+  return h('div', {},
+    fila('Canal', k.canal), fila('Desde', k.buzon), fila('Para', k.destinatario), fila('Asunto', k.asunto),
+    k.texto ? h('pre', { class: 'mensaje' }, k.texto) : null,
+    k.linkedin ? h('div', {}, h('div', { class: 'small muted' }, 'LinkedIn'),
+      h('pre', { class: 'mensaje' }, `Nota: ${k.linkedin.nota}\n\n1) ${k.linkedin.mensaje1}\n\n2) ${k.linkedin.mensaje2}`)) : null,
+    k.contexto ? h('details', {}, h('summary', { class: 'small' }, 'Contexto'), h('pre', { class: 'mensaje small' }, k.contexto)) : null);
+}
+
+function decidirDialog(v, a, decision) {
+  const k = a.contenido ?? {};
+  const aprobar = decision === 'aprobada';
+  const campos = aprobar ? [
+    k.asunto !== undefined ? field('Asunto', h('input', { name: 'asunto', value: k.asunto ?? '', maxlength: 500 })) : null,
+    k.texto !== undefined ? field('Texto', h('textarea', { name: 'texto', rows: 10, maxlength: 20000 }, k.texto ?? '')) : null,
+    k.destinatario ? h('p', { class: 'small muted' }, `Va a ${k.destinatario}. El destinatario no se cambia desde acá: si no es la persona, rechazalo con una nota.`) : null,
+  ] : [];
+  openDialog(aprobar ? 'Aprobar el mensaje' : 'Rechazar el mensaje', h('div', {},
+    ...campos,
+    field(aprobar ? 'Nota (opcional)' : 'Por qué se rechaza', h('textarea', { name: 'nota', rows: 3, maxlength: 2000, required: !aprobar }))), {
+    submitLabel: aprobar ? 'Aprobar' : 'Rechazar', danger: !aprobar,
+    submit: async (fd) => {
+      const body = { decision, confirmar: true };
+      const nota = String(fd.get('nota') ?? '').trim();
+      if (nota) body.nota = nota;
+      if (aprobar) {
+        for (const c of ['asunto', 'texto']) {
+          const x = fd.get(c);
+          if (x !== null && String(x) !== String(k[c] ?? '')) body[c] = String(x);
+        }
+      }
+      await api('POST', `/clients/${enc(v.clientId)}/aprobaciones/${enc(a.id)}/decidir`, body);
+      toast(aprobar ? 'Aprobado. El bot lo manda en su próxima pasada.' : 'Rechazado.');
+      v.reload();
+      return true;
+    },
+  });
+}
+
+async function aprobacionesView(v) {
+  const { aprueba, aprobaciones } = await api('GET', `/clients/${enc(v.clientId)}/aprobaciones`);
+  const lista = aprobaciones.length ? aprobaciones.map((a) => h('div', { class: 'card' },
+    h('div', { class: 'row spread' },
+      h('div', {}, h('strong', {}, TIPO_APROBACION[a.tipo] ?? a.tipo),
+        h('div', { class: 'small muted' }, [a.prospecto_nombre, a.cuenta].filter(Boolean).join(' · ') || '—',
+          ` · pidió ${a.pedida_por} · ${fmtDate(a.creado_at)}`)),
+      h('div', { class: 'row' },
+        a.puede?.rechazar ? h('button', { type: 'button', onclick: () => decidirDialog(v, a, 'rechazada') }, 'Rechazar') : null,
+        a.puede?.aprobar ? h('button', { type: 'button', class: 'primary', onclick: () => decidirDialog(v, a, 'aprobada') }, 'Aprobar') : null)),
+    contenidoAprobacion(a.contenido ?? {}),
+    a.puede && !a.puede.aprobar && a.puede.motivo ? h('p', { class: 'small muted' }, a.puede.motivo) : null))
+    : [h('div', { class: 'card empty' }, 'No hay aprobaciones pendientes.')];
+  return h('div', {}, h('p', { class: 'sub' }, QUIEN_APRUEBA[aprueba] ?? ''), ...lista);
 }
 
 // ----- resumen
@@ -320,7 +390,13 @@ async function resumenView({ clientId, bigua, base }) {
       aviso('warn', 'Revisar la descripción de la empresa: arrancó como una copia de la oferta. Contá qué hace la empresa en general; lo de cada campaña va en su propuesta.',
         `${base}/empresa`, 'Revisarla');
     }
-    if (r.aprobaciones_pendientes) aviso('warn', `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')} en el chat del orquestador.`);
+    if (r.aprobaciones_pendientes) {
+      const delCliente = r.aprobaciones_del_cliente ?? 0;
+      aviso('warn', delCliente && !bigua
+        ? `${plural(delCliente, 'mensaje espera', 'mensajes esperan')} tu aprobación.`
+        : `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')}${r.aprueba === 'bigua' ? ' en el chat del orquestador' : ''}.`,
+      `${base}/aprobaciones`, 'Ver');
+    }
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
     if (r.dripify?.ultimo_error) aviso('err', `LinkedIn · Dripify: ${r.dripify.ultimo_error}`, `${base}/canales`, 'Ver');
@@ -1139,6 +1215,11 @@ function sdrTecnico(clientId, sdr, reload) {
         'Autogestionado: los decide el cliente'),
       field('Tope de cuentas nuevas por día para el cliente', h('input', { name: 'tope_cuentas_dia', type: 'number', min: 0, max: 100, value: t?.tope_cuentas_dia ?? '' }),
         'Sólo cuenta en modo autogestionado. Vacío: sin tope (hasta 100).')),
+    h('fieldset', {}, h('legend', {}, 'Quién aprueba los mensajes'),
+      [['bigua', 'Biguá, en el chat del orquestador'], ['cliente_y_bigua', 'El cliente o Biguá: vale la primera decisión'],
+        ['cliente', 'Sólo el cliente: Biguá puede rechazar, no aprobar']].map(([x, label]) => h('label', { class: 'check' },
+        h('input', { type: 'radio', name: 'aprueba', value: x, checked: (t?.aprueba ?? 'cliente_y_bigua') === x }), label)),
+      h('p', { class: 'small muted' }, 'Vale para los mails de primer contacto, las respuestas a positivos y el primer WhatsApp. Lo del CRM lo aprueba siempre Biguá.')),
     t?.version_fija ? h('p', { class: 'note' }, `Este cliente está fijado a la versión ${t.version_fija} de las reglas (se cambia por la CLI).`) : null);
   const err = h('p', { class: 'err', role: 'alert' });
   const btn = h('button', { type: 'submit', class: 'primary' }, t ? 'Guardar configuración' : 'Activar el SDR');
@@ -1151,6 +1232,7 @@ function sdrTecnico(clientId, sdr, reload) {
       canal: fd.get('canal'), zona_horaria: String(fd.get('zona_horaria')).trim(),
       calibracion_mails: Number(fd.get('calibracion_mails')), bots_activos: fd.getAll('bot'),
       modo: fd.get('modo') ?? 'operado', tope_cuentas_dia: tope === '' ? null : Number(tope),
+      aprueba: fd.get('aprueba') ?? 'cliente_y_bigua',
     };
     const r = await busy(btn, () => api('PUT', `/clients/${enc(clientId)}/sdr/config`, body), err);
     if (r) { toast(t ? 'Configuración guardada.' : 'SDR activado. Ahora cargá los ajustes en Empresa.'); reload(); }

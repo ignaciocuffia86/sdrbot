@@ -223,6 +223,8 @@ Otros comandos: `list`, `list-tokens`, `revoke-token`, `set-password` (también 
 
 Para personas, no para los bots (`docs/24`): en claude.ai, Configuración → Conectores → agregar un conector con `https://sdrbot.bigua.lat/mcp/panel`, y Conectar. Se abre una página del gateway donde la persona entra con su usuario y su contraseña del panel y autoriza. En Claude Code: `claude mcp add --transport http sdrbot https://sdrbot.bigua.lat/mcp/panel`. Un usuario de un cliente ve sólo su cliente; un operador de Biguá, todos. Las conexiones se ven y se desconectan en el panel, en «Conexiones».
 
+Desde la etapa M2, el cliente también aprueba sus mensajes (pestaña **Aprobaciones** del panel y `aprobacion_decidir` en Claude), según lo que Biguá elija por cliente en Administración → Configuración del SDR → «Quién aprueba los mensajes»: Biguá, el cliente o Biguá (vale la primera decisión), o sólo el cliente.
+
 El OAuth está en `src/panel/oauth.mjs` (metadata en `/.well-known/oauth-*`, y `/oauth/register`, `authorize`, `login`, `token` y `revoke`) y el MCP en `src/panel/mcp.mjs`. Necesita `OAUTH_FIRMA` en Vercel (`openssl rand -base64 32`); `OAUTH_ISSUER`, `OAUTH_REDIRECTS` y `OAUTH_CIMD_HOSTS` son opcionales.
 
 ## Núcleo SDR (etapas 1 a 3 de `docs/09`)

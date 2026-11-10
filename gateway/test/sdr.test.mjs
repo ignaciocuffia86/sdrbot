@@ -393,10 +393,18 @@ test('respuesta a un positivo: exige aprobación aunque la calibración haya ter
   assert.equal(ajeno.error.code, 'destinatario_no_coincide');
   const ap = await ok(tok.a, 'registro_pedir_aprobacion', { bot: 'seguimiento', tipo: 'respuesta_positivo', prospecto_id: ids.laura, contenido: { buzon: BUZON, texto } });
   await ok(tok.a, 'registro_aprobar', { id: ap.aprobacion.id, decision: 'aprobada', operador: 'Ignacio' });
+  // El CRM carga al positivo apenas se aprueba, antes de que salga la respuesta, y la persona pasa a
+  // en_crm (lo que hace el evento crm.cargado). Sigue haciendo falta la aprobación, con su texto
+  // (hallazgo de Vercel 01M71WRPJYF9Q1GZATMBZR9R5X).
+  await store.asOwner((c) => c.query(`update sdr.prospecto set estado = 'en_crm' where id = $1`, [ids.laura]));
+  const sinAprobacion = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: 'Otro texto, sin aprobar.', prospecto_id: ids.laura, idempotency_key: `${ids.laura}:respuesta-en-crm` });
+  assert.equal(sinAprobacion.error.code, 'aprobacion_requerida');
+  const cambiado = await call(tok.a, 'reply', { mailbox: BUZON, uid, text: 'Otro texto, sin aprobar.', prospecto_id: ids.laura, aprobacion_id: ap.aprobacion.id, idempotency_key: `${ids.laura}:respuesta-cambiada` });
+  assert.equal(cambiado.error.code, 'aprobacion_no_coincide');
   const r = await ok(tok.a, 'reply', { mailbox: BUZON, uid, text: texto, prospecto_id: ids.laura, aprobacion_id: ap.aprobacion.id, idempotency_key: `${ids.laura}:respuesta-1` });
   assert.equal(r.duplicate, false);
   const h = await ok(tok.a, 'registro_historia', { prospecto_id: ids.laura });
-  assert.equal(h.prospecto.estado, 'positivo');
+  assert.equal(h.prospecto.estado, 'en_crm');
   assert.ok(h.eventos.some((e) => e.tipo === 'mail.enviado' && e.datos.respuesta === true));
 });
 

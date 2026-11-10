@@ -17,7 +17,7 @@ import { aadFor, decryptSecret, encryptSecret } from '../crypto.mjs';
 import { GatewayError } from '../errors.mjs';
 import { withImap, syncFolder } from '../mail/imap.mjs';
 import { checkWebhookHost, postWebhook } from '../mail/net.mjs';
-import { insertarEvento, aplicarEvento, versionActual } from './store.mjs';
+import { insertarEvento, aplicarEvento, versionActual, SQL_BIGUA_DECIDE } from './store.mjs';
 import * as dripify from './dripify.mjs';
 import * as crm from './crm.mjs';
 import * as noContactar from './no_contactar.mjs';
@@ -504,7 +504,7 @@ const FUENTES = {
       nombre: 'aprobaciones', tabla: 'aprobacion', columna: 'avisada_at',
       sql: `select a.id, a.tipo, a.pedida_por, p.nombre as prospecto from sdr.aprobacion a
               left join sdr.prospecto p on p.id = a.prospecto_id
-             where a.client_id = $1 and a.estado = 'pendiente' and a.avisos < $2
+             where a.client_id = $1 and a.estado = 'pendiente' and a.avisos < $2 and ${SQL_BIGUA_DECIDE}
                and (a.avisada_at is null or a.avisada_at < now() - make_interval(mins => $3))
              order by (a.tipo = 'respuesta_positivo') desc, a.creado_at limit 50`,
       item: (x) => ({ id: x.id, tipo: x.tipo, pedida_por: x.pedida_por, prospecto: x.prospecto }),

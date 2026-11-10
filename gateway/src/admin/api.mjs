@@ -99,6 +99,8 @@ route('PUT', '/clients/:client/sdr/despertador', S.despertadorGuardar);
 route('PUT', '/clients/:client/sdr/dripify', S.dripifyGuardar);
 route('POST', '/clients/:client/sdr/dripify/probar', S.dripifyProbar);
 route('POST', '/clients/:client/sdr/dripify/webhook', S.dripifyWebhook);
+route('GET', '/clients/:client/aprobaciones', S.aprobacionesListar);
+route('POST', '/clients/:client/aprobaciones/:id/decidir', S.aprobacionDecidir);
 route('GET', '/clients/:client/crm', S.crmVer);
 route('PUT', '/clients/:client/crm', S.crmGuardar);
 route('POST', '/clients/:client/crm/probar', S.crmProbar);
