@@ -326,7 +326,11 @@ const CERRADOS = { respondio: 'ya respondió', positivo: 'es un positivo', deriv
 
 // Antes de que salga un mail: nadie de la supresión; y un mail nuevo (no una respuesta en el
 // hilo) no va a quien ya respondió o tiene una respuesta sin leer: eso lo decide `seguimiento`.
-export async function controlarDestinatarios(clientId, recipients, kind, prospectoId) {
+// campanaId: la campaña con la que controlarEnvio decidió la calibración y la aprobación. Acá se
+// verifica contra los destinatarios canónicos del mail armado (los que van al SMTP), no contra lo
+// que vino en los argumentos: una dirección escrita de otra forma (un grupo, un nombre con coma)
+// no puede colar a una persona de otra campaña.
+export async function controlarDestinatarios(clientId, recipients, kind, prospectoId, campanaId) {
   const emails = [...new Set((recipients ?? []).map((r) => String(r).toLowerCase()))];
   return asClient(clientId, async (c) => {
     const { rows: sup } = await c.query(
@@ -342,6 +346,7 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
     }
     if (kind === 'reply') return controlarRespuesta(c, clientId, emails, prospectoId);
     if (kind !== 'send') return;
+    if (campanaId) await controlarCampanaDelEnvio(c, clientId, emails, prospectoId, campanaId);
     const { rows } = await c.query(
       `select p.id, p.email, p.estado,
               exists (select 1 from sdr.correo x where x.client_id = p.client_id and x.prospecto_id = p.id and x.estado = 'nuevo') as sin_leer
@@ -359,6 +364,22 @@ export async function controlarDestinatarios(clientId, recipients, kind, prospec
       }
     }
   });
+}
+
+async function controlarCampanaDelEnvio(c, clientId, emails, prospectoId, campanaId) {
+  if (prospectoId) {
+    const { rows: p } = await c.query(`select nombre, email from sdr.prospecto where client_id = $1 and id = $2`, [clientId, prospectoId]);
+    if (p[0] && (!p[0].email || !emails.includes(p[0].email))) {
+      throw new GatewayError('destinatario_no_coincide',
+        `El mail no va a ${p[0].nombre ?? 'el prospecto'} (${p[0].email ?? 'sin mail en el registro'}): con prospecto_id, su mail tiene que estar entre los destinatarios.`, 422);
+    }
+  }
+  const { rows } = await c.query(
+    `select email from sdr.prospecto where client_id = $1 and email = any($2) and campana_id <> $3`, [clientId, emails, campanaId]);
+  if (rows.length) {
+    throw new GatewayError('en_otra_campana',
+      `El mail le llega a ${rows.map((r) => r.email).join(', ')}, de otra campaña: cada campaña se escribe por separado.`, 409);
+  }
 }
 
 // Una respuesta se controla con sus destinatarios de verdad (los del mail que se contesta, y los de

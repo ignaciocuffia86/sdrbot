@@ -187,6 +187,10 @@ test('campañas MCP: la campaña de un mail sale de sus destinatarios, no del pr
   assert.equal(sinIdBuzon.error.code, 'buzon_fuera_de_campana');
   const sinIdLink = await call('send', { ...base, to: 'lia@beta.test', text: 'Mirá https://otro-sitio.test', idempotency_key: 'lia:intento-5' });
   assert.equal(sinIdLink.error.code, 'link_no_permitido');
+  // Una dirección escrita como grupo no se lee en los argumentos, pero el control final usa los
+  // destinatarios que van al SMTP: Lía es del webinar y el mail se decidió con la «principal».
+  const grupo = await call('send', { ...base, mailbox: DARIO, to: 'Lista: lia@beta.test;', idempotency_key: 'lia:intento-6' });
+  assert.equal(grupo.error?.code, 'en_otra_campana', JSON.stringify(grupo));
   // A alguien que no es prospecto, como antes.
   await ok('send', { ...base, mailbox: DARIO, to: 'alguien@fuera.test', text: 'Hola', idempotency_key: 'fuera:mail-1' });
   await q(`update sdr.campana set calibracion_mails = 1 where id = $1`, [k.webinar.id]);

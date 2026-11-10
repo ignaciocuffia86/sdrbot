@@ -712,7 +712,9 @@ async function campanaDelEnvio(c, clientId, args, p) {
 }
 
 // Calibración, aprobaciones y campaña que el gateway exige antes de enviar (docs/09 §5.4, docs/21
-// §4.3). Devuelve la aprobación a marcar como usada, o null si el envío no la necesita.
+// §4.3). Devuelve { aprobacion, campanaId }: la aprobación a marcar como usada (o null) y la campaña
+// con la que se decidió, que controlarDestinatarios vuelve a verificar contra los destinatarios
+// canónicos del mail ya armado.
 export async function controlarEnvio(clientId, args, kind) {
   return asClient(clientId, async (c) => {
     const cfg = await configDe(c, clientId);
@@ -739,7 +741,8 @@ export async function controlarEnvio(clientId, args, kind) {
       if (cal.calibrando) necesita = { tipo: 'calibracion_mail', usadas: cal.usadas, total: cal.total };
     }
     if (kind === 'reply' && p?.estado === 'positivo') necesita = { tipo: 'respuesta_positivo' };
-    if (!necesita && !args.aprobacion_id) return null;
+    const campanaId = k?.id ?? null;
+    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId };
     if (!args.aprobacion_id) {
       throw errorsSdr.aprobacionRequerida(necesita.tipo === 'calibracion_mail'
         ? `La campaña «${k.nombre}» está en calibración (${necesita.usadas} de ${necesita.total} mails aprobados enviados): el mail necesita una aprobación. ` +
@@ -776,7 +779,7 @@ export async function controlarEnvio(clientId, args, kind) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +
         '(si el operador lo editó, la versión editada está en decision_contenido).');
     }
-    return ap;
+    return { aprobacion: ap, campanaId };
   });
 }
 

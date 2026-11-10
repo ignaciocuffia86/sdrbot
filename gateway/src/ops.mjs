@@ -95,7 +95,7 @@ async function onMailbox(ctx, email, fn) {
 async function sendFlow(ctx, args, kind) {
   // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón. La supresión y el
   // estado de quien recibe se controlan con los destinatarios ya armados, antes del SMTP.
-  const aprobacion = await sdr.controlarEnvio(ctx.clientId, args, kind);
+  const { aprobacion, campanaId } = await sdr.controlarEnvio(ctx.clientId, args, kind);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
     const res = await store.reserveSend(account, args.idempotency_key, today, kind);
@@ -135,14 +135,14 @@ async function sendFlow(ctx, args, kind) {
         await withImap(account, password, async (client) => {
           const original = await originalForReply(client, args.folder, args.uid);
           built = await buildMessage(account, replyFields(account, original, args));
-          await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
+          await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
           smtp = await sendRaw(account, password, built);
           smtpDone = true;
           await afterSend(client);
         });
       } else {
         built = await buildMessage(account, args);
-        await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
+        await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
         smtp = await sendRaw(account, password, built);
         smtpDone = true;
         if (account.append_sent) {
