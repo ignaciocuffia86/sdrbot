@@ -16,7 +16,7 @@ import { withImap, listFolders, recentHeaders, specialFolder } from '../mail/ima
 import { checkDomain, signaturesFromHeaders, systemResolver } from '../dns/domain-check.mjs';
 import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
-import { BLOQUES, CAMPOS, aplicarCambios, diferencias, editable, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
+import { diferencias, editable, formularioEmpresa, tituloCampana, tituloDe } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as noContactar from '../sdr/no_contactar.mjs';
 import * as whatsapp from '../sdr/whatsapp.mjs';
@@ -510,16 +510,20 @@ async function leerSdr(c, user, clientId) {
   if (!client) throw notFound('No existe ese cliente.');
   const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0] ?? null;
   const historial = (await c.query(
-    `select id, at, por_email, por_rol, cambios, nota from sdr.ajustes_historial where client_id = $1 order by id desc limit 30`,
+    `select id, at, por_email, por_rol, cambios, nota from sdr.ajustes_historial
+      where client_id = $1 and campana_id is null order by id desc limit 30`,
     [clientId])).rows;
   const permiso = { esBigua: isBigua(user), autogestion: cfg?.modo === 'autogestionado' };
+  const form = formularioEmpresa(cfg);
   const out = {
     activo: Boolean(cfg),
     modo: cfg?.modo ?? 'operado',
     tope_cuentas_dia: cfg?.tope_cuentas_dia ?? null,
     ajustes: cfg?.ajustes ?? {},
-    bloques: BLOQUES,
-    campos: CAMPOS.map((x) => ({ ...x, editable: editable(x, permiso) })),
+    bloques: form.bloques,
+    campos: form.campos.map((x) => ({ ...x, editable: editable(x, permiso) })),
+    // Con la 014 aplicada, lo de cada campaña (a quién, la propuesta, el volumen) se edita en su campaña.
+    formulario: form.transicion ? 'transicion' : 'empresa',
     vista_previa: cfg ? renderAjustes(clientId, client.name, cfg, await extraAjustes(c, clientId)) : null,
     historial: historial.map((r) => ({ ...r, id: Number(r.id), cambios_titulos: r.cambios.map(tituloDe) })),
     actualizado_at: cfg?.actualizado_at ?? null,
@@ -545,9 +549,11 @@ async function leerSdr(c, user, clientId) {
 // pedido para contárselo al operador de Biguá en su chat.
 async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false } = {}) {
   const r = await scoped(user, clientId, async (c) => {
-    const cfg = (await c.query(`select ajustes, modo, tope_cuentas_dia from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
+    const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
     const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
+    // select *: la columna formulario existe desde la 014; antes vale la transición.
+    const form = formularioEmpresa(cfg);
     let nuevo;
     if (restaurado && !isBigua(user)) {
       // Volver atrás no puede tocar lo que el cliente no edita, y lo que sí edita pasa por las
@@ -555,15 +561,20 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
       // versión vieja puede tener un valor que hoy ya no vale.
       const vuelta = {};
       for (const k of diferencias(cfg.ajustes, cambios)) {
-        const campo = CAMPOS.find((x) => x.clave === k);
+        const campo = form.campos.find((x) => x.clave === k);
         if (campo && editable(campo, permiso)) vuelta[k] = cambios[k] ?? null;
       }
-      nuevo = aplicarCambios(cfg.ajustes, vuelta, permiso);
+      nuevo = form.aplicar(cfg.ajustes, vuelta, permiso);
     } else {
-      nuevo = restaurado ? { ...cambios } : aplicarCambios(cfg.ajustes, cambios, permiso);
+      // Biguá vuelve a la versión tal cual. Una de antes de la 014 devuelve a Empresa las claves de
+      // la campaña: es la vuelta atrás de la migración (la «principal» vuelve a leerlas de Empresa).
+      nuevo = restaurado ? { ...cambios } : form.aplicar(cfg.ajustes, cambios, permiso);
     }
     const cambiados = diferencias(cfg.ajustes, nuevo);
     if (!cambiados.length) return { cambios: [] };
+    if (cambiados.includes('cuentas_por_dia')) {
+      await campanas.cuentasDeLaPrincipal(c, clientId, nuevo.cuentas_por_dia, { tope: cfg.tope_cuentas_dia, esBigua: isBigua(user) });
+    }
     await c.query(`update sdr.cliente_config set ajustes = $2, actualizado_at = now() where client_id = $1`,
       [clientId, JSON.stringify(nuevo)]);
     await c.query(
@@ -597,7 +608,7 @@ route('POST', '/clients/:client/sdr/historial/:id/restaurar', async ({ user, par
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 1) throw notFound('No existe esa versión.');
   const row = await scoped(user, params.client, async (c) => (await c.query(
-    `select ajustes, at from sdr.ajustes_historial where client_id = $1 and id = $2`, [params.client, id])).rows[0]);
+    `select ajustes, at from sdr.ajustes_historial where client_id = $1 and id = $2 and campana_id is null`, [params.client, id])).rows[0]);
   if (!row) throw notFound('No existe esa versión.');
   const r = await guardarAjustes(user, params.client, row.ajustes,
     `Vuelta a la versión del ${new Date(row.at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`, { restaurado: true });
@@ -953,11 +964,30 @@ route('GET', '/clients/:client/resumen', async ({ user, params }) => {
     // Lo del SDR se lee con el rol de la aplicación y el cliente fijado: el portal no ve el registro.
     Object.assign(out, await asRole('mailgw_app', params.client, async (c) => {
       const n = async (sql) => (await c.query(sql, [params.client])).rows[0].n;
-      const usadas = await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'`);
-      const semana = Object.fromEntries((await c.query(
-        `select tipo, count(*)::int as n from sdr.evento where client_id = $1 and at > now() - interval '7 days'
-            and tipo in ('mail.enviado', 'linkedin.cargado', 'respuesta', 'positivo') group by tipo`, [params.client])).rows
-        .map((r) => [r.tipo, r.n]));
+      // Los números de la semana, del cliente y de cada campaña (docs/21 §3.1).
+      const porTipo = (await c.query(
+        `select campana_id, tipo, count(*)::int as n from sdr.evento where client_id = $1 and at > now() - interval '7 days'
+            and tipo in ('mail.enviado', 'linkedin.cargado', 'respuesta', 'positivo') group by campana_id, tipo`, [params.client])).rows;
+      const numeros = (de) => {
+        const t = (tipo) => porTipo.filter((r) => r.tipo === tipo && (!de || r.campana_id === de)).reduce((x, r) => x + r.n, 0);
+        return { enviados: t('mail.enviado'), linkedin: t('linkedin.cargado'), respuestas: t('respuesta'), positivos: t('positivo') };
+      };
+      const usadasPor = new Map((await c.query(
+        `select campana_id, count(*)::int as n from sdr.aprobacion where client_id = $1 and tipo = 'calibracion_mail' and estado = 'usada'
+          group by campana_id`, [params.client])).rows.map((r) => [r.campana_id, r.n]));
+      const campanasDelCliente = (await c.query(
+        `select id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails from sdr.campana
+          where client_id = $1 and estado in ('activa', 'pausada') order by (clave = 'principal') desc, estado, nombre`, [params.client])).rows;
+      const totalDe = (k) => (k.clave === 'principal' ? base.cfg.calibracion_mails : k.calibracion_mails);
+      const calibDe = (k) => ({ usados: Math.min(usadasPor.get(k.id) ?? 0, totalDe(k)), total: totalDe(k) });
+      const principal = campanasDelCliente.find((k) => k.clave === 'principal');
+      // La 014 estrena la descripción de Empresa con una copia de la oferta: hasta que alguien la
+      // cambie, es igual a la propuesta de la principal y el Resumen pide revisarla.
+      const desc = (await c.query(
+        `select (cc.ajustes->>'descripcion') is not null and cc.ajustes->>'descripcion' = k.ajustes->>'propuesta' as igual
+           from sdr.cliente_config cc join sdr.campana k on k.client_id = cc.client_id and k.clave = 'principal'
+          where cc.client_id = $1`, [params.client])).rows[0];
+      const usadas = principal ? usadasPor.get(principal.id) ?? 0 : [...usadasPor.values()].reduce((x, y) => x + y, 0);
       const d = (await c.query(
         `select (api_key_enc is not null) as cargado, activo, campana_id, ultimo_ok_at, ultimo_error from sdr.dripify_cuenta where client_id = $1`,
         [params.client])).rows[0] ?? null;
@@ -966,8 +996,10 @@ route('GET', '/clients/:client/resumen', async ({ user, params }) => {
         aprobaciones_pendientes: await n(`select count(*)::int as n from sdr.aprobacion where client_id = $1 and estado = 'pendiente'`),
         correo_sin_atender: await n(`select count(*)::int as n from sdr.correo where client_id = $1 and estado = 'nuevo'`),
         linkedin_sin_atender: await n(`select count(*)::int as n from sdr.linkedin_respuesta where client_id = $1 and estado = 'nuevo'`),
-        semana: { enviados: semana['mail.enviado'] ?? 0, linkedin: semana['linkedin.cargado'] ?? 0,
-          respuestas: semana.respuesta ?? 0, positivos: semana.positivo ?? 0 },
+        semana: numeros(null),
+        revisar_descripcion: Boolean(desc?.igual),
+        campanas: campanasDelCliente.map((k) => ({ clave: k.clave, nombre: k.nombre, tipo: k.tipo, estado: k.estado,
+          cuentas_por_dia: k.cuentas_por_dia, calibracion: calibDe(k), semana: numeros(k.id) })),
         dripify: d ? { cargado: d.cargado, activo: d.activo, campana: d.campana_id !== null, ultimo_ok_at: d.ultimo_ok_at,
           ultimo_error: d.ultimo_error } : null,
         corridas_con_error: isBigua(user) ? (await c.query(

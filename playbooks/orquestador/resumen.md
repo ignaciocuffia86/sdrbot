@@ -2,12 +2,14 @@
 
 > Lo que pasó hoy, en pocas líneas, para el operador.
 
-1. `registro_resumen()` de hoy.
+1. `registro_resumen()` de hoy: trae los números del cliente y, en `por_campana`, los de cada
+   campaña.
 2. Un mensaje en el chat con:
    - cuentas investigadas, personas reveladas, mails enviados, respuestas, positivos, rebotes
-     y bajas;
+     y bajas. Si hay más de una campaña activa, los mails, las respuestas y los positivos de
+     cada una en una línea por campaña;
    - correo sin atender (de `registro_agenda`), si hay;
-   - cómo va la calibración (cuántos de cuántos);
+   - cómo va la calibración de cada campaña que todavía calibra (cuántos de cuántos);
    - corridas con error o parciales, con su motivo (de la bitácora);
    - lo que espera al operador (aprobaciones, pedidos escalados);
    - el CRM, si el cliente lo tiene conectado: cuántos positivos se cargaron hoy y cuáles fallaron

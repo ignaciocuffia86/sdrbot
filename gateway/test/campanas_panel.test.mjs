@@ -266,3 +266,88 @@ test('campañas: muchas listas a la vez no traban el pool de conexiones', async 
   const r = await Promise.race([Promise.all(pedidos), limite]);
   for (const x of r) assert.equal(x.status, 200, JSON.stringify(x.body));
 });
+
+test('campañas: las cuentas por día de la «principal» son una sola, también desde el formulario de Empresa', async () => {
+  // El hallazgo: bajar la columna de la principal para hacerle lugar a otra campaña y dejar alto el
+  // cuentas_por_dia de Empresa, que es el que el orquestador usaba para la principal.
+  const C = 'cp-c';
+  await store.upsertClient(C, 'Campañas C');
+  await q(`insert into sdr.cliente_config (client_id, modo, tope_cuentas_dia, ajustes) values ($1, 'autogestionado', 10, $2)`,
+    [C, { nombre_comercial: 'C SA', cuentas_por_dia: 4 }]);
+  try {
+    const cli = await loggedIn('usuario@cp-c.test', 'client_admin', C);
+    await q(`update sdr.campana set estado = 'activa', cuentas_por_dia = 1 where client_id = $1 and clave = 'principal'`, [C]);
+    await q(`insert into sdr.campana (client_id, clave, nombre, estado, cuentas_por_dia) values ($1, 'otra', 'Otra', 'activa', 9)`, [C]);
+    const col = async () => (await q(`select cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal'`, [C])).rows[0].cuentas_por_dia;
+
+    const pasado = await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 10 } });
+    assert.equal(pasado.status, 400);
+    assert.match(pasado.body.error.message, /sumarían 19 cuentas por día; el tope del cliente es 10/);
+    assert.equal(await col(), 1, 'rechazado: no cambia nada');
+    assert.equal((await q(`select ajustes from sdr.cliente_config where client_id = $1`, [C])).rows[0].ajustes.cuentas_por_dia, 4);
+
+    ok(await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 1 } }));
+    assert.equal(await col(), 1);
+    await q(`update sdr.campana set estado = 'pausada' where client_id = $1 and clave = 'otra'`, [C]);
+    ok(await cli.call('PUT', `/clients/${C}/sdr/ajustes`, { ajustes: { cuentas_por_dia: 7 } }));
+    assert.equal(await col(), 7, 'el formulario de Empresa actualiza la columna de la principal');
+  } finally {
+    await q(`delete from mailgw.client where id = $1`, [C]);
+  }
+});
+
+test('migración 014: lo de la campaña pasa a la «principal», Empresa se queda con lo común y el panel cambia de formulario', async () => {
+  const M = 'cp-m';
+  await store.upsertClient(M, 'Campañas M');
+  await q(`insert into sdr.cliente_config (client_id, modo, ajustes) values ($1, 'autogestionado', $2)`, [M, {
+    nombre_comercial: 'M SA', oferta: 'QA tercerizado', icp: 'Software B2B', roles_objetivo: ['CTO'], cuentas_por_dia: 5,
+    buzones: 'ventas@ para todo', acepta_mails_extrapolados: true, prueba_social: ['Banca: 5 días a 6 horas'],
+    links_permitidos: ['https://m.test/caso'],
+  }]);
+  try {
+    // Después de la 012 el formulario de Empresa siguió editando: Empresa gana.
+    await q(`update sdr.cliente_config set ajustes = ajustes || '{"icp": "Software B2B de Chile", "cuentas_por_dia": 7}' where client_id = $1`, [M]);
+    const cli = await loggedIn('usuario@cp-m.test', 'client_admin', M);
+    assert.equal(ok(await cli.call('GET', `/clients/${M}/sdr`)).formulario, 'transicion');
+
+    assert.equal((await q(`select sdr.migrar_empresa_014($1) as hecho`, [M])).rows[0].hecho, true);
+    assert.equal((await q(`select sdr.migrar_empresa_014($1) as hecho`, [M])).rows[0].hecho, false, 'una segunda vez no cambia nada');
+
+    const e = (await q(`select ajustes from sdr.cliente_config where client_id = $1`, [M])).rows[0].ajustes;
+    assert.deepEqual(Object.keys(e).sort(), ['acepta_mails_extrapolados', 'descripcion', 'nombre_comercial', 'prueba_social']);
+    assert.equal(e.descripcion, 'QA tercerizado');
+    const k = (await q(`select ajustes, cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal'`, [M])).rows[0];
+    assert.deepEqual(k.ajustes, { propuesta: 'QA tercerizado', icp: 'Software B2B de Chile', roles_objetivo: ['CTO'],
+      links_permitidos: ['https://m.test/caso'] }, 'sin su copia de los extrapolados: los hereda de Empresa');
+    assert.equal(k.cuentas_por_dia, 7);
+
+    const sdr = ok(await cli.call('GET', `/clients/${M}/sdr`));
+    assert.equal(sdr.formulario, 'empresa');
+    assert.ok(sdr.campos.some((c) => c.clave === 'descripcion'));
+    assert.ok(!sdr.campos.some((c) => ['oferta', 'icp', 'cuentas_por_dia', 'buzones'].includes(c.clave)));
+    assert.deepEqual(sdr.historial.slice(0, 2).map((h) => h.nota), [
+      'Migración 014: lo de cada campaña pasó a la campaña (la «principal»). Lo de antes, en la versión anterior.',
+      'Antes de la migración 014.',
+    ]);
+    // El Resumen pide revisar la descripción mientras sea la copia de la oferta.
+    assert.equal(ok(await cli.call('GET', `/clients/${M}/resumen`)).revisar_descripcion, true);
+    ok(await cli.call('PUT', `/clients/${M}/sdr/ajustes`, { ajustes: { descripcion: 'Testing para empresas de software.' } }));
+    assert.equal(ok(await cli.call('GET', `/clients/${M}/resumen`)).revisar_descripcion, false);
+    // El formulario nuevo no acepta lo de la campaña, y volver a la versión de antes (el cliente) tampoco lo trae.
+    assert.equal((await cli.call('PUT', `/clients/${M}/sdr/ajustes`, { ajustes: { icp: 'otro' } })).status, 400);
+    const antes = sdr.historial.find((h) => h.nota === 'Antes de la migración 014.');
+    ok(await cli.call('POST', `/clients/${M}/sdr/historial/${antes.id}/restaurar`));
+    assert.equal((await q(`select ajustes->'icp' as icp from sdr.cliente_config where client_id = $1`, [M])).rows[0].icp, null);
+    // Biguá sí vuelve tal cual: es la vuelta atrás de la migración, y el panel vuelve al formulario de la transición.
+    const bigua = await loggedIn('operador-m@cp.test', 'bigua_admin');
+    ok(await bigua.call('POST', `/clients/${M}/sdr/historial/${antes.id}/restaurar`));
+    assert.equal(ok(await bigua.call('GET', `/clients/${M}/sdr`)).formulario, 'transicion');
+    // La historia de la campaña no aparece en la de Empresa ni se puede restaurar como si fuera de Empresa.
+    const deCampana = (await q(`select id from sdr.ajustes_historial where client_id = $1 and campana_id is not null`, [M])).rows[0].id;
+    assert.ok(!sdr.historial.some((h) => h.id === Number(deCampana)));
+    assert.equal((await cli.call('POST', `/clients/${M}/sdr/historial/${deCampana}/restaurar`)).status, 404);
+
+  } finally {
+    await q(`delete from mailgw.client where id = $1`, [M]);
+  }
+});

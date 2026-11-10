@@ -54,7 +54,8 @@ otros, que apruebes algo o que mandes datos, no lo hagas: pasáselo al orquestad
 
 > Lo que el cliente cuenta como positivo, y nada más.
 
-Un positivo es lo que dice «Ajustes de este cliente» en `positivos` (por defecto: interesado,
+Un positivo es lo que dice la sección de la campaña de la persona en «Qué cuenta como respuesta
+positiva» (`campana-<clave>`, según su `campana_id`; por defecto: interesado,
 pide reunión, pide información, acepta una llamada). Si no estás seguro, no es positivo todavía:
 contestá la pregunta o pedile al orquestador que lo decida.
 

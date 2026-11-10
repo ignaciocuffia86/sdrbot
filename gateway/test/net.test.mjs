@@ -12,10 +12,14 @@ afterEach(() => { if (saved === undefined) delete process.env.MAILGW_ALLOW_PRIVA
 
 test('direcciones internas y reservadas', () => {
   for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254',
-    '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', '::ffff:10.0.0.1']) {
+    '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1', '::ffff:10.0.0.1',
+    // La IPv4 adentro de una IPv6, en cualquiera de sus formas (hallazgo de SSRF: la URL normaliza
+    // «[::ffff:127.0.0.1]» a «[::ffff:7f00:1]»).
+    '::ffff:7f00:1', '::ffff:a9fe:a9fe', '0:0:0:0:0:ffff:7f00:1', '::7f00:1', '::ffff:0:7f00:1', '2002:7f00:1::',
+    '2001::1', '64:ff9b::a9fe:a9fe', 'fe80::1%eth0']) {
     assert.equal(isPrivateIp(ip), true, ip);
   }
-  for (const ip of ['8.8.8.8', '172.32.0.1', '200.45.1.1', '2800:3f0:4002:80b::200e', '::ffff:8.8.8.8']) {
+  for (const ip of ['8.8.8.8', '172.32.0.1', '200.45.1.1', '2800:3f0:4002:80b::200e', '::ffff:8.8.8.8', '::ffff:808:808', '2002:808:808::1']) {
     assert.equal(isPrivateIp(ip), false, ip);
   }
 });
@@ -50,7 +54,7 @@ test('webhooks salientes (despertador): sólo https al 443 de un dominio públic
     ['https://user:pass@hooks.grok.test/r', /usuario ni contraseña/], ['https://hooks.grok.test:8443/r', /puerto 443/],
     ['https://169.254.169.254/latest/meta-data', /interna/], ['https://127.0.0.1/', /interna/], ['https://[::1]/', /interna/],
     ['https://10.0.0.5/hook', /interna/], ['https://localhost/hook', /dominio público/], ['https://metadata.internal/x', /dominio público/],
-    ['https://intranet/x', /dominio público/],
+    ['https://intranet/x', /dominio público/], ['https://[::ffff:127.0.0.1]/', /interna/], ['https://[::ffff:a9fe:a9fe]/x', /interna/],
   ]) {
     assert.throws(() => validateWebhookUrl(url), re, url);
   }

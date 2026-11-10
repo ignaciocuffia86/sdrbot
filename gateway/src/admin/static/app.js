@@ -287,6 +287,10 @@ async function resumenView({ clientId, bigua, base }) {
     if (d.status === 'error') aviso('err', `${d.domain} tiene SPF, DKIM o DMARC mal: los mails pueden ir a spam.`, `${base}/canales`, 'Ver cómo arreglarlo');
   }
   if (r.sdr_activo) {
+    if (r.revisar_descripcion) {
+      aviso('warn', 'Revisar la descripción de la empresa: arrancó como una copia de la oferta. Contá qué hace la empresa en general; lo de cada campaña va en su propuesta.',
+        `${base}/empresa`, 'Revisarla');
+    }
     if (r.aprobaciones_pendientes) aviso('warn', `${plural(r.aprobaciones_pendientes, 'aprobación espera', 'aprobaciones esperan')} en el chat del orquestador.`);
     const sinAtender = r.correo_sin_atender + r.linkedin_sin_atender;
     if (sinAtender) aviso('warn', `${plural(sinAtender, 'respuesta de un prospecto espera', 'respuestas de prospectos esperan')} al bot de seguimiento.`);
@@ -338,7 +342,27 @@ async function resumenView({ clientId, bigua, base }) {
     h('a', { class: 'card canal-card', href: `${base}/empresa#no-contactar` },
       h('div', { class: 'row spread' }, h('strong', {}, 'No contactar'), h('span', { class: 'badge b-mute' }, String(r.no_contactar.dominios + r.no_contactar.emails))),
       h('div', { class: 'small muted' }, `${plural(r.no_contactar.dominios, 'dominio', 'dominios')} y ${plural(r.no_contactar.emails, 'mail', 'mails')} a los que el SDR no les escribe`)));
-  return h('div', { class: 'stack' }, atencion, semana, h('h2', {}, 'Canales'), canales);
+  // Las campañas activas y en pausa, con sus números de la semana (docs/21 §3.1). Mientras la pestaña
+  // Campañas sea sólo de Biguá, el bloque también.
+  const verCampanas = r.sdr_activo && (r.campanas?.length ?? 0) > 0 && (bigua || CAMPANAS_PARA_CLIENTES);
+  const estadoCamp = { activa: ['b-ok', 'activa'], pausada: ['b-mute', 'en pausa'] };
+  const calibTexto = (x) => (x.total > x.usados ? `${x.usados} de ${x.total}` : 'terminada');
+  const campanas = verCampanas ? h('section', { class: 'card' },
+    h('h2', { class: 'first' }, 'Campañas · últimos 7 días'),
+    h('table', { class: 'campanas' },
+      h('thead', {}, h('tr', {}, ['Campaña', 'Estado', 'Cuentas por día', 'Mails', 'LinkedIn', 'Respuestas', 'Positivos', 'Calibración']
+        .map((x) => h('th', {}, x)))),
+      h('tbody', {}, r.campanas.map((k) => {
+        const [cls, txt] = estadoCamp[k.estado] ?? ['b-mute', k.estado];
+        return h('tr', {},
+          h('td', {}, h('a', { href: `${base}/campanas` }, k.nombre)),
+          h('td', {}, h('span', { class: `badge ${cls}` }, txt)),
+          h('td', {}, String(k.cuentas_por_dia)),
+          h('td', {}, String(k.semana.enviados)), h('td', {}, String(k.semana.linkedin)),
+          h('td', {}, String(k.semana.respuestas)), h('td', {}, String(k.semana.positivos)),
+          h('td', {}, calibTexto(k.calibracion)));
+      })))) : null;
+  return h('div', { class: 'stack' }, atencion, semana, campanas, h('h2', {}, 'Canales'), canales);
 }
 
 // ----- empresa: los ajustes que leen los bots
@@ -405,7 +429,9 @@ async function empresaView({ clientId, bigua, base, reload }) {
       bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
   }
   const auto = sdr.modo === 'autogestionado';
-  const notaModo = auto
+  const notaModo = sdr.formulario === 'empresa'
+    ? 'A quién se le escribe, la propuesta, el volumen y los buzones son de cada campaña: se editan en su campaña. Esto vale para las campañas que no digan otra cosa.'
+    : auto
     ? `Este cliente es autogestionado: el volumen y los buzones los decide el cliente${sdr.tope_cuentas_dia !== null ? `, hasta ${sdr.tope_cuentas_dia} cuentas nuevas por día` : ''}.`
     : 'Este cliente lo opera Biguá: el volumen y los buzones los decide Biguá.';
   const err = h('p', { class: 'err', role: 'alert' });
@@ -449,9 +475,9 @@ const ESTADO_CAMPANA = { borrador: ['borrador', 'b-mute'], activa: ['activa', 'b
 const estadoBadge = (e) => { const [label, cls] = ESTADO_CAMPANA[e] ?? [e, 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
 
 function transicionNota() {
-  return h('p', { class: 'note' }, 'Transición: los bots todavía trabajan con los ajustes de Empresa, como si hubiera una sola campaña. ',
-    'Lo que se cambie acá queda guardado, pero no cambia lo que hacen hasta que las reglas lean las campañas: ',
-    'activar, pausar o terminar una campaña todavía no frena ni arranca nada.');
+  return h('p', { class: 'note' }, 'Transición: los bots todavía escriben con los ajustes de Empresa y no reparten el volumen por campaña. ',
+    'El gateway ya hace cumplir cada campaña: en una que no está activa no salen mails nuevos, no se carga a nadie en LinkedIn ',
+    'ni se toman personas nuevas; los mails salen sólo por sus buzones y con sus links permitidos.');
 }
 
 async function campanasView({ clientId, bigua, base, reload }) {

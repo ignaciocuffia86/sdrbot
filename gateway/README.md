@@ -133,7 +133,14 @@ Cada cambio queda en `sdr.ajustes_historial` (con `campana_id`) y en la auditor�
   - Botones **Activar** (sólo sin pendientes), **Pausar**, **Terminar** y **Duplicar**.
   - Al costado, lo que falta para activar y «Así la van a leer los bots». Abajo, el historial.
 
-Mientras las herramientas y las reglas no usen las campañas, los bots siguen con el formulario de Empresa: pausar o terminar una campaña todavía no los frena. Por eso la pestaña la ve **sólo Biguá**, con un aviso de transición (`CAMPANAS_PARA_CLIENTES` en `static/app.js`). Se abre a los clientes cuando las reglas lean la campaña. La API ya responde a los dos roles.
+Las herramientas MCP reciben `campana` (la clave, opcional) y el gateway hace cumplir cada campaña (`src/sdr/en_campana.mjs`, `docs/21` §7.2):
+- **Campaña que no está activa:** no salen mails nuevos, no se carga a nadie en LinkedIn y no se toman cuentas ni personas nuevas (`campana_inactiva`).
+- **Mails nuevos:** salen sólo por los buzones de la campaña (`buzon_fuera_de_campana`) y con sus links permitidos (`link_no_permitido`).
+- **Personas y cuentas:** una persona está en una sola campaña activa, y una cuenta en contacto no entra en otra de prospección (`en_otra_campana`).
+- **Calibración:** se cuenta por campaña.
+- **Buzones nuevos:** entran solos en la «principal» (migración `013`).
+
+Las reglas todavía no leen la campaña: los bots siguen escribiendo con los ajustes de Empresa. Por eso la pestaña la ve **sólo Biguá**, con un aviso de transición (`CAMPANAS_PARA_CLIENTES` en `static/app.js`). Se abre a los clientes cuando las reglas lean la campaña. La API ya responde a los dos roles.
 
 Lo prueban:
 - `test/campanas.test.mjs`: la base.

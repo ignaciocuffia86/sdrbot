@@ -95,7 +95,7 @@ async function onMailbox(ctx, email, fn) {
 async function sendFlow(ctx, args, kind) {
   // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón. La supresión y el
   // estado de quien recibe se controlan con los destinatarios ya armados, antes del SMTP.
-  const aprobacion = await sdr.controlarEnvio(ctx.clientId, args, kind);
+  const { aprobacion, campanaId } = await sdr.controlarEnvio(ctx.clientId, args, kind);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
     const res = await store.reserveSend(account, args.idempotency_key, today, kind);
@@ -135,14 +135,14 @@ async function sendFlow(ctx, args, kind) {
         await withImap(account, password, async (client) => {
           const original = await originalForReply(client, args.folder, args.uid);
           built = await buildMessage(account, replyFields(account, original, args));
-          await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
+          await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
           smtp = await sendRaw(account, password, built);
           smtpDone = true;
           await afterSend(client);
         });
       } else {
         built = await buildMessage(account, args);
-        await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id);
+        await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
         smtp = await sendRaw(account, password, built);
         smtpDone = true;
         if (account.append_sent) {
@@ -275,8 +275,11 @@ const MAIL_OPS = [
     op: 'send', mcp: 'enviar', scope: 'send',
     description: 'Envía un mail nuevo desde el buzón por su SMTP y guarda la copia en Enviados. Respeta el cupo ' +
       'diario del buzón y la clave de idempotencia. Para seguir un hilo pasar in_reply_to y references; para ' +
-      'contestar un mensaje recibido usar responder. Con prospecto_id el envío queda en el registro. Si el cliente ' +
-      'está en calibración, exige aprobacion_id con una aprobación de exactamente este mail.',
+      'contestar un mensaje recibido usar responder. Con prospecto_id el envío queda en el registro, y el mail de esa ' +
+      'persona tiene que estar entre los destinatarios (destinatario_no_coincide). La campaña sale de los destinatarios ' +
+      'que son prospectos, que tienen que ser de una misma campaña: tiene que estar activa, el buzón tiene que ser de la ' +
+      'campaña y los links, de los permitidos (campana_inactiva, buzon_fuera_de_campana, link_no_permitido, ' +
+      'en_otra_campana). Si la campaña está en calibración, exige aprobacion_id con una aprobación de exactamente este mail.',
     schema: obj({
       mailbox, to: addressList, cc: addressList, bcc: addressList,
       subject: { type: 'string', maxLength: 500 }, text, html: text,
@@ -292,7 +295,9 @@ const MAIL_OPS = [
     op: 'reply', mcp: 'responder', scope: 'send',
     description: 'Responde un mensaje recibido en el mismo hilo (Re:, In-Reply-To, References), desde el mismo ' +
       'buzón, con la cita del original salvo quote=false, guarda la copia en Enviados y marca el original como ' +
-      'respondido. Respeta el cupo diario y la clave de idempotencia. Sólo enviar lo que ya está aprobado.',
+      'respondido. Respeta el cupo diario y la clave de idempotencia. Sólo enviar lo que ya está aprobado. Si la ' +
+      'respuesta va a alguien del registro, exige su prospecto_id (prospecto_requerido, destinatario_no_coincide); a un ' +
+      'positivo, con su aprobación respuesta_positivo.',
     schema: obj({
       mailbox, folder, uid, text, html: text,
       reply_all: { type: 'boolean', default: false },

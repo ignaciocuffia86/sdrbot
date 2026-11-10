@@ -156,7 +156,7 @@ BairesQA                                                        ⚙
            WhatsApp ○ no configurado          CRM ○ no configurado
 ```
 
-Los números salen de `registro_resumen` (ya existe, por cliente; habría que abrirlo por campaña).
+Los números salen de `registro_resumen`, con el detalle de cada campaña en `por_campana` (§7.2, paso 3).
 
 ### 3.2 Campañas
 
@@ -347,7 +347,7 @@ Diferencias con el boceto anterior:
   del de la sesión.
 
 `sdr.cliente_config.ajustes` queda como los ajustes de **Empresa**. Las claves que pasan a la
-campaña (§6.2) se copian a la «principal» en la `012` y se borran de Empresa en la `013`. Mismas políticas por cliente
+campaña (§6.2) se copian a la «principal» en la `012` y se borran de Empresa en la `014`. Mismas políticas por cliente
 que el resto de `sdr`.
 
 ## 5. WhatsApp
@@ -467,7 +467,7 @@ con la misma configuración. Así los números de cada campaña no se mezclan.
 antes que el código sin romper nada:
 
 - **`012` (hecha):** pasos 1, 2, 4 y 5. Las claves se **copian** y Empresa no cambia.
-- **`013`:** paso 3 y el borrado de Empresa de las claves que pasaron a la campaña, salvo
+- **`014`** (era la `013`; ese número lo tomó la del buzón nuevo, §7.2): paso 3 y el borrado de Empresa de las claves que pasaron a la campaña, salvo
   `acepta_mails_extrapolados`, que queda en Empresa como valor por defecto. Se aplica cuando el
   gateway, el panel y las reglas ya lean la campaña.
 
@@ -538,37 +538,82 @@ punto donde se retoma.
 
 **Falta, en este orden:**
 
-1. **Las herramientas MCP con `campana`.**
-   - `registro_guardar_cuenta`, `registro_guardar_prospecto`, `pedir`, `pedir_aprobacion` y
-     `dripify_cargar` reciben la campaña.
-   - El gateway hace cumplir:
-     - que una persona esté en una sola campaña activa;
-     - que `enviar` y `responder` salgan sólo por los buzones de la campaña del prospecto;
-     - que los mails lleven sólo los links permitidos de la campaña;
-     - que la campaña de Dripify sea la de la campaña.
-   - Las aprobaciones llevan la campaña y la calibración se cuenta por campaña (decisión 4).
-2. **Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).
-   - `reglas_manual` arma dos secciones, «Empresa» y «Campaña: <nombre>», con
-     `ajustesEfectivos`.
-   - El orquestador recibe «Campañas activas» con sus cuentas por día y reparte el pedido diario
-     por campaña (decisión 12).
-   - El prospector toma la campaña del pedido.
-   - `seguimiento` lee la campaña del prospecto.
-   - Se publica una versión de las reglas en canario.
-3. **`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).
-4. **Migración `013`** (§6.2, paso 3):
-   - `descripcion` de Empresa;
-   - borrar de Empresa las claves que pasaron a la campaña, salvo `acepta_mails_extrapolados`;
-   - sacar `ajustes.buzones`;
-   - el formulario de Empresa pasa a `CAMPOS_EMPRESA`.
+1. ~~**Las herramientas MCP con `campana`.**~~ Hecho (`src/sdr/en_campana.mjs`, migración
+   `013`).
+   - **Parámetro:** `registro_guardar_cuenta`, `registro_guardar_prospecto`, `registro_pedir` y
+     `registro_pedir_aprobacion` reciben `campana`, la clave. Es opcional: sin ella vale la campaña
+     del prospecto, la de su cuenta o la «principal», así que los bots de hoy siguen igual.
+   - **Personas y cuentas:**
+     - Una persona está en una sola campaña. Se la pasa a otra sólo si la suya no está activa o si
+       todavía no está en contacto (investigada, descartada, sin respuesta).
+     - Una cuenta en contacto por una campaña de prospección activa no entra en otra de
+       prospección (error `en_otra_campana`).
+     - Una campaña que no está activa no toma cuentas ni personas nuevas.
+   - **Mails nuevos (`enviar` con `prospecto_id`):**
+     - La campaña tiene que estar activa (error `campana_inactiva`).
+     - El buzón tiene que ser de la campaña (error `buzon_fuera_de_campana`).
+     - Los links, en el mail y en la respuesta, tienen que ser de los permitidos: los
+       `links_permitidos` de la campaña, el link de agenda y los dominios de las firmas (error
+       `link_no_permitido`).
+     - Las respuestas salen del buzón que recibió, aunque la campaña esté en pausa.
+   - **LinkedIn:** `dripify_cargar` carga en la campaña de Dripify de la campaña (o en la de la
+     cuenta) y no mezcla campañas en una carga.
+   - **Aprobaciones y calibración:** las aprobaciones quedan en la campaña de la persona, y la
+     calibración se cuenta por campaña. La «principal» sigue con el número de Administración.
+   - **Clientes sin el SDR** (sólo el gateway de correo): no tienen campañas ni estos controles.
+2. ~~**Las reglas leen la campaña** (`playbooks/` y `reglas_manual`).~~ Hecho (PR #9) y
+   publicado en canario como `2026.11.10-1`. Estable sigue en `2026.11.05-6` hasta pasar a
+   BairesQA a las reglas nuevas.
+   - `reglas_manual` arma, al final del índice, «Ajustes de este cliente: Empresa»
+     (`ajustes-cliente`), «Campañas de este cliente» (`campanas`: clave, id, estado, cuentas por
+     día, calibración y buzones de cada una) y una «Campaña: <nombre>» (`campana-<clave>`) por
+     campaña activa, pausada o terminada. Los borradores no aparecen.
+   - **Transición de la «principal»:** mientras Empresa tenga sus claves (hasta la `014`), la
+     principal las toma de ahí, que es lo que edita el formulario de Empresa (`oferta` es su
+     `propuesta`, y `cuentas_por_dia` de Empresa, sus cuentas por día). Lo calcula
+     `en_campana.efectivos`, el mismo para las reglas, para los links que permite el gateway y
+     para la pestaña Campañas. Cuando la `014` saque esas claves, vale lo de la campaña sin
+     tocar el código.
+   - El orquestador hace un pedido por campaña activa, con sus cuentas por día (decisión 12).
+   - El prospector trabaja cada pedido con la campaña del pedido, guarda con `campana` y carga
+     LinkedIn de a una campaña por vez.
+   - `seguimiento` lee la sección de la campaña del prospecto.
+   - Las cuentas por día de la principal son una sola: su columna. El formulario de Empresa, al
+     guardar `cuentas_por_dia`, la actualiza y controla la suma de las activas contra el tope.
+3. ~~**`registro_resumen` por campaña**, y las campañas activas en la pestaña Resumen (§3.1).~~
+   Hecho.
+   - `registro_resumen` trae los números del cliente y `por_campana` (eventos, prospectos por
+     estado y calibración de cada campaña que no es borrador); con `campana`, sólo los de esa
+     campaña. La calibración del cliente es la de su principal. Las corridas son del cliente.
+   - El panel muestra en Resumen la tabla «Campañas · últimos 7 días» (activas y en pausa), por
+     ahora sólo a Biguá, como la pestaña Campañas.
+   - El orquestador cuenta los números por campaña en el resumen del día.
+4. ~~**Migración `014`** (§6.2, paso 3).~~ Escrita (`014_empresa_sin_claves_de_campana.sql`); se
+   aplica en el paso 6. Por cliente (`sdr.migrar_empresa_014`, idempotente):
+   - la «principal» toma los valores de Empresa de hoy (Empresa gana: es lo que se siguió
+     editando después de la `012`), `oferta` como `propuesta` y las cuentas por día en su
+     columna; deja su copia de `acepta_mails_extrapolados`, que hereda de Empresa;
+   - Empresa estrena `descripcion` (copia de `oferta`) y pierde esas claves, `cuentas_por_dia` y
+     `buzones`. Antes, una foto «Antes de la migración 014» en el historial;
+   - `sdr.cliente_config.formulario` pasa a `empresa`: el panel muestra `CAMPOS_EMPRESA`. Los
+     clientes nuevos siguen en `transicion` hasta el paso 5.
+   - El Resumen pide «Revisar la descripción de la empresa» mientras sea igual a la propuesta de
+     la principal.
+   - Las reglas de antes de las campañas (las estables de hoy) siguen recibiendo todo en
+     «Ajustes de este cliente», con lo de la principal y sus nombres de antes.
+   - Vuelta atrás: Biguá restaura la versión «Antes de la migración 014»; Empresa recupera las
+     claves y el panel vuelve al formulario de la transición.
+   - El historial de Empresa ya no muestra ni restaura versiones de una campaña.
 5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
    transición.
-6. **Aplicar la `013` en producción**, después de publicar las reglas que leen la campaña.
+6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
+   abrir la pestaña (paso 5): con la `014`, el formulario de Empresa ya no edita lo de la
+   campaña, y hasta el paso 5 un cliente no tiene dónde editarlo.
 
 **Pendientes chicos, vistos al construir:**
 
-- Un buzón dado de alta después de la `012` no entra solo en la «principal»: decidir si se suma
-  a la «principal» o queda sin campaña hasta que se lo asigne.
+- ~~Un buzón dado de alta después de la `012` no entraba en ninguna campaña.~~ La migración `013`
+  lo suma solo a la «principal»; de las demás campañas lo saca o lo suma el panel.
 - Volver una campaña a una versión anterior del historial, como en Empresa.
 
 **Después de C1:** C2, con varios perfiles de LinkedIn (§6.1), y D, con los tipos Evento y

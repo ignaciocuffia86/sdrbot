@@ -24,6 +24,8 @@ const META = {
 const meta = (a) => ({ bot: a.bot, tarea: a.tarea, corrida: a.corrida });
 const fecha = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
 const texto = (max) => ({ type: 'string', maxLength: max });
+const campana = { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{1,40}$',
+  description: 'Clave de la campaña («principal», «webinar-2026-11»…). Si no se pasa: la del prospecto o la principal.' };
 
 const TIPOS_EVENTO = ['cuenta.investigada', 'cuenta.excluida', 'prospecto.revelado', 'mail.enviado', 'mail.rebotado',
   'linkedin.cargado', 'linkedin.invitacion', 'linkedin.conexion', 'linkedin.mensaje', 'linkedin.pausado', 'linkedin.bloqueado',
@@ -78,12 +80,14 @@ export const SDR_OPS = [
   {
     op: 'registro_guardar_cuenta', mcp: 'registro_guardar_cuenta', scope: 'sdr',
     description: 'Crea o actualiza una cuenta (empresa prospectada). Sin id busca por dominio o id de ASCI para no ' +
-      'duplicar. Crear una cuenta registra «cuenta investigada»; pasarla a excluida registra «cuenta excluida» con su motivo.',
+      'duplicar. Crear una cuenta registra «cuenta investigada»; pasarla a excluida registra «cuenta excluida» con su motivo. ' +
+      'Una cuenta nueva entra en la campaña que se pasa (o la principal), que tiene que estar activa; una cuenta en contacto ' +
+      'por una campaña de prospección activa no entra en otra (en_otra_campana).',
     schema: obj({
       id: uuid, asci_id: texto(100), nombre: { type: 'string', minLength: 1, maxLength: 200 }, dominio: texto(253),
       pais: texto(80), vertical: texto(120), tamano: texto(60),
       senales: { type: 'array', maxItems: 20, items: obj({ tipo: texto(60), fecha: texto(30), evidencia: texto(500), resumen: texto(500) }) },
-      tesis: texto(2000), estado: { enum: ESTADOS_CUENTA }, estado_motivo: texto(500), pausa_hasta: fecha, ...META,
+      tesis: texto(2000), estado: { enum: ESTADOS_CUENTA }, estado_motivo: texto(500), pausa_hasta: fecha, campana, ...META,
     }),
     handler: (ctx, a) => sdr.guardarCuenta(ctx.clientId, { ...a, dominio: dominio(a.dominio) }, meta(a)),
     summary: (r) => ({ creada: r.creada }),
@@ -93,7 +97,8 @@ export const SDR_OPS = [
     description: 'Crea o actualiza un prospecto (persona). Sin id busca por email, URL de LinkedIn o id de ASCI para no ' +
       'duplicar. La URL de LinkedIn se normaliza (www.linkedin.com/in/slug) y se rechaza si parece cortada. Cuando el ' +
       'email aparece por primera vez se registra «prospecto revelado». Usá proximo_paso, proximo_canal y proximo_fecha ' +
-      'para que el orquestador lo vea en la agenda.',
+      'para que el orquestador lo vea en la agenda. Una persona está en una sola campaña: la que se pasa o, si es nueva, ' +
+      'la de su cuenta (o la principal). No se la pasa a otra mientras esté en contacto por una campaña activa (en_otra_campana).',
     schema: obj({
       id: uuid, cuenta_id: uuid, asci_id: texto(100), apollo_id: texto(100),
       nombre: { type: 'string', minLength: 1, maxLength: 200 }, cargo: texto(200), area: texto(120), seniority: texto(60),
@@ -101,7 +106,7 @@ export const SDR_OPS = [
       linkedin_url: texto(300), whatsapp: { type: 'string', pattern: '^\\+?[0-9 ()-]{6,25}$' },
       eleccion: obj({ rol_compra: texto(120), puntaje: { type: 'number', minimum: 0, maximum: 100 }, motivo: texto(1000) }),
       estado: { enum: ESTADOS_PROSPECTO }, canales: { type: 'array', items: { enum: ['mail', 'linkedin', 'whatsapp'] }, uniqueItems: true },
-      proximo_paso: texto(300), proximo_canal: { enum: ['mail', 'linkedin', 'whatsapp', 'crm', 'otro'] }, proximo_fecha: fecha, ...META,
+      proximo_paso: texto(300), proximo_canal: { enum: ['mail', 'linkedin', 'whatsapp', 'crm', 'otro'] }, proximo_fecha: fecha, campana, ...META,
     }),
     handler: (ctx, a) => sdr.guardarProspecto(ctx.clientId, {
       ...a, email: email(a.email), linkedin_url: a.linkedin_url ? normalizeLinkedin(a.linkedin_url) : a.linkedin_url,
@@ -148,8 +153,9 @@ export const SDR_OPS = [
   {
     op: 'registro_resumen', mcp: 'registro_resumen', scope: 'sdr',
     description: 'Números de un día o de un período (por defecto hoy): eventos por tipo (mails enviados, revelados, ' +
-      'respuestas, positivos…), corridas por bot y estado, prospectos por estado y cómo va la calibración. Para el resumen.',
-    schema: obj({ desde: fecha, hasta: fecha, ...META }),
+      'respuestas, positivos…), corridas por bot y estado, prospectos por estado y cómo va la calibración. Para el resumen. ' +
+      'Sin campana trae los del cliente y el detalle de cada campaña (por_campana); con campana (la clave), sólo los de esa campaña.',
+    schema: obj({ desde: fecha, hasta: fecha, campana, ...META }),
     handler: (ctx, a) => sdr.resumen(ctx.clientId, a),
   },
   // ------------------------------------------------------------ pedidos entre bots
@@ -161,7 +167,7 @@ export const SDR_OPS = [
     schema: obj({
       para_bot: botName, que: { type: 'string', minLength: 3, maxLength: 2000 }, prospecto_id: uuid,
       por_que: texto(1000), para_cuando: { type: 'string', maxLength: 40, description: 'Fecha y hora ISO (AAAA-MM-DDTHH:MM).' }, relacionado_con: uuid,
-      ...META, bot: META.bot,
+      campana, ...META, bot: META.bot,
     }, ['para_bot', 'que', 'bot']),
     handler: (ctx, a) => sdr.pedir(ctx.clientId, a, meta(a)),
     summary: (r) => ({ para: r.pedido.para_bot, escalado: r.pedido.escalado }),
@@ -194,7 +200,7 @@ export const SDR_OPS = [
       'a un positivo por WhatsApp llevan contenido.canal "whatsapp" y el texto exacto.',
     schema: obj({
       tipo: { enum: ['calibracion_mail', 'respuesta_positivo', 'crm_mapeo', 'crm_cambio', 'whatsapp_primero', 'otro'] },
-      prospecto_id: uuid,
+      prospecto_id: uuid, campana,
       contenido: obj({
         canal: { enum: ['mail', 'linkedin', 'whatsapp'], description: 'Para respuesta_positivo o whatsapp_primero: por dónde sale (por defecto mail).' },
         buzon: texto(254), destinatario: texto(320), asunto: texto(500), texto: texto(20000),
