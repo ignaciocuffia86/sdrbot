@@ -699,6 +699,20 @@ function leerCampana(form, campos) {
   return out;
 }
 
+// La ayuda de una columna de la campaña que depende de otros datos.
+function pistaColumna(c, d) {
+  if (c.clave === 'cuentas_por_dia' && d.tope_cuentas_dia !== null) {
+    return `Las demás activas suman ${d.otras_activas}; el tope del cliente es ${d.tope_cuentas_dia}.`;
+  }
+  // Como lo que se hereda de Empresa: vacío, vale la de la cuenta de Dripify.
+  if (c.clave === 'dripify_campana_id' && d.dripify_defecto !== undefined) {
+    return d.dripify_defecto
+      ? `Vacío: usa la campaña por defecto de la cuenta de Dripify (${d.dripify_defecto}). Se cambia sólo si esta campaña va a otra campaña de Dripify.`
+      : 'La cuenta de Dripify no tiene campaña por defecto (Administración → LinkedIn y WhatsApp): sin una acá, esta campaña no carga a nadie en LinkedIn.';
+  }
+  return null;
+}
+
 function columnaInput(c, k, d) {
   const v = k[c.clave];
   const dis = !c.editable;
@@ -745,7 +759,7 @@ function resumenBloque(b, k, d) {
     case 'audiencia': return [corto(a.icp, 40), a.roles_objetivo?.length ? plural(a.roles_objetivo.length, 'cargo', 'cargos') : null].filter(Boolean).join(' · ') || 'Sin audiencia';
     case 'mensajes': return corto(d.efectivos.valores.llamado_accion);
     case 'respuestas': return a.positivos?.length ? plural(a.positivos.length, 'positivo definido', 'positivos definidos') : 'Sin positivos propios';
-    case 'ritmo': return `${plural(k.buzones.length, 'buzón', 'buzones')} · ${k.cuentas_por_dia} cuentas por día${k.dripify_campana_id ? ` · Dripify ${k.dripify_campana_id}` : ''}`;
+    case 'ritmo': return `${plural(k.buzones.length, 'buzón', 'buzones')} · ${k.cuentas_por_dia} cuentas por día${k.dripify_campana_id ? ` · Dripify ${k.dripify_campana_id}` : d.dripify_defecto ? ` · Dripify por defecto (${d.dripify_defecto})` : ''}`;
     case 'avanzado': return `Calibra ${k.calibracion_mails} mails`;
     default: return '';
   }
@@ -802,8 +816,7 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
       h('summary', {}, h('strong', {}, b.titulo), faltanEn.has(b.clave) ? h('span', { class: 'dot d-warn', title: 'Falta completar' }) : null,
         h('span', { class: 'small muted resumen-sec' }, resumenBloque(b.clave, k, d))),
       h('p', { class: 'muted small' }, b.ayuda),
-      cols.map((c) => field(conCandado(c), columnaInput(c, k, d), c.clave === 'cuentas_por_dia' && d.tope_cuentas_dia !== null
-        ? `Las demás activas suman ${d.otras_activas}; el tope del cliente es ${d.tope_cuentas_dia}.` : null)),
+      cols.map((c) => field(conCandado(c), columnaInput(c, k, d), pistaColumna(c, d))),
       campos.map((c) => campoCampana(c, k.ajustes[c.clave], d)));
   });
   const form = h('form', { class: 'stack' }, secciones,
@@ -1595,8 +1608,8 @@ function dripifyCard(clientId, sdr, reload) {
       d?.api_key ? 'Dejala vacía para conservar la guardada. Se guarda cifrada y no se vuelve a mostrar.'
         : 'En Dripify: Settings → Integrations → Open API. Se guarda cifrada y no se vuelve a mostrar.'),
     h('div', { class: 'cols2' },
-      field('Id de la campaña', h('input', { name: 'campana_id', type: 'number', min: 1, required: true, value: d?.campana_id ?? '' }),
-        'El número de la URL de la campaña en Dripify.'),
+      field('Campaña por defecto', h('input', { name: 'campana_id', type: 'number', min: 1, required: true, value: d?.campana_id ?? '' }),
+        'El número de la URL de la campaña en Dripify. La usan las campañas del SDR que no eligen una propia (en cada campaña, Canales y ritmo).'),
       field('Largo máximo de la nota', h('input', { name: 'nota_max', type: 'number', min: 100, max: 300, value: d?.nota_max ?? 300 }),
         '300 con LinkedIn Premium, 200 sin.')));
   const err = h('p', { class: 'err', role: 'alert' });
@@ -1610,6 +1623,8 @@ function dripifyCard(clientId, sdr, reload) {
       h('p', {}, e.listo ? h('span', { class: 'badge b-ok' }, 'listo') : h('span', { class: 'badge b-err' }, 'falta algo'),
         e.campana ? ` Campaña «${e.campana.nombre}» (${e.campana.estado}).` : ''),
       e.problemas?.length ? h('ul', {}, e.problemas.map((x) => h('li', { class: 'err' }, x))) : null,
+      e.campanas?.length ? h('p', { class: 'muted' }, 'Campañas con una campaña de Dripify propia: ',
+        e.campanas.map((x) => `«${x.nombre}» → ${x.dripify_nombre ? `«${x.dripify_nombre}» (${x.dripify_estado})` : `${x.dripify} (no existe)`}`).join(' · ')) : null,
       e.estadisticas ? h('p', { class: 'muted' }, `Prospectos: ${e.estadisticas.prospectos ?? '—'} · contactados: ${e.estadisticas.contactados ?? '—'}` +
         ` · aceptación: ${e.estadisticas.aceptacion ?? '—'} · respuesta: ${e.estadisticas.respuesta ?? '—'}`) : null,
       e.cupo ? h('p', { class: 'muted' }, `Pedidos a la API hoy: ${e.cupo.dia} de ${e.cupo.tope_dia}.`) : null));
@@ -2471,8 +2486,7 @@ async function campanaPaso(v, d, pasos, i, { baseA, path, ambito, camposDe, colu
   const pend = new Map(p.pendientes.map((x) => [x.clave, x]));
   const ctx = { clientId, ambito, antes: guardar, despues: reload };
   form.append(
-    ...cols.map((c) => field(conCandado(c), columnaInput(c, k, d), c.clave === 'cuentas_por_dia' && d.tope_cuentas_dia !== null
-      ? `Las demás activas suman ${d.otras_activas}; el tope del cliente es ${d.tope_cuentas_dia}.` : null)),
+    ...cols.map((c) => field(conCandado(c), columnaInput(c, k, d), pistaColumna(c, d))),
     ...campos.map((c) => campoConPausa(campoCampana(c, k.ajustes[c.clave], d), c, pend.get(c.clave), ctx)));
   if (p.clave === 'canales') {
     form.append(h('p', { class: 'small muted' }, 'Los buzones se cargan y se prueban en Canales; acá se elige cuáles usa esta campaña.'));

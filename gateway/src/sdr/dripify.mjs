@@ -226,7 +226,8 @@ async function campana(cx) {
 // Para el panel («Probar») y la herramienta dripify_estado.
 export async function estado(clientId) {
   const cx = await conexion(clientId);
-  const k = await campana(cx);
+  const lista = await todas(cx, '/v1/open-api/campaigns');
+  const k = lista.find((x) => String(x.id) === String(cx.cuenta.campana_id)) ?? null;
   const cs = await campos(cx, { refrescar: true });
   const faltan = VARIABLES.filter((v) => !cs[v]);
   let estadisticas = null;
@@ -247,7 +248,20 @@ export async function estado(clientId) {
   else if (k.status !== 'ACTIVE') problemas.push(`La campaña está ${k.status}: activarla en Dripify.`);
   if (k?.locked) problemas.push('La campaña está bloqueada (por ejemplo, por el límite del plan).');
   if (faltan.length) problemas.push(`Faltan los campos personalizados ${faltan.join(', ')} en Dripify (Settings → Lead fields).`);
+  // Las campañas del SDR con una campaña de Dripify propia (las demás usan la por defecto, de arriba).
+  const { rows: propias } = await asClient(clientId, (c) => c.query(
+    `select nombre, estado, dripify_campana_id from sdr.campana
+      where client_id = $1 and dripify_campana_id is not null and estado <> 'terminada' order by nombre`, [clientId]));
+  const campanas = propias.map((r) => {
+    const x = lista.find((y) => String(y.id) === String(r.dripify_campana_id));
+    if (!x) problemas.push(`La campaña «${r.nombre}» usa la campaña de Dripify ${r.dripify_campana_id}, que no existe en esta cuenta.`);
+    else if (x.status !== 'ACTIVE' && r.estado === 'activa') {
+      problemas.push(`La campaña «${r.nombre}» usa la campaña de Dripify «${x.name}», que está ${x.status}: activarla en Dripify.`);
+    }
+    return { nombre: r.nombre, estado: r.estado, dripify: Number(r.dripify_campana_id), dripify_nombre: x?.name ?? null, dripify_estado: x?.status ?? null };
+  });
   return {
+    campanas,
     listo: problemas.length === 0, problemas,
     campana: k ? { id: Number(k.id), nombre: k.name, estado: k.status, bloqueada: Boolean(k.locked) } : null,
     campos: cs, nota_max: cx.cuenta.nota_max, estadisticas,
