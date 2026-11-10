@@ -280,6 +280,26 @@ export async function guardar(c, clientId, id, datos, { user, esBigua }) {
   return { cambios: [...cambiosC, ...cambiosA], estado_antes: actual.estado, estado: despues.estado, nombre: despues.nombre };
 }
 
+// Vuelve los ajustes de una campaña a una versión de su historial, como en Empresa. Pasa por
+// guardar: las mismas validaciones y permisos que un cambio a mano (lo que el que restaura no puede
+// editar queda como está) y queda en el historial. Las columnas (estado, volumen, buzones) no se
+// tocan: el historial guarda los ajustes.
+export async function restaurar(c, clientId, id, historialId, { user, esBigua }) {
+  const cfg = await contexto(c, clientId);
+  const actual = await fila(c, clientId, id);
+  const { rows } = await c.query(
+    `select ajustes, at from sdr.ajustes_historial where client_id = $1 and campana_id = $2 and id = $3`, [clientId, id, historialId]);
+  if (!rows.length) throw noExiste('No existe esa versión de la campaña.');
+  const permiso = permisoDe(esBigua, cfg);
+  const vuelta = {};
+  for (const k of diferencias(actual.ajustes, rows[0].ajustes)) {
+    const campo = CAMPOS_CAMPANA.find((x) => x.clave === k);
+    if (campo && editable(campo, permiso)) vuelta[k] = rows[0].ajustes[k] ?? null;
+  }
+  const cuando = new Date(rows[0].at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+  return guardar(c, clientId, id, { ajustes: vuelta, nota: `Vuelta a la versión del ${cuando}` }, { user, esBigua });
+}
+
 // Una copia en borrador (decisión 13: una terminada no se reactiva, se duplica). Copia los ajustes,
 // los buzones, el tipo y el volumen; no las fechas ni la campaña de Dripify, que son de cada una.
 export async function duplicar(c, clientId, id, { nombre } = {}, { user }) {

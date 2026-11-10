@@ -395,6 +395,10 @@ test('SDR: Biguá lo activa; el cliente edita su oferta y su tono, no lo técnic
   assert.equal(act.body.data.sdr.tecnico.calibracion_mails, 20);
   const malZona = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/config', { zona_horaria: 'Marte/Olimpo' });
   assert.equal(malZona.status, 400);
+  // Un cliente nuevo arranca con el formulario de Empresa sola (migración 015). Estas pruebas cubren
+  // el de la transición, el de un cliente de antes de la 014, que sigue andando.
+  assert.equal((await ctx.bigua.call('GET', '/clients/adm-b/sdr')).body.data.formulario, 'empresa');
+  await store.asOwner((c) => c.query(`update sdr.cliente_config set formulario = 'transicion' where client_id = 'adm-b'`));
 
   const op = await ctx.bigua.call('PUT', '/clients/adm-b/sdr/ajustes', { ajustes: { cuentas_por_dia: 5, oferta: 'QA tercerizado.' } });
   assert.equal(op.status, 200, JSON.stringify(op.body));
