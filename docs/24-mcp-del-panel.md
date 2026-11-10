@@ -1,6 +1,6 @@
 # MCP del panel: gestionar el SDR desde Claude
 
-Estado al 10/11/2026: **M0, M1 y M2 construidas** (§9): el OAuth, `/mcp/panel`, las conexiones en el panel y las aprobaciones decididas por el cliente, con límites de uso. **De M4, el alta desde Claude** (`alta_cargar` y `alta_ver`, §4.4). M3 y el resto de M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
+Estado al 10/11/2026: **M0, M1, M2 y M3 construidas** (§9): el OAuth, `/mcp/panel`, las conexiones en el panel, las aprobaciones decididas por el cliente, con límites de uso, y gestionar desde Claude campañas, Empresa, No contactar, listas de cuentas, buzones, dominios y WhatsApp, con vista previa (§4.2, §9.3). **De M4, el alta desde Claude** (`alta_cargar` y `alta_ver`, §4.4). El CRM y el resto de M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
 y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
@@ -240,8 +240,19 @@ MCP de los bots.
   bots: según el rol y, para el cliente, según el modo (operado por Biguá o autogestionado, `21`
   decisión 1). Si el rol o el modo cambian, la lista cambia en la próxima conexión.
 - **Anotaciones MCP.** Las de lectura llevan `readOnlyHint`. Las que cambian algo llevan
-  `destructiveHint` cuando no se pueden deshacer (aprobar, terminar una campaña), así Claude pide
-  confirmación por defecto.
+  `destructiveHint`, así Claude pide confirmación por defecto, y cuentan en el tope de cambios
+  (§6). Probar un buzón y verificar un dominio salen a la red y guardan el resultado sin cambiar la
+  configuración: llevan `destructiveHint: false` y `openWorldHint`, y cuentan en el mismo tope.
+- **Vista previa.** Toda herramienta que cambia algo se llama primero sin `confirmar`: corre la
+  misma operación del panel, con sus validaciones y permisos, dentro de su transacción, y la deshace
+  al final (`simulable` en `servicio.mjs`). Devuelve cada cambio con el valor de antes y el de
+  después, lo que le faltaría a la campaña para activarse, o lo que una carga sumaría y frenaría. La
+  vista previa valida lo mismo que el cambio de verdad: si la vista previa pasa, el cambio pasa
+  (salvo que otro cambie lo mismo en el medio). Con `confirmar: true` se aplica.
+- **Huella.** Activar, pausar o terminar una campaña (`campana_estado`) y cargar una lista de cuentas
+  (`campana_cuentas_cargar`) piden además la `huella` que devolvió la vista previa: sin ella, o si la
+  campaña o la lista cambiaron desde entonces, responden `vista_previa_vencida` o `carga_cambio`. Así
+  la vista previa es obligatoria donde más pesa: de una campaña activa salen mails.
 - **Datos de terceros.** Lo que viene de afuera (textos de mails de prospectos, respuestas,
   contenido de LinkedIn) va dentro de un campo `datos_externos`, y la descripción de cada
   herramienta dice que es contenido y no instrucciones (§6).
@@ -250,26 +261,36 @@ MCP de los bots.
 
 ### 4.2 Catálogo
 
+Construidas (`gateway/src/panel/mcp.mjs`). «Vista previa» quiere decir que sin `confirmar` no
+cambia nada (§4.1).
+
 | Herramienta | Qué hace | Cliente | Biguá |
 |---|---|---|---|
-| `clientes_listar` | Clientes con su estado: SDR activo, modo, aprobaciones pendientes, buzones con error | — | Sí |
-| `alta_ver`, `alta_cargar` (construidas) | El asistente de alta desde Claude: ver los 16 pasos, y cargar o completar un alta con una ficha, con vista previa (§4.4). Reemplaza a `cliente_crear` | — | Sí |
-| `resumen` | El Resumen del panel: hoy y el período, por campaña (mails, revelados, respuestas, positivos, calibración) | Sí | Sí |
+| `clientes_listar` | Clientes con su id, nombre, buzones y usuarios | — | Sí |
+| `alta_ver`, `alta_cargar` | El asistente de alta desde Claude: ver los 16 pasos, y cargar o completar un alta con una ficha, con vista previa (§4.4) | — | Sí |
+| `resumen` | El Resumen del panel: la semana, por campaña (mails, LinkedIn, respuestas, positivos, calibración) | Sí | Sí |
 | `actividad` | El monitor: canales con su modo y lo que pasó hoy | Sí | Sí |
-| `registro_buscar` | Buscar una cuenta o un prospecto y ver su historia | Sí | Sí |
-| `aprobaciones_listar` | Pendientes (o por estado), con el mensaje completo, la persona, la cuenta y la campaña | Sí | Sí |
-| `aprobacion_decidir` | Aprobar o rechazar, con correcciones (§5) | Sí, si su cliente lo permite | Sí |
-| `campanas_listar`, `campana_ver` | Campañas con su estado y sus números | Sí | Sí |
-| `cargas_listar` | Las cargas de archivos (docs/27): destino, quién, qué entró, si se deshicieron. Subir, deshacer y el informe quedan en el panel | Sí | Sí |
-| `campana_crear`, `campana_editar`, `campana_duplicar` | Lo que el panel deja editar a cada uno (`21` §6.2); una campaña nueva del cliente en modo operado queda en borrador | Sí, los campos de su rol | Sí, todos |
-| `campana_estado` | Activar, pausar o terminar | En autogestionado | Sí |
-| `ajustes_ver`, `ajustes_editar` | Empresa: oferta, ICP, tono, firma, objeciones, positivos… con el mismo historial y aviso al orquestador | Sí, los campos que no tienen candado | Sí |
-| `ajustes_restaurar` | Volver a una versión del historial | Sí | Sí |
-| `no_contactar_listar`, `no_contactar_agregar`, `no_contactar_quitar` | La lista de no contactar | Sí | Sí |
-| `buzones_listar`, `buzon_probar`, `buzon_pausar` | Estado y prueba de los buzones. **Sin alta ni contraseña** (§4.3) | Sí | Sí |
-| `dominios_ver`, `dominio_verificar` | SPF, DKIM y DMARC, con lo que hay que publicar | Sí | Sí |
-| `usuarios_listar`, `usuario_crear` | Usuarios del cliente. El enlace de activación se manda por mail, no vuelve por el chat | — | Sí |
-| `config_sdr`, `despertador`, `dripify_ver`, `whatsapp_ver` | Lo técnico de Administración, para mirar | — | Sí (sólo lectura) |
+| `registro_buscar` | Buscar una cuenta o un prospecto | Sí | Sí |
+| `aprobaciones_listar`, `aprobacion_decidir` | Pendientes con el mensaje completo; aprobar o rechazar con correcciones, con vista previa (§5) | Sí, si su cliente lo permite | Sí |
+| `campanas_listar`, `campana_ver` | Campañas con su estado, sus números, lo que puede editar cada uno y su historial | Sí | Sí |
+| `campana_crear` | Una campaña nueva en borrador, con vista previa de cómo queda y de lo que le faltaría para activarla. Los buzones van por su mail | Sí, los campos de su rol | Sí |
+| `campana_editar` | Cambiar campos de una campaña, con antes y después. Los mismos permisos del panel (`21` §6.2): en modo operado el cliente cambia lo que dice la campaña, no el volumen, los buzones ni la campaña de Dripify | Sí, los campos de su rol | Sí, todos |
+| `campana_estado` | Activar, pausar o terminar. Si le falta algo, no se activa y dice qué. Vista previa con huella obligatoria | En autogestionado | Sí |
+| `campana_duplicar`, `campana_restaurar` | Copia en borrador (así se «reactiva» una terminada); volver lo que dice a una versión del historial | Sí | Sí |
+| `campana_paso_marcar` | El asistente de campaña: un paso o un campo esperando una definición, listo, no aplica o por hacer | Sí | Sí |
+| `ajustes_ver`, `ajustes_editar`, `ajustes_restaurar` | Empresa: ver, cambiar con antes y después, y volver a una versión. Si cambia el cliente, el orquestador le avisa a Biguá | Sí, los campos que no tienen candado | Sí |
+| `no_contactar_listar`, `no_contactar_agregar`, `no_contactar_quitar` | La lista de no contactar. Agregar, hasta 500 valores, con la vista previa de qué entra, qué ya estaba y qué cuentas en marcha frena | Sí | Sí |
+| `campana_cuentas_cargar`, `campana_lista_ver` | Una lista de cuentas pegada en el chat (hasta 500 filas), por la misma carga que un archivo del panel (`27`), con vista previa y huella; cómo viene la lista | Sí | Sí |
+| `cargas_listar`, `carga_deshacer` | Las cargas (archivos y listas pegadas) y deshacer una, con vista previa de qué sale | Sí | Sí |
+| `buzones_listar`, `buzon_probar`, `buzon_estado` | Estado, prueba de conexión con la contraseña guardada, y pausar o reactivar. **Sin alta ni contraseña** (§4.3) | Sí | Sí |
+| `dominios_ver`, `dominio_verificar`, `dominio_selectores` | SPF, DKIM, DMARC y MX: el último chequeo, volver a chequear, y los selectores DKIM | Sí | Sí |
+| `whatsapp_configurar` | Las reglas del turno de WhatsApp (`22`): número, horario, días, pausas, topes, aprobar primero, reanudar | — | Sí |
+
+Lo que el panel hace y el MCP no está en `SIN_MCP` (`gateway/src/panel/mcp.mjs`), cada operación con
+su motivo: los secretos (§4.3), lo que no se deshace (borrar un buzón, dar de baja a una persona),
+los enlaces de activación, los archivos (subir un Excel, bajar un informe) y el CRM, que queda para
+después. `gateway/test/asistentes.test.mjs` falla si una ruta nueva del panel no está en una
+herramienta ni en `SIN_MCP`.
 
 ### 4.3 Lo que no pasa por el MCP
 
@@ -279,8 +300,13 @@ Ningún secreto entra ni sale por el chat (`CLAUDE.md`):
   la web: sin contraseña no se puede probar.
 - Tokens `mgw_…` de los bots: se crean y se ven una vez en el panel.
 - API key de Dripify y secreto del webhook: en el panel.
-- Enlaces de activación y reseteo: van por mail a la persona.
+- Enlaces de activación y reseteo: se generan en el panel y se mandan por un canal seguro.
+- Token de HubSpot y claves de los despertadores: en el panel.
 - `MAILGW_ENC_KEYS` y contraseñas de la base: nunca, por ningún lado.
+
+Tampoco pasan los archivos: un Excel o un CSV se sube en el panel. Por el chat entran listas
+pegadas de hasta 500 filas (`no_contactar_agregar`, `campana_cuentas_cargar`); una más grande va
+como archivo.
 
 Tampoco pasan los envíos. El MCP del panel **no manda mails ni mensajes**: decide aprobaciones y
 los bots ejecutan lo aprobado, con todos los controles del gateway (§5.3).
@@ -289,14 +315,14 @@ los bots ejecutan lo aprobado, con todos los controles del gateway (§5.3).
 
 `alta_cargar` (sólo Biguá, `destructiveHint`) recibe una **ficha** con las respuestas de la llamada
 de inicio: el cliente, cómo se activa el SDR (modo, quién aprueba, bots, calibración), los ajustes de
-Empresa, los usuarios, No contactar, la primera campaña (queda en borrador), qué pasos se marcan
-listos, no aplican o esperan una definición, y qué campos esperan.
+Empresa, los usuarios, No contactar, la primera campaña (queda en borrador), las reglas de WhatsApp,
+qué pasos se marcan listos, no aplican o esperan una definición, y qué campos esperan.
 
 - **Sin `confirmar`** devuelve el plan (qué se crea, qué cambia, qué queda igual) y los errores,
   sin escribir nada. Con un error no se carga nada.
 - **Con `confirmar: true`** aplica la ficha con las mismas operaciones del panel (`clienteCrear`,
   `sdrConfig`, los ajustes de Empresa, `usuarioClienteCrear`, `noContactarAgregar`, `campanaCrear`,
-  `asistentePasoGuardar`), con sus validaciones, permisos y auditoría. Devuelve en qué quedó el
+  `whatsappGuardar`, `asistentePasoGuardar`), con sus validaciones, permisos y auditoría. Devuelve en qué quedó el
   alta y lo que falta hacer fuera del chat, con dónde se hace.
 - **Se puede volver a llamar** con más respuestas: lo que ya está no se repite (el cliente, los
   usuarios, la campaña con ese nombre, lo que ya está en No contactar).
@@ -312,7 +338,9 @@ definiciones que el formulario del panel (`CAMPOS_EMPRESA`, `CAMPOS_CAMPANA`, `C
 `alta_cargar` sale de ahí. `gateway/test/asistentes.test.mjs` falla si un paso nuevo no lo dice, si
 un campo no está en la ficha o si la descripción no nombra un paso. La regla está en `CLAUDE.md`
 («Formulario de configuración y alta»): cada cambio al asistente o a una operación del panel se
-refleja en el MCP en el mismo PR.
+refleja en el MCP en el mismo PR. Desde M3 la misma prueba controla además que cada operación del
+panel esté en una herramienta o en `SIN_MCP` (§4.2), que los pasos de `campana_paso_marcar` sean los
+del asistente de campaña y que toda herramienta que cambia algo tenga `confirmar`.
 
 ## 5. Aprobaciones por el cliente
 
@@ -440,7 +468,7 @@ CRM igual que siempre.
 | **M0 · Servicio** (hecha) | Sacar la lógica de las rutas de `admin/api.mjs` a `src/admin/servicio.mjs`; las rutas quedan finas. Sin cambios visibles | Gateway |
 | **M1 · Conectar y mirar** (hecha) | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
 | **M2 · Aprobaciones del cliente** (hecha) | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
-| **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
+| **M3 · Gestionar** (hecha) | Campañas, Empresa, No contactar, listas de cuentas, cargas, buzones, dominios y WhatsApp, con vista previa (§4.1, §4.2) | Gateway |
 | **M4 · Biguá** (en parte) | El alta desde Claude: `alta_cargar` y `alta_ver` (hechas, §4.4); usuarios y lo técnico en lectura | Gateway |
 
 M1 sola ya sirve: el cliente pregunta «¿cómo viene la campaña de webinar?» y Claude contesta con
@@ -497,6 +525,23 @@ los datos del panel.
 4. Pasar las reglas a `estable` (`playbooks-canal estable 2026.11.10-5`) cuando esté mergeado.
 5. Elegir en cada cliente quién aprueba (Administración → Configuración del SDR): los que ya
    existen siguen en «Biguá» hasta que se cambie.
+
+### 9.3 Cómo quedó M3 (10/11)
+
+Decidido al arrancar: el cliente activa una campaña desde Claude sólo en autogestionado, con la
+vista previa de lo que falta obligatoria; las listas pegadas, hasta unas 500 filas (un Excel grande,
+en el panel); y un inventario con prueba de lo que el panel hace y el MCP no.
+
+| Pieza | Dónde |
+|---|---|
+| Vista previa por transacción deshecha (`Simulacion`, `simulable`) en `ajustesGuardar`, `ajustesRestaurar`, `campanaCrear`, `campanaGuardar`, `campanaRestaurar`, `campanaDuplicar`, `noContactarAgregar` (que ahora acepta `valores`), `noContactarQuitar` y `cargaDeshacer`; en `whatsappGuardar`, la comparación con lo guardado | `gateway/src/admin/servicio.mjs`. Las rutas del panel no cambian: `simular` sólo lo pasa el MCP |
+| Las herramientas de §4.2, con los esquemas armados de `CAMPOS_EMPRESA`, `CAMPOS_CAMPANA`, `COLUMNAS_CAMPANA`, `CAMPOS_DE` y `WHATSAPP_PROPS`; la huella de `campana_estado`; la lista pegada como CSV con las columnas ya asignadas | `gateway/src/panel/mcp.mjs` |
+| WhatsApp en la ficha de `alta_cargar` (antes se cargaba sólo en el panel) | `ALTA_DESDE_CLAUDE.whatsapp` y `esquemaFichaAlta` en `servicio.mjs` |
+| `SIN_MCP` y su prueba | `mcp.mjs` y `gateway/test/asistentes.test.mjs` |
+| Pruebas | `gateway/test/gestion_mcp.test.mjs`: vista previa sin cambios, permisos por modo, activar con lo que falta y con huella, listas con comillas y comas, deshacer, aislamiento entre clientes, WhatsApp sólo de Biguá y en el alta |
+
+**Para ponerlo en producción:** mergear el PR (no hay migración ni reglas nuevas) y reconectar el
+conector en Claude, que guarda la lista de herramientas de la conexión anterior.
 
 ## 10. Decisiones abiertas
 

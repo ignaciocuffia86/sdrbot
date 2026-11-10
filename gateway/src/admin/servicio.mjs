@@ -65,6 +65,21 @@ const mailboxFields = {
   firma: { type: ['string', 'null'], maxLength: 600 },
 };
 
+// Las reglas del turno de WhatsApp (docs/22): las mismas en el panel, en whatsapp_configurar y en la
+// ficha de alta_cargar.
+export const WHATSAPP_PROPS = {
+  activo: { type: 'boolean', description: 'Si el bot de WhatsApp trabaja.' },
+  numero: { type: ['string', 'null'], pattern: '^\\+?[0-9 ]{6,20}$', description: 'El número desde el que escribe, con código de país.' },
+  hora_desde: { type: 'integer', minimum: 0, maximum: 23, description: 'Desde qué hora (de la zona del cliente).' },
+  hora_hasta: { type: 'integer', minimum: 1, maximum: 24, description: 'Hasta qué hora.' },
+  dias: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: 7 }, description: 'Días: 1 es lunes, 7 domingo.' },
+  pausa_min_seg: { type: 'integer', minimum: 5, maximum: 600, description: 'Pausa mínima entre mensajes, en segundos.' },
+  pausa_max_seg: { type: 'integer', minimum: 5, maximum: 1800, description: 'Pausa máxima entre mensajes, en segundos.' },
+  tope_contacto_dia: { type: 'integer', minimum: 1, maximum: 50, description: 'Mensajes por día a una misma persona.' },
+  tope_dia: { type: 'integer', minimum: 1, maximum: 500, description: 'Mensajes por día en total.' },
+  aprobar_primero: { type: 'boolean', description: 'Si cada mensaje espera una aprobación antes de salir.' },
+};
+
 const V = {
   client: validator({ type: 'object', required: ['id', 'name'], additionalProperties: false,
     properties: { id: { type: 'string', pattern: SLUG }, name: { type: 'string', minLength: 1, maxLength: 120 } } }),
@@ -125,21 +140,12 @@ const V = {
       valor: { type: 'string', maxLength: 300 },
       motivo: { type: 'string', maxLength: 200 },
       csv: { type: 'string', maxLength: 400000 },
+      // Varias filas sueltas, como las manda el MCP del panel (docs/24 §4.2): sin armar un CSV.
+      valores: { type: 'array', minItems: 1, maxItems: 500, items: { type: 'object', required: ['valor'], additionalProperties: false,
+        properties: { valor: { type: 'string', maxLength: 300 }, motivo: { type: 'string', maxLength: 200 } } } },
     } }),
   whatsapp: validator({ type: 'object', additionalProperties: false, minProperties: 1,
-    properties: {
-      activo: { type: 'boolean' },
-      numero: { type: ['string', 'null'], pattern: '^\\+?[0-9 ]{6,20}$' },
-      hora_desde: { type: 'integer', minimum: 0, maximum: 23 },
-      hora_hasta: { type: 'integer', minimum: 1, maximum: 24 },
-      dias: { type: 'array', minItems: 1, uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: 7 } },
-      pausa_min_seg: { type: 'integer', minimum: 5, maximum: 600 },
-      pausa_max_seg: { type: 'integer', minimum: 5, maximum: 1800 },
-      tope_contacto_dia: { type: 'integer', minimum: 1, maximum: 50 },
-      tope_dia: { type: 'integer', minimum: 1, maximum: 500 },
-      aprobar_primero: { type: 'boolean' },
-      reanudar: { type: 'boolean' },
-    } }),
+    properties: { ...WHATSAPP_PROPS, reanudar: { type: 'boolean' } } }),
   carga: validator({ type: 'object', required: ['archivo', 'nombre'], additionalProperties: false,
     properties: {
       // El archivo en base64: hasta 3 MB (carga.MAX_BYTES), que en base64 son unos 4 millones de caracteres.
@@ -219,6 +225,22 @@ function scoped(user, clientId, fn) {
 }
 
 const requireBigua = (user) => { if (!isBigua(user)) throw forbidden(); };
+
+// Vista previa de un cambio (docs/24 §4.1): la operación corre entera, con sus validaciones y
+// permisos, en su transacción, y al final se deshace. Lo que devuelve es lo que habría quedado.
+// Desde adentro se tira con Simulacion(valor); simulable() la atrapa afuera y devuelve el valor.
+class Simulacion extends Error {
+  constructor(valor) { super('vista previa'); this.valor = valor; }
+}
+async function simulable(promesa) {
+  try {
+    return await promesa;
+  } catch (e) {
+    if (e instanceof Simulacion) return e.valor;
+    throw e;
+  }
+}
+const AVISO_CONFIRMAR = 'Vista previa: no se cambió nada. Mostrásela a la persona y, con su OK, repetí la llamada con confirmar: true.';
 
 const MAILBOX_COLS = `id, client_id, email, display_name, username, imap_host, imap_port, imap_security,
   smtp_host, smtp_port, smtp_security, timezone, daily_send_cap, append_sent, sent_folder, drafts_folder, firma,
@@ -543,8 +565,8 @@ async function leerSdr(c, user, clientId) {
 
 // Guarda los ajustes nuevos con su historial. Si los cambió el cliente, el orquestador recibe un
 // pedido para contárselo al operador de Biguá en su chat.
-async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false } = {}) {
-  const r = await scoped(user, clientId, async (c) => {
+async function guardarAjustes(user, clientId, cambios, nota, { restaurado = false, simular = false } = {}) {
+  const r = await simulable(scoped(user, clientId, async (c) => {
     const cfg = (await c.query(`select * from sdr.cliente_config where client_id = $1 for update`, [clientId])).rows[0];
     if (!cfg) throw notFound('El SDR no está activado para este cliente.');
     const permiso = { esBigua: isBigua(user), autogestion: cfg.modo === 'autogestionado', tope: cfg.tope_cuentas_dia };
@@ -565,6 +587,10 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
       nuevo = restaurado ? { ...cambios } : form.aplicar(cfg.ajustes, cambios, permiso);
     }
     const cambiados = diferencias(cfg.ajustes, nuevo);
+    if (simular) {
+      throw new Simulacion({ vista_previa: true, aviso: cambiados.length ? AVISO_CONFIRMAR : 'No cambia nada: ya está así.',
+        cambios: cambiados.map((k) => ({ campo: k, titulo: tituloDe(k), antes: cfg.ajustes?.[k] ?? null, despues: nuevo[k] ?? null })) });
+    }
     if (!cambiados.length) return { cambios: [] };
     await c.query(`update sdr.cliente_config set ajustes = $2, actualizado_at = now() where client_id = $1`,
       [clientId, JSON.stringify(nuevo)]);
@@ -576,7 +602,8 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
     if (tieneLegado(nuevo)) await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
     await audit(c, user, clientId, restaurado ? 'admin.sdr.restaurar' : 'admin.sdr.ajustes', { campos: cambiados });
     return { cambios: cambiados };
-  });
+  }));
+  if (r.vista_previa) return r;
   if (r.cambios.length && !isBigua(user)) {
     const lista = r.cambios.map(tituloDe).join(', ');
     await pedirABot(clientId, {
@@ -592,20 +619,22 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
 
 export const sdrVer = async ({ user, params }) => scoped(user, params.client, (c) => leerSdr(c, user, params.client));
 
-export const ajustesGuardar = async ({ user, params, body }) => {
+export const ajustesGuardar = async ({ user, params, body, simular = false }) => {
   const b = V.sdrAjustes(body);
-  const r = await guardarAjustes(user, params.client, b.ajustes, b.nota);
+  const r = await guardarAjustes(user, params.client, b.ajustes, b.nota, { simular });
+  if (r.vista_previa) return r;
   return { ...r, sdr: await scoped(user, params.client, (c) => leerSdr(c, user, params.client)) };
 };
 
-export const ajustesRestaurar = async ({ user, params }) => {
+export const ajustesRestaurar = async ({ user, params, simular = false }) => {
   const id = Number(params.id);
   if (!Number.isInteger(id) || id < 1) throw notFound('No existe esa versión.');
   const row = await scoped(user, params.client, async (c) => (await c.query(
     `select ajustes, at from sdr.ajustes_historial where client_id = $1 and id = $2 and campana_id is null`, [params.client, id])).rows[0]);
   if (!row) throw notFound('No existe esa versión.');
   const r = await guardarAjustes(user, params.client, row.ajustes,
-    `Vuelta a la versión del ${new Date(row.at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`, { restaurado: true });
+    `Vuelta a la versión del ${new Date(row.at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })}`, { restaurado: true, simular });
+  if (r.vista_previa) return r;
   return { ...r, sdr: await scoped(user, params.client, (c) => leerSdr(c, user, params.client)) };
 };
 
@@ -747,17 +776,29 @@ export const crmReintentar = async ({ user, params }) => {
 
 // ----- WhatsApp: las reglas del turno (docs/22). Las carga Biguá; el cliente ve el estado.
 
-export const whatsappGuardar = async ({ user, params, body }) => {
-  requireBigua(user);
-  const b = V.whatsapp(body);
-  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
-  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
-  const actual = await asOwner((c) => whatsapp.ver(c, params.client));
+// Lo que se valida contra lo que ya está guardado (actual: la fila de sdr.whatsapp_config o null).
+function controlarWhatsapp(b, actual) {
   const desde = b.hora_desde ?? actual?.hora_desde ?? 8;
   const hasta = b.hora_hasta ?? actual?.hora_hasta ?? 24;
   if (desde >= hasta) throw errors.invalid('La hora de inicio tiene que ser anterior a la de fin.');
   if ((b.pausa_min_seg ?? actual?.pausa_min_seg ?? 20) > (b.pausa_max_seg ?? actual?.pausa_max_seg ?? 60)) {
     throw errors.invalid('La pausa mínima no puede ser mayor que la máxima.');
+  }
+}
+
+export const whatsappGuardar = async ({ user, params, body, simular = false }) => {
+  requireBigua(user);
+  const b = V.whatsapp(body);
+  const exists = await asOwner((c) => c.query(`select 1 from sdr.cliente_config where client_id = $1`, [params.client]));
+  if (!exists.rowCount) throw notFound('El SDR no está activado para este cliente.');
+  const actual = await asOwner((c) => whatsapp.ver(c, params.client));
+  controlarWhatsapp(b, actual);
+  if (simular) {
+    const cambios = Object.keys(WHATSAPP_PROPS).filter((k) => b[k] !== undefined && JSON.stringify(b[k]) !== JSON.stringify(actual?.[k] ?? null))
+      .map((k) => ({ campo: k, antes: actual?.[k] ?? null, despues: b[k] }));
+    const reanuda = Boolean(b.reanudar && actual?.pausado);
+    return { vista_previa: true, aviso: cambios.length || reanuda ? AVISO_CONFIRMAR : 'No cambia nada: ya está así.', cambios, reanuda,
+      ...(actual?.pausado ? { pausado: { motivo: actual.pausa_motivo, desde: actual.pausado_at } } : {}) };
   }
   await whatsapp.configurar(params.client, b);
   await asOwner((c) => audit(c, user, params.client, b.reanudar ? 'admin.sdr.whatsapp.reanudar' : 'admin.sdr.whatsapp',
@@ -798,13 +839,38 @@ export const campanasListar = async ({ user, params }) => {
   return campanas.conNumeros(params.client, lista);
 };
 
-export const campanaCrear = async ({ user, params, body }) => {
-  const r = await scoped(user, params.client, async (c) => {
+// Qué cambia en una campaña, campo por campo, para la vista previa. Los buzones, por su mail.
+function detalleCampana(antes, despues, cambios, buzones) {
+  const mail = new Map((buzones ?? []).map((b) => [b.id, b.email]));
+  const valor = (k, x) => {
+    if (!x) return null;
+    if (k === 'buzones') return (x.buzones ?? []).map((id) => mail.get(id) ?? id);
+    return COLUMNAS_CAMPANA.some((col) => col.clave === k) ? x[k] ?? null : x.ajustes?.[k] ?? null;
+  };
+  return [...new Set(cambios)].filter((k) => k !== 'creada')
+    .map((k) => ({ campo: k, titulo: tituloCampana(k), antes: valor(k, antes), despues: valor(k, despues) }));
+}
+
+// La vista previa de una campaña nueva (crear o duplicar): cómo queda, sin el id, que no llega a existir.
+async function previaCampanaNueva(c, user, clientId, id, cambios) {
+  const v = await campanas.ver(c, clientId, id, { esBigua: isBigua(user) });
+  const { id: _id, client_id: _c, creado_at: _a, actualizado_at: _u, ...campana } = v.campana;
+  return { vista_previa: true, aviso: AVISO_CONFIRMAR, campana, cambios: detalleCampana(null, v.campana, cambios, v.buzones_disponibles),
+    faltantes: v.faltantes };
+}
+
+export const campanaCrear = async ({ user, params, body, simular = false }) => {
+  const r = await simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
     const x = await campanas.crear(c, params.client, body, { user, esBigua: isBigua(user) });
+    if (simular) {
+      const { ajustes = {}, nota: _n, ...cols } = body ?? {};
+      throw new Simulacion(await previaCampanaNueva(c, user, params.client, x.id, ['tipo', ...Object.keys(cols), ...Object.keys(ajustes)]));
+    }
     await audit(c, user, params.client, 'admin.sdr.campana.crear', { campana: x.id, clave: x.clave });
     return x;
-  });
+  }));
+  if (r.vista_previa) return r;
   await avisarCampana(user, params.client, r.id, `El cliente creó la campaña ${citaCliente(body?.nombre)} en borrador desde el panel.`);
   return { ...r, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, r.id, { esBigua: isBigua(user) }))) };
 };
@@ -821,13 +887,24 @@ export const campanaVer = async ({ user, params }) => scoped(user, params.client
   return out;
 });
 
-export const campanaGuardar = async ({ user, params, body }) => {
-  const r = await scoped(user, params.client, async (c) => {
+// Lo que habría quedado después de guardar o restaurar, para la vista previa (adentro de la transacción).
+async function previaCampana(c, user, clientId, id, antes, x) {
+  const v = await campanas.ver(c, clientId, id, { esBigua: isBigua(user) });
+  return { vista_previa: true, aviso: x.cambios.length ? AVISO_CONFIRMAR : 'No cambia nada: ya está así.',
+    estado_antes: antes.campana.estado, estado: v.campana.estado,
+    cambios: detalleCampana(antes.campana, v.campana, x.cambios, v.buzones_disponibles), faltantes: v.faltantes };
+}
+
+export const campanaGuardar = async ({ user, params, body, simular = false }) => {
+  const r = await simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
+    const antes = simular ? await campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }) : null;
     const x = await campanas.guardar(c, params.client, params.id, body, { user, esBigua: isBigua(user) });
+    if (simular) throw new Simulacion(await previaCampana(c, user, params.client, params.id, antes, x));
     if (x.cambios.length) await audit(c, user, params.client, 'admin.sdr.campana.guardar', { campana: params.id, campos: x.cambios });
     return x;
-  });
+  }));
+  if (r.vista_previa) return r;
   if (r.cambios.length) {
     const estado = r.estado !== r.estado_antes ? ESTADOS_TEXTO[r.estado] : null;
     await avisarCampana(user, params.client, params.id, estado
@@ -837,15 +914,18 @@ export const campanaGuardar = async ({ user, params, body }) => {
   return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
 };
 
-export const campanaRestaurar = async ({ user, params }) => {
+export const campanaRestaurar = async ({ user, params, simular = false }) => {
   const hid = Number(params.hid);
   if (!Number.isInteger(hid) || hid < 1) throw notFound('No existe esa versión de la campaña.');
-  const r = await scoped(user, params.client, async (c) => {
+  const r = await simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
+    const antes = simular ? await campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }) : null;
     const x = await campanas.restaurar(c, params.client, params.id, hid, { user, esBigua: isBigua(user) });
+    if (simular) throw new Simulacion(await previaCampana(c, user, params.client, params.id, antes, x));
     if (x.cambios.length) await audit(c, user, params.client, 'admin.sdr.campana.restaurar', { campana: params.id, campos: x.cambios });
     return x;
-  });
+  }));
+  if (r.vista_previa) return r;
   if (r.cambios.length) {
     await avisarCampana(user, params.client, params.id,
       `El cliente volvió la campaña ${citaCliente(r.nombre)} a una versión anterior desde el panel (${r.cambios.map(tituloCampana).join(', ')}).`);
@@ -853,13 +933,15 @@ export const campanaRestaurar = async ({ user, params }) => {
   return { cambios: r.cambios, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, params.id, { esBigua: isBigua(user) }))) };
 };
 
-export const campanaDuplicar = async ({ user, params, body }) => {
-  const r = await scoped(user, params.client, async (c) => {
+export const campanaDuplicar = async ({ user, params, body, simular = false }) => {
+  const r = await simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
     const x = await campanas.duplicar(c, params.client, params.id, body ?? {}, { user });
+    if (simular) throw new Simulacion({ ...(await previaCampanaNueva(c, user, params.client, x.id, ['nombre'])), de: x.de });
     await audit(c, user, params.client, 'admin.sdr.campana.duplicar', { campana: x.id, de: params.id });
     return x;
-  });
+  }));
+  if (r.vista_previa) return r;
   await avisarCampana(user, params.client, r.id, `El cliente duplicó la campaña ${citaCliente(r.de)} como un borrador nuevo desde el panel.`);
   return { ...r, ...(await scoped(user, params.client, (c) => campanas.ver(c, params.client, r.id, { esBigua: isBigua(user) }))) };
 };
@@ -960,18 +1042,25 @@ export async function despuesDeNoContactar(user, clientId, nuevas) {
 }
 
 // Una fila (valor y motivo) o un CSV entero. Lo que ya estaba no se toca.
-export const noContactarAgregar = async ({ user, params, body }) => {
+export const noContactarAgregar = async ({ user, params, body, simular = false }) => {
   const b = V.noContactarAlta(body);
   let filas;
   let invalidas = [];
   if (b.csv !== undefined) {
     ({ filas, invalidas } = noContactar.leerCsv(b.csv));
+  } else if (b.valores !== undefined) {
+    filas = [];
+    b.valores.forEach((x, i) => {
+      const n = noContactar.normalizar(x.valor, { empresa: true });
+      if (n) filas.push({ ...n, motivo: x.motivo?.trim() || null, renglon: i + 1 });
+      else invalidas.push({ renglon: i + 1, texto: String(x.valor ?? '').slice(0, 120) });
+    });
   } else {
     const n = noContactar.normalizar(b.valor, { empresa: true });
     if (!n) throw errors.invalid(`«${String(b.valor ?? '').slice(0, 80)}» no es un dominio, un mail ni el nombre de una empresa.`);
     filas = [{ ...n, motivo: b.motivo?.trim() || null }];
   }
-  const r = await scoped(user, params.client, async (c) => {
+  const r = await simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
     ({ filas, invalidas } = await noContactar.conClaves(c, filas, invalidas));
     if (!filas.length) {
@@ -979,24 +1068,39 @@ export const noContactarAgregar = async ({ user, params, body }) => {
     }
     const nuevas = await insertarNoContactar(c, params.client, filas, user.email);
     const unicos = new Set(filas.map((f) => f.valor)).size;
+    if (simular) {
+      throw new Simulacion({ vista_previa: true, nuevas, agregaria: nuevas.map((x) => ({ tipo: x.tipo, valor: x.valor })),
+        ya_estaban: unicos - nuevas.length, invalidas: invalidas.slice(0, 50) });
+    }
     await audit(c, user, params.client, 'admin.sdr.no_contactar', { agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.length });
     return { nuevas, agregados: nuevas.length, ya_estaban: unicos - nuevas.length, invalidas: invalidas.slice(0, 50) };
-  });
+  }));
+  if (r.vista_previa) {
+    // Lo que cambiaría en el registro (cuentas que se excluyen, Dripify que se frena), sin tocarlo.
+    const { nuevas, ...previa } = r;
+    return { ...previa, aviso: nuevas.length ? AVISO_CONFIRMAR : 'No suma nada: ya estaban todas o no son válidas.',
+      efecto: await registro.aplicarNoContactar(params.client, nuevas, { simular: true }) };
+  }
   // Con la conexión del panel ya devuelta: una conexión adentro de otra puede trabar el pool.
   const efecto = await despuesDeNoContactar(user, params.client, r.nuevas);
   const { nuevas, ...resto } = r;
   return { ...resto, efecto, ...(await scoped(user, params.client, (c) => listaNoContactar(c, params.client))) };
 };
 
-export const noContactarQuitar = async ({ user, params, body }) => {
+export const noContactarQuitar = async ({ user, params, body, simular = false }) => {
   const b = V.noContactarBaja(body);
   const valores = b.valores.map((v) => noContactar.normalizar(v)?.valor ?? v.trim().toLowerCase());
-  return scoped(user, params.client, async (c) => {
+  return simulable(scoped(user, params.client, async (c) => {
     await clienteExiste(c, params.client);
-    const { rowCount } = await c.query(`delete from sdr.no_contactar where client_id = $1 and valor = any($2)`, [params.client, valores]);
+    const { rowCount, rows } = await c.query(`delete from sdr.no_contactar where client_id = $1 and valor = any($2) returning valor, tipo, motivo`,
+      [params.client, valores]);
+    if (simular) {
+      throw new Simulacion({ vista_previa: true, aviso: rowCount ? AVISO_CONFIRMAR : 'No quita nada: ninguno estaba en la lista.',
+        quitaria: rows, no_estaban: valores.filter((v) => !rows.some((x) => x.valor === v)) });
+    }
     await audit(c, user, params.client, 'admin.sdr.no_contactar.quitar', { quitados: rowCount });
     return { quitados: rowCount, ...(await listaNoContactar(c, params.client)) };
-  });
+  }));
 };
 
 // ----- carga por archivo (docs/27): la lista de no contactar o las semillas de una campaña
@@ -1227,15 +1331,22 @@ export const cargaInforme = async ({ user, params }) => scoped(user, params.clie
 
 // Deshacer una carga (docs/27 §4.1, paso 5): lo hace sdr.deshacer_lote en la base, con el cliente
 // fijado, después de comprobar que la persona ve este cliente.
-export const cargaDeshacer = async ({ user, params }) => {
+export const cargaDeshacer = async ({ user, params, simular = false }) => {
   await scoped(user, params.client, (c) => clienteExiste(c, params.client));
   if (!UUID.test(String(params.id))) throw notFound('No existe esa carga.');
-  const r = await asRole('mailgw_app', params.client, async (c) => {
+  const r = await simulable(asRole('mailgw_app', params.client, async (c) => {
     const { rows: [x] } = await c.query(`select sdr.deshacer_lote($1, $2) as r`, [params.id, user.email]);
     const { rows: [l] } = await c.query(`select destino, campana_id, archivo from sdr.lote_carga where client_id = $1 and id = $2`,
       [params.client, params.id]);
+    // La vista previa: lo que la función de la base sacaría, deshecho al salir. Un error (en uso, ya
+    // deshecha) vuelve igual que sin vista previa.
+    if (simular && !x.r.error) {
+      throw new Simulacion({ vista_previa: true, aviso: AVISO_CONFIRMAR,
+        deshace: { cuentas: x.r.cuentas, personas: x.r.personas, filas: x.r.filas, destino: l.destino } });
+    }
     return { ...x.r, lote: l ?? null };
-  });
+  }));
+  if (r.vista_previa) return r;
   if (r.error === 'no_existe') throw notFound('No existe esa carga.');
   if (r.error === 'ya_deshecho') throw errors.invalid('Esa carga ya se deshizo.');
   if (r.error === 'en_uso') {
@@ -1727,7 +1838,7 @@ export const ALTA_DESDE_CLAUDE = {
   buzones: { como: 'fuera', motivo: 'La contraseña de cada buzón es un secreto: se carga en el panel (Canales → Correo), nunca por el chat.' },
   dominios: { como: 'fuera', motivo: 'Se verifican después de cargar los buzones; dominios_ver dice qué publicar en el DNS.' },
   linkedin: { como: 'fuera', motivo: 'La API key de Dripify es un secreto: se carga en Administración → LinkedIn.' },
-  whatsapp: { como: 'fuera', motivo: 'Las reglas del turno y el número se cargan en Administración → WhatsApp.' },
+  whatsapp: { como: 'datos', con: 'whatsapp' },
   crm: { como: 'fuera', motivo: 'El token de HubSpot es un secreto, y la planilla se verifica en el panel: Canales → CRM.' },
   asci: { como: 'marcar' },
   token: { como: 'fuera', motivo: 'El token mgw_ de los bots se ve una sola vez: se genera en Administración → Tokens.' },
@@ -1742,7 +1853,7 @@ export const CAMPANA_FUERA_DE_LA_FICHA = {
   buzones: 'Los buzones se cargan con su contraseña en el panel; después se eligen en la campaña.',
 };
 
-const esquemaCampo = (c) => {
+export const esquemaCampo = (c) => {
   const desc = c.ayuda ? { description: `${c.titulo}. ${c.ayuda}` } : { description: c.titulo };
   switch (c.tipo) {
     case 'numero': return { type: 'integer', minimum: c.min, maximum: c.max, ...desc };
@@ -1784,6 +1895,7 @@ export function esquemaFichaAlta() {
     no_contactar: { type: 'array', maxItems: 500, items: objeto({ valor: { type: 'string', maxLength: 300 }, motivo: { type: 'string', maxLength: 200 } }, ['valor']),
       description: 'Dominios, mails o empresas por nombre a los que no se les escribe nunca.' },
     campana: campana,
+    whatsapp: objeto(WHATSAPP_PROPS, [], { description: 'Las reglas del turno de WhatsApp (Administración → WhatsApp): número, horario, días, pausas y topes.' }),
     pasos: objeto(Object.fromEntries(PASOS_ALTA.map((p) => [p.clave, PASO_MARCA])), [],
       { description: 'Para marcar un paso: listo (sólo los que se hacen a mano), no_aplica, o esperando una definición (con qué falta y quién lo define).' }),
     campos_pendientes: objeto(Object.fromEntries(CAMPOS_EMPRESA.map((c) => [c.clave, objeto({ que: { type: 'string', maxLength: 500 }, quien: { type: 'string', maxLength: 120 } }, ['que'])])), [],
@@ -1807,7 +1919,7 @@ async function planDelAlta(user, f) {
   const errores = [];
   const prueba = (que, fn) => { try { return fn(); } catch (e) { errores.push(`${que}: ${e.message}`); return undefined; } };
   const id = f.cliente.id;
-  const { existe, cfg, nombre, usuarios, campanasExistentes } = await asOwner(async (c) => {
+  const { existe, cfg, nombre, usuarios, campanasExistentes, wa } = await asOwner(async (c) => {
     const cl = (await c.query(`select name from mailgw.client where id = $1`, [id])).rows[0];
     return {
       existe: Boolean(cl), nombre: cl?.name,
@@ -1815,6 +1927,7 @@ async function planDelAlta(user, f) {
       usuarios: (await c.query(`select email, client_id from mailgw.admin_user where email = any($1::text[])`,
         [(f.usuarios ?? []).map((u) => String(u.email).trim().toLowerCase())])).rows,
       campanasExistentes: (await c.query(`select nombre from sdr.campana where client_id = $1`, [id])).rows.map((r) => r.nombre),
+      wa: await whatsapp.ver(c, id),
     };
   });
   if (!existe) plan.push({ paso: 'cliente', que: `Crear el cliente ${id} («${f.cliente.nombre}»).` });
@@ -1860,6 +1973,13 @@ async function planDelAlta(user, f) {
       if (ok) plan.push({ paso: 'campana', que: `Crear la campaña «${cols.nombre}» (${TIPOS[cols.tipo ?? 'prospeccion'].titulo}) en borrador.` });
     }
   }
+  if (f.whatsapp && Object.keys(f.whatsapp).length) {
+    const ok = prueba('WhatsApp', () => { controlarWhatsapp(V.whatsapp(f.whatsapp), wa); return true; });
+    if (ok) {
+      const w = f.whatsapp;
+      plan.push({ paso: 'whatsapp', que: `WhatsApp: ${Object.keys(w).join(', ')}${w.activo === true ? ' (queda activo)' : w.activo === false ? ' (queda apagado)' : ''}.` });
+    }
+  }
   for (const [clave, m] of Object.entries(f.pasos ?? {})) {
     const p = PASOS_ALTA.find((x) => x.clave === clave);
     if (m.estado === 'listo' && !p.manual) { errores.push(`Paso «${p.titulo}»: queda listo solo, cuando los datos están completos; no se marca a mano.`); continue; }
@@ -1902,6 +2022,10 @@ export const altaCargar = async ({ user, body }) => {
       const { ajustes: aj = {}, ...cols } = f.campana;
       await campanaCrear({ user, params, body: { tipo: 'prospeccion', ...cols, ajustes: aj, nota: 'Creada desde Claude (alta)' } });
       hecho.push('campana');
+    }
+    if (f.whatsapp && Object.keys(f.whatsapp).length) {
+      await whatsappGuardar({ user, params, body: f.whatsapp });
+      hecho.push('whatsapp');
     }
     for (const [clave, m] of Object.entries(f.pasos ?? {})) {
       await asistentePasoGuardar({ user, params: { client: id, ambito: 'alta', paso: clave }, body: m });
