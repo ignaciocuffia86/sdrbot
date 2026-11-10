@@ -29,12 +29,12 @@ test('ajustes: cada campo vive en su nivel', () => {
     assert.ok(claves(CAMPOS_EMPRESA).includes(k) && claves(CAMPOS_CAMPANA).includes(k), k);
     assert.equal(CAMPOS_CAMPANA.find((c) => c.clave === k).hereda, true);
   }
-  // El formulario de hoy sigue igual mientras dure la transición.
+  // Las claves de las reglas de antes de las campañas (sólo para armar esa sección de las reglas).
   assert.equal(CAMPOS.length, 20);
   assert.ok(claves(CAMPOS).includes('oferta') && claves(CAMPOS).includes('buzones'));
 });
 
-test('ajustes: Empresa valida como el formulario de hoy y no acepta campos de campaña', () => {
+test('ajustes: Empresa valida su formulario y no acepta campos de campaña', () => {
   const e = aplicarCambiosEmpresa({}, { nombre_comercial: ' Acme ', descripcion: 'QA', excluir: 'consultoras\n\nestudios' }, OPERADO);
   assert.deepEqual(e, { nombre_comercial: 'Acme', descripcion: 'QA', excluir: ['consultoras', 'estudios'] });
   assert.throws(() => aplicarCambiosEmpresa(e, { icp: 'x' }, BIGUA), /No existe el campo «icp»/);

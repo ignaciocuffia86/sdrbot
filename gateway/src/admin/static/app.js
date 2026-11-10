@@ -545,12 +545,7 @@ async function empresaView({ clientId, bigua, base, reload }) {
       h('p', {}, bigua ? 'El SDR no está activado para este cliente.' : 'El SDR todavía no está activado para esta cuenta. Lo activa Biguá.'),
       bigua ? h('a', { class: 'btn primary', href: `${base}/admin` }, 'Activarlo en Administración') : null);
   }
-  const auto = sdr.modo === 'autogestionado';
-  const notaModo = sdr.formulario === 'empresa'
-    ? 'A quién se le escribe, la propuesta, el volumen y los buzones son de cada campaña: se editan en su campaña. Esto vale para las campañas que no digan otra cosa.'
-    : auto
-    ? `Este cliente es autogestionado: el volumen y los buzones los decide el cliente${sdr.tope_cuentas_dia !== null ? `, hasta ${sdr.tope_cuentas_dia} cuentas nuevas por día` : ''}.`
-    : 'Este cliente lo opera Biguá: el volumen y los buzones los decide Biguá.';
+  const notaModo = 'A quién se le escribe, la propuesta, el volumen y los buzones son de cada campaña: se editan en su campaña. Esto vale para las campañas que no digan otra cosa.';
   const err = h('p', { class: 'err', role: 'alert' });
   const btn = h('button', { type: 'submit', class: 'primary' }, 'Guardar ajustes');
   const nota = h('input', { name: '_nota', maxlength: 300, placeholder: 'Opcional: por qué el cambio' });
@@ -591,14 +586,6 @@ async function empresaView({ clientId, bigua, base, reload }) {
 const ESTADO_CAMPANA = { borrador: ['borrador', 'b-mute'], activa: ['activa', 'b-ok'], pausada: ['pausada', 'b-warn'], terminada: ['terminada', 'b-mute'] };
 const estadoBadge = (e) => { const [label, cls] = ESTADO_CAMPANA[e] ?? [e, 'b-mute']; return h('span', { class: `badge ${cls}` }, label); };
 
-// Antes de la migración 014, Empresa todavía tiene lo de la «principal» (a quién, la oferta, el
-// volumen) y la principal lo usa de ahí: se sigue editando en Empresa.
-function transicionNota(d, base) {
-  if (!d.transicion) return null;
-  return h('p', { class: 'note' }, 'Lo de la campaña «Principal» (a quién se le escribe, la oferta, los positivos y las cuentas por día) ',
-    'todavía se edita en ', h('a', { href: `${base}/empresa` }, 'Empresa'), ': mientras esté ahí, es lo que usan los bots.');
-}
-
 async function campanasView({ clientId, bigua, base, reload }) {
   let d;
   try { d = await api('GET', `/clients/${enc(clientId)}/sdr/campanas`); } catch (e) {
@@ -635,7 +622,6 @@ async function campanasView({ clientId, bigua, base, reload }) {
     h('td', { class: 'num' }, String(k.respondieron)),
     h('td', {}, k.pendientes ? h('span', { class: 'badge b-warn' }, plural(k.pendientes, 'pendiente', 'pendientes')) : h('span', { class: 'muted small' }, '—'))));
   return h('div', { class: 'stack' },
-    transicionNota(d, base),
     h('div', { class: 'row spread' },
       h('p', { class: 'muted small m0' }, volumen,
         d.puede_activar ? '' : ' Este cliente lo opera Biguá: el cliente arma borradores y Biguá los activa.'),
@@ -868,7 +854,6 @@ async function campanaView({ clientId, bigua, base, reload }, id) {
       h('div', {}, h('h2', { class: 'first' }, k.nombre, ' ', estadoBadge(k.estado)),
         h('p', { class: 'small muted mono m0' }, k.clave)),
       h('div', { class: 'row' }, acciones)),
-    transicionNota(d, base),
     terminada ? h('p', { class: 'note' }, `Terminada el ${fmtDate(k.terminada_at)}. No se edita ni se reactiva: para repetirla, duplicala.`) : null,
     errEstado,
     h('div', { class: 'sdr-grid' }, form, h('div', { class: 'stack sticky' }, faltan, vista)),

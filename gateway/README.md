@@ -141,7 +141,7 @@ Las herramientas MCP reciben `campana` (la clave, opcional) y el gateway hace cu
 - **Calibración:** se cuenta por campaña.
 - **Buzones nuevos:** entran solos en la «principal» (migración `013`).
 
-Las reglas todavía no leen la campaña: los bots siguen escribiendo con los ajustes de Empresa. Por eso la pestaña la ve **sólo Biguá**, con un aviso de transición (`CAMPANAS_PARA_CLIENTES` en `static/app.js`). Se abre a los clientes cuando las reglas lean la campaña. La API ya responde a los dos roles.
+Las reglas leen la campaña y la pestaña la ven Biguá y el cliente. Empresa tiene un solo formulario, con lo común a todas las campañas: lo de cada campaña (a quién, la propuesta, qué es positivo, el volumen) se carga en su campaña. Si lo de una campaña llega a Empresa por otro camino (la CLI, volver a una versión de antes de la `014`), pasa a la «principal» (migración `022`).
 
 Lo prueban:
 - `test/campanas.test.mjs`: la base.

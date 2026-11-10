@@ -13,7 +13,7 @@ import { asRole } from '../store.mjs';
 import * as enCampana from './en_campana.mjs';
 import {
   BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA, TIPOS, aplicarCambiosCampana,
-  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tieneLegado, tituloCampana, tituloDe,
+  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tituloCampana, tituloDe,
 } from './ajustes.mjs';
 
 const invalido = (msg) => new GatewayError('invalid_request', msg, 400);
@@ -70,20 +70,6 @@ async function otrasActivas(c, clientId, id) {
   return rows[0].n;
 }
 
-// Las cuentas por día de la «principal» viven en su columna, la misma que suma el tope y la que leen
-// las reglas. Mientras el formulario de Empresa siga editando cuentas_por_dia (hasta la 014), guardar
-// ese ajuste pasa por acá: actualiza la columna y controla la suma de las campañas activas contra el
-// tope, como un cambio hecho en la pestaña Campañas. Va dentro de la transacción de quien guarda.
-// esBigua: el operador fija el volumen sin tope desde el formulario de Empresa, como hasta ahora.
-export async function cuentasDeLaPrincipal(c, clientId, cuentas, { tope = null, esBigua = false } = {}) {
-  const { rows } = await c.query(
-    `select id, estado, cuentas_por_dia from sdr.campana where client_id = $1 and clave = 'principal' for update`, [clientId]);
-  if (!rows.length || !Number.isInteger(cuentas) || rows[0].cuentas_por_dia === cuentas) return;
-  if (!esBigua) controlarTope(rows[0], { cuentas_por_dia: cuentas }, { tope, otrasActivas: await otrasActivas(c, clientId, rows[0].id) });
-  await c.query(`update sdr.campana set cuentas_por_dia = $3, actualizado_at = now() where client_id = $1 and id = $2`,
-    [clientId, rows[0].id, cuentas]);
-}
-
 async function buzonesDelCliente(c, clientId) {
   return (await c.query(
     `select id, email, display_name, status from mailgw.account where client_id = $1 order by email`, [clientId])).rows;
@@ -121,8 +107,6 @@ export async function listar(c, clientId, { esBigua }) {
   }));
   return {
     campanas,
-    // Antes de la 014, Empresa todavía tiene lo de la «principal» y la principal lo usa de ahí.
-    transicion: tieneLegado(cfg.ajustes),
     modo: cfg.modo,
     tope_cuentas_dia: cfg.tope_cuentas_dia,
     cuentas_activas: campanas.filter((x) => x.estado === 'activa').reduce((s, x) => s + x.cuentas_por_dia, 0),
@@ -150,7 +134,6 @@ export async function ver(c, clientId, id, { esBigua }) {
       where client_id = $1 and campana_id = $2 order by id desc limit 30`, [clientId, id])).rows;
   return {
     campana: publica(k),
-    transicion: k.clave === 'principal' && tieneLegado(cfg.ajustes),
     bloques: BLOQUES_CAMPANA,
     campos: CAMPOS_CAMPANA.map((x) => ({ ...x, editable: k.estado !== 'terminada' && editable(x, permiso) })),
     columnas: COLUMNAS_CAMPANA.map((x) => ({

@@ -105,6 +105,10 @@ Cada PR que toque la configuración de un cliente o de una campaña suma lo nuev
 corresponde (regla en `CLAUDE.md`). `gateway/test/asistentes.test.mjs` falla si un campo de Empresa,
 una sección de la campaña o algo que puede faltar para activarla no está en ningún paso.
 
-## Lo que sigue
+## Un solo formulario de Empresa
 
-- Cerrar la migración del formulario viejo de Empresa (clientes de antes de la `014`).
+Desde la migración `022` ya no hay formulario de transición: Empresa tiene sólo lo común a todas las
+campañas y cada campaña, incluida la «principal», lee lo suyo. Si lo de una campaña llega a Empresa
+por otro camino (la CLI, o Biguá volviendo a una versión de antes de la `014`), pasa a la «principal»
+con `sdr.migrar_empresa_014`, como en la migración. La columna `sdr.cliente_config.formulario` queda
+sin uso y se borra más adelante.

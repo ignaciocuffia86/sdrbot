@@ -1,12 +1,11 @@
 // Los ajustes de un cliente que se editan en el panel: qué campos hay, en qué nivel viven
 // (Empresa o campaña, docs/21 §6.2), quién puede tocar cada uno y cómo se validan.
 //
-// Tres esquemas sobre el mismo validador:
+// Dos esquemas sobre el mismo validador:
 //   - EMPRESA: lo común a todas las campañas (sdr.cliente_config.ajustes).
 //   - CAMPAÑA: lo de cada campaña (sdr.campana.ajustes) y sus columnas (estado, fechas, volumen…).
-//   - El formulario de hoy (BLOQUES y CAMPOS): Empresa y la campaña «principal» juntas, como las
-//     editan hoy el panel y las leen las reglas. Es la transición: se va cuando el panel y las
-//     reglas lean la campaña y la migración 014 saque de Empresa las claves de la campaña.
+// Más CAMPOS, las claves con las que las reglas de antes de las campañas leen a un cliente (Empresa y
+// la «principal» juntas): sólo para armar esa sección de las reglas, ya no se editan así (migración 022).
 
 import { GatewayError } from '../errors.mjs';
 
@@ -167,16 +166,12 @@ export const COLUMNAS_CAMPANA = [
   { clave: 'calibracion_mails', bloque: 'avanzado', titulo: 'Mails a calibrar', tipo: 'numero', min: 0, max: 500, cliente: false },
 ];
 
-// ---------------------------------------------------------------- el formulario de hoy (transición)
+// ---------------------------------------------------------------- las claves de las reglas de antes
 
-// Empresa y la «principal» en un solo formulario, como hoy. Lo usan el panel (pestaña Empresa) y
-// «Ajustes de este cliente» de las reglas hasta que lean la campaña.
-export const BLOQUES = [
-  { clave: 'identidad', titulo: 'Identidad y voz', ayuda: 'Cómo se presenta la empresa y cómo escribe.' },
-  { clave: 'audiencia', titulo: 'A quién y con qué señal', ayuda: 'A quién se le escribe, a quién no y qué dispara el primer contacto.' },
-  { clave: 'conversacion', titulo: 'Conversación', ayuda: 'Qué se le pide al prospecto, cómo se responden las objeciones y qué pasa con un interesado.' },
-  { clave: 'operacion', titulo: 'Operación', ayuda: 'Volumen y buzones.' },
-];
+// Empresa y la «principal» juntas, con sus nombres de antes de las campañas (la propuesta como
+// «oferta», las cuentas por día). Sólo para la sección de las reglas que todavía no conocen las
+// campañas (store.seccionesCliente con porCampana: false): el orden y qué va citado. El panel ya no
+// las edita así desde la migración 022.
 
 export const CAMPOS = armar([
   ['nombre_comercial', 'identidad'],
@@ -341,25 +336,21 @@ function ordenarSegun(campos, a) {
   return out;
 }
 
-// El formulario de hoy. tope: el máximo de cuentas por día que Biguá le fijó a un cliente
-// autogestionado.
-export const aplicarCambios = (actuales, cambios, permiso) => aplicar(CAMPOS, actuales, cambios, permiso);
+// El orden de las claves de las reglas de antes.
 export const ordenar = (a) => ordenarSegun(CAMPOS, a);
 
 export const aplicarCambiosEmpresa = (actuales, cambios, permiso) => aplicar(CAMPOS_EMPRESA, actuales, cambios, permiso);
 
-// Las claves de Empresa que la migración 014 pasa a la «principal» (docs/21 §6.2, paso 3).
+// Las claves de la campaña que no van en Empresa: si llegan ahí (por la CLI, o al volver a una
+// versión de antes de la 014), sdr.migrar_empresa_014 las pasa a la «principal» (docs/21 §6.2, paso 3).
 export const LEGADO_EMPRESA = ['oferta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion', 'links_permitidos',
   'positivos', 'cuentas_por_dia', 'buzones'];
 export const tieneLegado = (ajustes) => LEGADO_EMPRESA.some((k) => ajustes?.[k] !== undefined);
 
-// El formulario de Empresa del panel, según sdr.cliente_config.formulario (migración 014): el de la
-// transición, que edita también lo de la «principal», o el de Empresa sola (CAMPOS_EMPRESA), con lo
-// de cada campaña en su campaña. Si Biguá vuelve a una versión de antes de la 014, Empresa recupera
-// esas claves y el panel vuelve al de la transición, que las muestra.
-export const formularioEmpresa = (cfg) => (cfg?.formulario !== 'empresa' || tieneLegado(cfg?.ajustes)
-  ? { bloques: BLOQUES, campos: CAMPOS, aplicar: aplicarCambios, transicion: true }
-  : { bloques: BLOQUES_EMPRESA, campos: CAMPOS_EMPRESA, aplicar: aplicarCambiosEmpresa, transicion: false });
+// El formulario de Empresa del panel: lo común a todas las campañas; lo de cada campaña, en su
+// campaña. Desde la migración 022 es uno solo (antes había uno de transición que editaba también lo
+// de la «principal»).
+export const FORMULARIO_EMPRESA = { bloques: BLOQUES_EMPRESA, campos: CAMPOS_EMPRESA, aplicar: aplicarCambiosEmpresa };
 export const ordenarEmpresa = (a) => ordenarSegun(CAMPOS_EMPRESA, a);
 
 // Los ajustes de una campaña. empresa: los ajustes de Empresa (para elegir los casos).
