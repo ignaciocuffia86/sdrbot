@@ -3,7 +3,7 @@
 // (src/admin/servicio.mjs), con los mismos permisos: un usuario de un cliente ve sólo su cliente
 // y un operador de Biguá ve todos. El MCP de los bots (/mcp, src/mcp.mjs) no cambia.
 //
-// M1: lectura. M2: decidir aprobaciones (aprobacion_decidir). Editar llega en M3.
+// M1: lectura. M2: decidir aprobaciones (aprobacion_decidir). M4: el alta desde Claude (alta_cargar). Editar llega en M3.
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -56,6 +56,34 @@ const TOOLS = [
     description: 'Los clientes de Biguá con su id, nombre, buzones y usuarios. Para saber qué id pasar en cliente.',
     inputSchema: obj({}),
     run: (user) => S.clientesListar({ user }),
+  },
+  {
+    name: 'alta_ver', soloBigua: true,
+    description: 'El asistente de alta de un cliente (docs/29): los 16 pasos con su estado (listo, por hacer, esperando una definición, '
+      + 'no aplica), qué le falta a cada uno y lo pendiente. Para seguir un alta o ver qué queda después de alta_cargar.',
+    inputSchema: obj({ cliente: CLIENTE }),
+    run: async (user, a) => S.altaVer(await ctxDe(user, a)),
+  },
+  {
+    name: 'alta_cargar', soloBigua: true, escribe: true,
+    // La descripción sale de ALTA_DESDE_CLAUDE: lo que se suma al asistente aparece acá (CLAUDE.md).
+    get description() {
+      const pasos = S.PASOS_ALTA;
+      const de = (como) => pasos.filter((p) => S.ALTA_DESDE_CLAUDE[p.clave]?.como === como).map((p) => p.titulo).join(', ');
+      return 'Da de alta un cliente nuevo, o completa el alta de uno que ya existe, con las respuestas de la llamada de inicio en '
+        + 'una sola ficha: crea el cliente, activa el SDR, carga Empresa, los usuarios, No contactar y la primera campaña en borrador, '
+        + 'y deja pausado lo que todavía no está definido. Hace lo mismo que el asistente de alta del panel. '
+        + 'Primero llamala sin confirmar: devuelve el plan (qué se crea y qué cambia) y los errores, sin tocar nada; mostráselo a la '
+        + 'persona y recién con su OK repetí con confirmar: true. Volver a llamarla con más respuestas completa lo que falta sin duplicar. '
+        + `Se cargan con la ficha: ${de('datos')}. Se marcan listos con «pasos» (se hacen fuera del panel): ${de('marcar')}. `
+        + `No pasan por el chat (secretos o sólo en el panel): ${de('fuera')}; la respuesta dice dónde se hace cada uno. `
+        + 'Nunca pidas ni cargues contraseñas, API keys ni tokens por acá.';
+    },
+    get inputSchema() {
+      return obj({ ficha: S.esquemaFichaAlta(),
+        confirmar: { type: 'boolean', default: false, description: 'false (por defecto): sólo el plan. true: lo carga.' } }, ['ficha']);
+    },
+    run: (user, a) => S.altaCargar({ user, body: a }),
   },
   {
     name: 'resumen',

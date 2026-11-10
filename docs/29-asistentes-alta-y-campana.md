@@ -99,11 +99,28 @@ Cada dato vive en un solo lugar, según quién lo carga y para qué:
 | Alta | El asistente de alta | Biguá |
 | ⚙ Administración | Operación, bots y despertadores, **LinkedIn y WhatsApp** (la API key, la campaña y el webhook de Dripify; las reglas del turno de WhatsApp), usuarios y tokens | Biguá |
 
+## Desde Claude
+
+El alta también se carga desde Claude, con el MCP del panel (`docs/24` §4.4): `alta_cargar` recibe
+las respuestas de la llamada de inicio en una sola ficha y hace lo mismo que este asistente, con las
+mismas operaciones; `alta_ver` muestra los 16 pasos como acá. Sólo para Biguá.
+
+| Cómo llega cada paso desde Claude | Pasos |
+|---|---|
+| Con la ficha | Activar el SDR, Usuario del cliente, Quién es y cómo habla, Casos y objeciones, Interesados y derivación, A quién no escribirle (con No contactar) |
+| Se marca listo a mano | Usuario de ASCI, Cuenta de Grok Bot, Routines |
+| No pasa por el chat | Buzones (contraseña), Dominios (después de los buzones), LinkedIn (API key), WhatsApp (Administración), CRM (token o planilla), Token del gateway, Despertadores (clave del webhook) |
+
+Cualquier paso se puede dejar «esperando una definición» o «no aplica», y cualquier campo de Empresa
+esperando, como acá. La primera campaña se crea en borrador; después se sigue con su asistente.
+
 ## Que no se quede atrás
 
 Cada PR que toque la configuración de un cliente o de una campaña suma lo nuevo al paso que le
-corresponde (regla en `CLAUDE.md`). `gateway/test/asistentes.test.mjs` falla si un campo de Empresa,
-una sección de la campaña o algo que puede faltar para activarla no está en ningún paso.
+corresponde y a lo que hace el MCP del panel (regla en `CLAUDE.md`). `gateway/test/asistentes.test.mjs`
+falla si un campo de Empresa, una sección de la campaña o algo que puede faltar para activarla no
+está en ningún paso; si un paso del alta no dice cómo llega desde Claude (`ALTA_DESDE_CLAUDE`); o si
+un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`.
 
 ## Un solo formulario de Empresa
 

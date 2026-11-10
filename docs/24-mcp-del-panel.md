@@ -1,6 +1,6 @@
 # MCP del panel: gestionar el SDR desde Claude
 
-Estado al 10/11/2026: **M0, M1 y M2 construidas** (§9): el OAuth, `/mcp/panel`, las conexiones en el panel y las aprobaciones decididas por el cliente, con límites de uso. M3 y M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
+Estado al 10/11/2026: **M0, M1 y M2 construidas** (§9): el OAuth, `/mcp/panel`, las conexiones en el panel y las aprobaciones decididas por el cliente, con límites de uso. **De M4, el alta desde Claude** (`alta_cargar` y `alta_ver`, §4.4). M3 y el resto de M4, diseño. Se apoya en el panel `/admin` (`15`, `16`, `21`)
 y en el MCP de los bots (`07`, `09`, `13`). El OAuth sale del de ASCI (repo `locasci`, `docs/32-oauth-chatgpt.md`).
 
 **Qué se busca.** Que una persona se conecte desde Claude (claude.ai, Claude Desktop o Claude Code)
@@ -253,7 +253,7 @@ MCP de los bots.
 | Herramienta | Qué hace | Cliente | Biguá |
 |---|---|---|---|
 | `clientes_listar` | Clientes con su estado: SDR activo, modo, aprobaciones pendientes, buzones con error | — | Sí |
-| `cliente_crear` | Alta de un cliente (paso 1 de `15`) | — | Sí |
+| `alta_ver`, `alta_cargar` (construidas) | El asistente de alta desde Claude: ver los 16 pasos, y cargar o completar un alta con una ficha, con vista previa (§4.4). Reemplaza a `cliente_crear` | — | Sí |
 | `resumen` | El Resumen del panel: hoy y el período, por campaña (mails, revelados, respuestas, positivos, calibración) | Sí | Sí |
 | `actividad` | El monitor: canales con su modo y lo que pasó hoy | Sí | Sí |
 | `registro_buscar` | Buscar una cuenta o un prospecto y ver su historia | Sí | Sí |
@@ -284,6 +284,35 @@ Ningún secreto entra ni sale por el chat (`CLAUDE.md`):
 
 Tampoco pasan los envíos. El MCP del panel **no manda mails ni mensajes**: decide aprobaciones y
 los bots ejecutan lo aprobado, con todos los controles del gateway (§5.3).
+
+### 4.4 El alta desde Claude, y cómo se mantiene igual al panel
+
+`alta_cargar` (sólo Biguá, `destructiveHint`) recibe una **ficha** con las respuestas de la llamada
+de inicio: el cliente, cómo se activa el SDR (modo, quién aprueba, bots, calibración), los ajustes de
+Empresa, los usuarios, No contactar, la primera campaña (queda en borrador), qué pasos se marcan
+listos, no aplican o esperan una definición, y qué campos esperan.
+
+- **Sin `confirmar`** devuelve el plan (qué se crea, qué cambia, qué queda igual) y los errores,
+  sin escribir nada. Con un error no se carga nada.
+- **Con `confirmar: true`** aplica la ficha con las mismas operaciones del panel (`clienteCrear`,
+  `sdrConfig`, los ajustes de Empresa, `usuarioClienteCrear`, `noContactarAgregar`, `campanaCrear`,
+  `asistentePasoGuardar`), con sus validaciones, permisos y auditoría. Devuelve en qué quedó el
+  alta y lo que falta hacer fuera del chat, con dónde se hace.
+- **Se puede volver a llamar** con más respuestas: lo que ya está no se repite (el cliente, los
+  usuarios, la campaña con ese nombre, lo que ya está en No contactar).
+- **El enlace de activación** de un usuario nuevo no vuelve por el chat: se genera en el panel
+  (Usuarios → Nuevo enlace).
+- **No pasan por el chat** las contraseñas de buzones, la API key de Dripify, el token de HubSpot, el
+  token `mgw_` de los bots ni las claves de los despertadores (§4.3).
+
+**Cómo se mantiene sincronizado con el asistente.** El esquema de la ficha se arma de las mismas
+definiciones que el formulario del panel (`CAMPOS_EMPRESA`, `CAMPOS_CAMPANA`, `COLUMNAS_CAMPANA` y
+`PASOS_ALTA`): un campo nuevo aparece solo en la herramienta. Cada paso del alta dice en
+`ALTA_DESDE_CLAUDE` (`gateway/src/admin/servicio.mjs`) cómo llega desde Claude, y la descripción de
+`alta_cargar` sale de ahí. `gateway/test/asistentes.test.mjs` falla si un paso nuevo no lo dice, si
+un campo no está en la ficha o si la descripción no nombra un paso. La regla está en `CLAUDE.md`
+(«Formulario de configuración y alta»): cada cambio al asistente o a una operación del panel se
+refleja en el MCP en el mismo PR.
 
 ## 5. Aprobaciones por el cliente
 
@@ -412,7 +441,7 @@ CRM igual que siempre.
 | **M1 · Conectar y mirar** (hecha) | OAuth (§3, llevando `locasci/mcp/oauth.mjs`), `/mcp/panel` y las herramientas de lectura: `clientes_listar`, `resumen`, `actividad`, `registro_buscar`, `aprobaciones_listar`, `campanas_listar`, `campana_ver`, `ajustes_ver`, `buzones_listar`, `dominios_ver`. Conexiones en el panel. Probar primero con claude.ai y Claude Code en la cuenta de Biguá | Gateway, base, panel |
 | **M2 · Aprobaciones del cliente** (hecha) | `aprueba`, columnas nuevas, `aprobacion_decidir`, pestaña Aprobaciones en el panel web, cambios en `registro_aprobaciones` y `registro_aprobar`, playbook del orquestador | Gateway, base, panel, `playbooks/` |
 | **M3 · Gestionar** | Campañas, ajustes, no contactar, prueba y pausa de buzones, verificación de dominios | Gateway |
-| **M4 · Biguá** | `cliente_crear`, usuarios y lo técnico en lectura | Gateway |
+| **M4 · Biguá** (en parte) | El alta desde Claude: `alta_cargar` y `alta_ver` (hechas, §4.4); usuarios y lo técnico en lectura | Gateway |
 
 M1 sola ya sirve: el cliente pregunta «¿cómo viene la campaña de webinar?» y Claude contesta con
 los datos del panel.
