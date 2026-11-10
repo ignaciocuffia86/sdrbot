@@ -13,7 +13,7 @@ import { asRole } from '../store.mjs';
 import * as enCampana from './en_campana.mjs';
 import {
   BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA, TIPOS, aplicarCambiosCampana,
-  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tituloCampana, tituloDe,
+  aplicarColumnasCampana, controlarTope, diferencias, editable, faltantesParaActivar, tieneLegado, tituloCampana, tituloDe,
 } from './ajustes.mjs';
 
 const invalido = (msg) => new GatewayError('invalid_request', msg, 400);
@@ -117,6 +117,8 @@ export async function listar(c, clientId, { esBigua }) {
   }));
   return {
     campanas,
+    // Antes de la 014, Empresa todavía tiene lo de la «principal» y la principal lo usa de ahí.
+    transicion: tieneLegado(cfg.ajustes),
     modo: cfg.modo,
     tope_cuentas_dia: cfg.tope_cuentas_dia,
     cuentas_activas: campanas.filter((x) => x.estado === 'activa').reduce((s, x) => s + x.cuentas_por_dia, 0),
@@ -144,6 +146,7 @@ export async function ver(c, clientId, id, { esBigua }) {
       where client_id = $1 and campana_id = $2 order by id desc limit 30`, [clientId, id])).rows;
   return {
     campana: publica(k),
+    transicion: k.clave === 'principal' && tieneLegado(cfg.ajustes),
     bloques: BLOQUES_CAMPANA,
     campos: CAMPOS_CAMPANA.map((x) => ({ ...x, editable: k.estado !== 'terminada' && editable(x, permiso) })),
     columnas: COLUMNAS_CAMPANA.map((x) => ({

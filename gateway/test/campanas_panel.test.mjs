@@ -309,6 +309,7 @@ test('migración 014: lo de la campaña pasa a la «principal», Empresa se qued
     await q(`update sdr.cliente_config set ajustes = ajustes || '{"icp": "Software B2B de Chile", "cuentas_por_dia": 7}' where client_id = $1`, [M]);
     const cli = await loggedIn('usuario@cp-m.test', 'client_admin', M);
     assert.equal(ok(await cli.call('GET', `/clients/${M}/sdr`)).formulario, 'transicion');
+    assert.equal(ok(await cli.call('GET', `/clients/${M}/sdr/campanas`)).transicion, true, 'la pestaña avisa que la principal se edita en Empresa');
 
     assert.equal((await q(`select sdr.migrar_empresa_014($1) as hecho`, [M])).rows[0].hecho, true);
     assert.equal((await q(`select sdr.migrar_empresa_014($1) as hecho`, [M])).rows[0].hecho, false, 'una segunda vez no cambia nada');
@@ -323,6 +324,10 @@ test('migración 014: lo de la campaña pasa a la «principal», Empresa se qued
 
     const sdr = ok(await cli.call('GET', `/clients/${M}/sdr`));
     assert.equal(sdr.formulario, 'empresa');
+    const lista = ok(await cli.call('GET', `/clients/${M}/sdr/campanas`));
+    assert.equal(lista.transicion, false);
+    const principalId = lista.campanas.find((x) => x.clave === 'principal').id;
+    assert.equal(ok(await cli.call('GET', `/clients/${M}/sdr/campanas/${principalId}`)).transicion, false);
     assert.ok(sdr.campos.some((c) => c.clave === 'descripcion'));
     assert.ok(!sdr.campos.some((c) => ['oferta', 'icp', 'cuentas_por_dia', 'buzones'].includes(c.clave)));
     assert.deepEqual(sdr.historial.slice(0, 2).map((h) => h.nota), [

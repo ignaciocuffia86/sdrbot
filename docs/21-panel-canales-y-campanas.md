@@ -604,8 +604,11 @@ punto donde se retoma.
    - Vuelta atrás: Biguá restaura la versión «Antes de la migración 014»; Empresa recupera las
      claves y el panel vuelve al formulario de la transición.
    - El historial de Empresa ya no muestra ni restaura versiones de una campaña.
-5. **Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
-   transición.
+5. ~~**Abrir la pestaña a los clientes** (`CAMPANAS_PARA_CLIENTES = true`) y sacar el aviso de
+   transición.~~ Hecho. El aviso queda sólo para un cliente que todavía no migró (Empresa con
+   las claves de la principal): dice que lo de la principal se edita en Empresa. Los clientes
+   nuevos arrancan en el formulario de la transición; pasarlos al de Empresa sola queda para
+   después de C1.
 6. **Aplicar la `014` en producción**, después de publicar las reglas que leen la campaña y de
    abrir la pestaña (paso 5): con la `014`, el formulario de Empresa ya no edita lo de la
    campaña, y hasta el paso 5 un cliente no tiene dónde editarlo.
