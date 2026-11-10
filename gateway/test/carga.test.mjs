@@ -183,6 +183,45 @@ test('lectura: CSV en Latin-1 con punto y coma y comillas; topes de tamaño y fi
   assert.equal(carga.leerArchivo(bomba).filas.length, 1);
 });
 
+test('lectura: un Excel armado para trabar el gateway se rechaza o se lee en tiempo lineal (Vercel 01M7360X214QQ68W26K5AYZAE5)', () => {
+  const base = { 'xl/workbook.xml': '<workbook><sheets><sheet name="H" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>' };
+  const hoja = (cuerpo) => zip({ ...base, 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${cuerpo}</sheetData></worksheet>` });
+  const rapido = (fn, re) => {
+    const t0 = Date.now();
+    if (re) assert.throws(fn, re); else fn();
+    const ms = Date.now() - t0;
+    assert.ok(ms < 1500, `tardó ${ms} ms`);
+  };
+  // Lo del hallazgo: muchas aperturas de fila sin cierre. Antes, cada intento volvía a recorrer el resto.
+  rapido(() => carga.leerArchivo(hoja('<row r="1">'.repeat(400_000))), /mal formado/);
+  // Una celda sin cerrar, una etiqueta sin «>» y una etiqueta enorme.
+  rapido(() => carga.leerArchivo(hoja(`<row r="1">${'<c r="A1">'.repeat(200_000)}</row>`)), /mal formado/);
+  rapido(() => carga.leerArchivo(hoja(`<row r="1"${' x'.repeat(2_000_000)}`)), /mal formado/);
+  rapido(() => carga.leerArchivo(hoja(`<row r="1" a="${'x'.repeat(10_000)}"></row>`)), /mal formado/);
+  // Un atributo sin comilla de cierre (dentro del tope de la etiqueta).
+  rapido(() => carga.leerArchivo(hoja('<row r="1></row>')), /mal formado/);
+  // Muchas filas vacías y una sola celda al final: se lee bien y rápido.
+  const vacias = Array.from({ length: 1900 }, (_, i) => `<row r="${i + 1}"></row>`).join('');
+  rapido(() => {
+    const r = carga.leerArchivo(hoja(`${vacias}<row r="1901"><c r="A1901" t="inlineStr"><is><t>Empresa</t></is></c></row>` +
+      '<row r="1902"><c r="A1902" t="inlineStr"><is><t>Una &amp; otra</t></is></c></row>'));
+    assert.deepEqual(r.encabezados, ['Empresa']);
+    assert.deepEqual(r.filas[0].celdas, ['Una & otra']);
+  });
+  // Muchas «&» sin cerrar en un texto: no se cuelga.
+  rapido(() => carga.leerArchivo(hoja(`<row r="1"><c r="A1" t="inlineStr"><is><t>${'&a'.repeat(500_000)}</t></is></c></row>`)));
+  // Texto con formato (runs) y guía fonética: se toma el texto, no la fonética.
+  const rico = zip({ ...base,
+    'xl/sharedStrings.xml': '<sst><si><r><rPr><b/></rPr><t>Agrícola </t></r><r><t xml:space="preserve">Ortiz</t></r></si>' +
+      '<si><t>Empresa</t><rPh sb="0" eb="1"><t>えんぷれさ</t></rPh></si></sst>',
+    'xl/worksheets/sheet1.xml': '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>1</v></c></row>' +
+      '<row r="2"><c r="A2" t="s"><v>0</v></c><c r="B2"/><c r="C2"><v>7</v></c></row></sheetData></worksheet>' });
+  const r = carga.leerArchivo(rico);
+  assert.deepEqual(r.encabezados[0], 'Empresa');
+  assert.deepEqual(r.filas[0].celdas, ['Agrícola Ortiz', '', '7']);
+});
+
 // ---------------------------------------------------------------- no contactar desde un archivo
 
 test('no contactar por archivo: vista previa, confirmar con la misma huella, empresas por nombre y freno en Dripify', async () => {

@@ -20,7 +20,7 @@ export const MAX_FILAS = 2000;
 const MAX_COLUMNAS = 60;
 const MAX_CELDA = 1000;
 const MAX_DATOS_ORIGEN = 2048;
-const MAX_DESCOMPRIMIDO = 40 * 1024 * 1024;
+const MAX_DESCOMPRIMIDO = 20 * 1024 * 1024;
 
 const invalido = (msg) => new GatewayError('invalid_request', msg, 400);
 
@@ -211,20 +211,112 @@ function leerZip(buf) {
   };
 }
 
+// El XML se recorre con búsquedas hacia adelante (indexOf), nunca con expresiones que vuelvan a
+// mirar lo ya leído: el trabajo crece en línea con el tamaño, también con un archivo armado para
+// trabar el gateway (Vercel 01M7360X214QQ68W26K5AYZAE5). Lo mal formado (una etiqueta sin cerrar, una
+// etiqueta enorme) se rechaza en el acto, y la lectura entera tiene un plazo.
+const MAX_ETIQUETA = 4096;
+const MAX_TEXTO_CRUDO = MAX_CELDA * 8;
+const MAX_COMPARTIDOS = 100_000;
+const PLAZO_MS = 4000;
+
+const malformado = () => invalido('El Excel está mal formado: guardalo de nuevo desde Excel como .xlsx.');
+
+function reloj() {
+  const hasta = Date.now() + PLAZO_MS;
+  let n = 0;
+  return () => {
+    if ((++n & 255) === 0 && Date.now() > hasta) {
+      throw invalido('El Excel tarda demasiado en leerse: guardá sólo la hoja que se carga o pasalo a CSV.');
+    }
+  };
+}
+
+// La próxima etiqueta <nombre ...> desde `desde`: { attrs, vacia (<x/>), fin (después del «>») }.
+// «<c» no confunde a «<col»: después del nombre tiene que venir un espacio, «>» o «/».
+function etiqueta(xml, nombre, desde) {
+  const marca = `<${nombre}`;
+  let i = desde;
+  for (;;) {
+    i = xml.indexOf(marca, i);
+    if (i < 0) return null;
+    const sig = xml.charCodeAt(i + marca.length);
+    if (sig === 32 || sig === 9 || sig === 10 || sig === 13 || sig === 62 || sig === 47) {
+      const cierre = xml.indexOf('>', i);
+      if (cierre < 0 || cierre - i > MAX_ETIQUETA) throw malformado();
+      const vacia = xml.charCodeAt(cierre - 1) === 47;
+      return { attrs: xml.slice(i + marca.length, vacia ? cierre - 1 : cierre), vacia, fin: cierre + 1 };
+    }
+    i += marca.length;
+  }
+}
+
+// Cada elemento <nombre> desde el principio, con su contenido aparte (un string propio, así las
+// búsquedas de adentro no recorren el resto del archivo). Uno abierto y sin cerrar: mal formado.
+function* elementos(xml, nombre, tic = () => {}) {
+  const cierre = `</${nombre}>`;
+  let pos = 0;
+  for (;;) {
+    tic();
+    const e = etiqueta(xml, nombre, pos);
+    if (!e) return;
+    if (e.vacia) { pos = e.fin; yield { attrs: e.attrs, contenido: '' }; continue; }
+    const fin = xml.indexOf(cierre, e.fin);
+    if (fin < 0) throw malformado();
+    pos = fin + cierre.length;
+    yield { attrs: e.attrs, contenido: xml.slice(e.fin, fin) };
+  }
+}
+
+const primero = (xml, nombre) => { for (const e of elementos(xml, nombre)) return e; return null; };
+
+// Los atributos de una etiqueta (ya acotada a MAX_ETIQUETA), en una sola pasada.
+function atributos(s) {
+  const out = new Map();
+  let i = 0;
+  for (;;) {
+    const igual = s.indexOf('=', i);
+    if (igual < 0) return out;
+    let j = igual + 1;
+    while (s[j] === ' ' || s[j] === '\t' || s[j] === '\n' || s[j] === '\r') j++;
+    const comilla = s[j];
+    if (comilla !== '"' && comilla !== "'") throw malformado();
+    const fin = s.indexOf(comilla, j + 1);
+    if (fin < 0) throw malformado();
+    const nombre = s.slice(i, igual).trim().split(/\s+/).pop();
+    out.set(nombre, s.slice(j + 1, fin));
+    i = fin + 1;
+  }
+}
+
 const ENTIDADES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
-const xmlTexto = (s) => s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (m, e) => {
+// Sobre textos ya acotados: cada «&» mira a lo sumo unos pocos caracteres.
+const xmlTexto = (s) => s.slice(0, MAX_TEXTO_CRUDO).replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,4});/gi, (m, e) => {
   if (e[0] === '#') {
     const cp = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
     return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
   }
   return ENTIDADES[e.toLowerCase()] ?? m;
 });
-const atributo = (attrs, nombre) => new RegExp(`(?:^|\\s)${nombre}="([^"]*)"`).exec(attrs)?.[1] ?? null;
+
 // El texto de un <si> o un <is>: todos sus <t>, sin la guía fonética (<rPh>).
-const textos = (xml) => [...xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '').matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map((m) => xmlTexto(m[1])).join('');
+function textos(xml) {
+  let partes = '';
+  for (const r of elementos(xml, 'r')) {
+    const t = primero(r.contenido, 't');
+    if (t) partes += t.contenido;
+    if (partes.length > MAX_TEXTO_CRUDO) break;
+  }
+  if (!partes) {
+    // Sin runs: el <t> de primer nivel (el de un <rPh> va adentro de él y no cuenta).
+    const sinFonetica = xml.split('<rPh')[0];
+    partes = primero(sinFonetica, 't')?.contenido ?? '';
+  }
+  return xmlTexto(partes);
+}
 
 function columnaDe(ref) {
-  const m = /^([A-Z]+)/.exec(ref ?? '');
+  const m = /^([A-Z]{1,3})/.exec(ref ?? '');
   if (!m) return null;
   let n = 0;
   for (const ch of m[1]) n = n * 26 + (ch.charCodeAt(0) - 64);
@@ -233,20 +325,32 @@ function columnaDe(ref) {
 
 function leerXlsx(buf) {
   const abrir = leerZip(buf);
+  const tic = reloj();
   const libro = abrir('xl/workbook.xml');
   if (!libro) throw invalido('No es un Excel (.xlsx) válido.');
   const rels = abrir('xl/_rels/workbook.xml.rels') ?? '';
-  const destino = new Map([...rels.matchAll(/<Relationship\b([^>]*)\/?>/g)].map((m) => [atributo(m[1], 'Id'), atributo(m[1], 'Target')]));
+  const destino = new Map();
+  for (const r of elementos(rels, 'Relationship', tic)) {
+    const a = atributos(r.attrs);
+    destino.set(a.get('Id'), a.get('Target'));
+  }
   const ruta = (t) => (t.startsWith('/') ? t.slice(1) : `xl/${t}`).replace(/\/\.\//g, '/');
-  const hojas = [...libro.matchAll(/<sheet\b([^>]*)\/?>/g)].map((m) => ({
-    nombre: xmlTexto(atributo(m[1], 'name') ?? ''), archivo: destino.get(atributo(m[1], 'r:id')),
-  })).filter((h) => h.archivo);
+  const hojas = [];
+  for (const e of elementos(libro, 'sheet', tic)) {
+    const a = atributos(e.attrs);
+    const archivo = destino.get(a.get('r:id'));
+    if (archivo) hojas.push({ nombre: xmlTexto(a.get('name') ?? '').slice(0, 120), archivo });
+    if (hojas.length > 200) break;
+  }
   if (!hojas.length) throw invalido('El Excel no tiene hojas.');
   let compartidos = null;
   const compartido = (i) => {
     if (!compartidos) {
-      const xml = abrir('xl/sharedStrings.xml') ?? '';
-      compartidos = [...xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((m) => textos(m[1]));
+      compartidos = [];
+      for (const si of elementos(abrir('xl/sharedStrings.xml') ?? '', 'si', tic)) {
+        compartidos.push(textos(si.contenido));
+        if (compartidos.length >= MAX_COMPARTIDOS) break;
+      }
     }
     return compartidos[i] ?? '';
   };
@@ -255,21 +359,21 @@ function leerXlsx(buf) {
     if (xml === null) throw invalido(`No se pudo leer la hoja «${h.nombre}».`);
     const out = [];
     let siguiente = 1;
-    for (const m of xml.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
-      const renglon = Number(atributo(m[1], 'r')) || siguiente;
+    for (const fila of elementos(xml, 'row', tic)) {
+      const renglon = Number(atributos(fila.attrs).get('r')) || siguiente;
       siguiente = renglon + 1;
       const celdas = [];
       let col = 0;
-      for (const cm of (m[2] ?? '').matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-        const c = columnaDe(atributo(cm[1], 'r'));
-        if (c !== null) col = c;
+      for (const c of elementos(fila.contenido, 'c', tic)) {
+        const a = atributos(c.attrs);
+        const n = columnaDe(a.get('r'));
+        if (n !== null) col = n;
         if (col >= MAX_COLUMNAS) break;
-        const tipo = atributo(cm[1], 't');
-        const dentro = cm[2] ?? '';
-        const v = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(dentro)?.[1];
+        const tipo = a.get('t');
+        const v = primero(c.contenido, 'v')?.contenido;
         let valor = '';
         if (tipo === 's') valor = v === undefined ? '' : compartido(Number(v));
-        else if (tipo === 'inlineStr') valor = textos(/<is\b[^>]*>([\s\S]*?)<\/is>/.exec(dentro)?.[1] ?? '');
+        else if (tipo === 'inlineStr') valor = textos(primero(c.contenido, 'is')?.contenido ?? '');
         else if (tipo === 'b') valor = v === '1' ? 'VERDADERO' : v === '0' ? 'FALSO' : '';
         else if (tipo === 'e') valor = '';
         else valor = v === undefined ? '' : xmlTexto(v);
