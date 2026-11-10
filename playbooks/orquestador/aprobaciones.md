@@ -3,10 +3,10 @@
 > Una lista numerada, fácil de contestar.
 
 1. `registro_aprobaciones()`: las pendientes que decide Biguá. Si el cliente aprueba sus propios
-   mensajes (Administración → Operación, «Quién aprueba»), ésas no vienen acá: las decide él en el
-   panel o desde Claude. `registro_pendientes(orquestador)` te dice cuántas esperan al cliente en
-   `aprobaciones_del_cliente`: nombralas en una línea («3 mensajes esperan al cliente»), sin
-   presentarlas.
+   mensajes (lo elige Biguá en el panel: «Quién aprueba los mensajes»), ésas no vienen acá: las
+   decide él en el panel o desde Claude. `registro_pendientes(orquestador)` te dice cuántas esperan
+   al cliente en `aprobaciones_del_cliente`: nombralas en una línea («3 mensajes esperan al
+   cliente»), sin presentarlas.
 2. Presentalas en el chat, numeradas, una por bloque:
 
    ```

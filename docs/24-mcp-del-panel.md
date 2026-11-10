@@ -453,9 +453,20 @@ los datos del panel.
 | Límites (§6): 60 pedidos por minuto por usuario en `/mcp/panel`, 20 cambios, 30 por IP en los POST de `/oauth/*`; `Origin` desconocido, 403 | `gateway/src/panel/limites.mjs`, `mcp.mjs` y `oauth.mjs`. Los topes se cambian con `MAILGW_LIMITE_USUARIO`, `_CAMBIOS` e `_IP`; los orígenes, con `OAUTH_ORIGINS` |
 | Pruebas | `gateway/test/aprobaciones_panel.test.mjs`: cada valor de `aprueba`, primero gana, destinatario, vista previa, envío real con lo que aprobó el cliente, lo que ven los bots, aislamiento, MCP, web, límites y `Origin` |
 
-**Para ponerlo en producción:** aplicar la `017` en Supabase, publicar las reglas del orquestador
-(`playbooks-publicar`, primero en `canario`) y elegir en cada cliente quién aprueba (Administración
-→ Configuración del SDR): los que ya existen siguen en «Biguá» hasta que se cambie.
+**Para ponerlo en producción:**
+
+1. ~~Aplicar la `017` en Supabase.~~ Hecho el 10/11 por el MCP de Supabase, con su fila en
+   `mailgw.migration`. Es compatible con el código de antes (sólo agrega columnas y una tabla).
+   `bairesqa` quedó en `bigua`; el valor por defecto para los nuevos es `cliente_y_bigua`;
+   `mailgw.limite` con RLS y sin permisos para `mailgw_app` ni `anon`.
+2. ~~Publicar las reglas del orquestador en `canario`.~~ Versión `2026.11.10-5`, publicada el
+   10/11: la `2026.11.10-4` con las secciones nuevas de `orquestador/aprobaciones` y
+   `orquestador/resumen` (comprobado sección por sección contra `playbooks-sql`). `estable`
+   sigue en `2026.11.10-3`; hoy ningún cliente está en `canario`.
+3. Mergear el PR, para que `sdrbot.bigua.lat` tenga el código.
+4. Pasar las reglas a `estable` (`playbooks-canal estable 2026.11.10-5`) cuando esté mergeado.
+5. Elegir en cada cliente quién aprueba (Administración → Configuración del SDR): los que ya
+   existen siguen en «Biguá» hasta que se cambie.
 
 ## 10. Decisiones abiertas
 
