@@ -13,3 +13,9 @@ alter table sdr.crm_conexion add column if not exists planilla_gid  bigint;
 alter table sdr.crm_conexion add column if not exists planilla_hoja text;
 
 grant update (planilla_hoja) on sdr.crm_conexion to mailgw_app;
+
+-- La cuenta de servicio es la misma para todos los clientes: una planilla conectada a un cliente
+-- no se puede conectar a otro (si no, un cliente podría leer los encabezados o agregar filas en
+-- la planilla de otro que ya la compartió con Biguá).
+create unique index if not exists crm_conexion_planilla_unica on sdr.crm_conexion (planilla_id)
+  where proveedor = 'sheets' and planilla_id is not null;

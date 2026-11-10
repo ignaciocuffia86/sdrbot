@@ -123,6 +123,10 @@ async function configurarPlanilla(clientId, d, actual) {
   }
   const cambia = Boolean(destino) && (destino.id !== actual?.planilla_id || destino.gid !== (actual?.planilla_gid === null || actual?.planilla_gid === undefined ? null : Number(actual.planilla_gid)));
   const reconecta = cambia || actual?.proveedor !== 'sheets';
+  const planillaId = destino?.id ?? actual.planilla_id;
+  const otro = await asOwner((c) => c.query(
+    `select 1 from sdr.crm_conexion where planilla_id = $1 and proveedor = 'sheets' and client_id <> $2`, [planillaId, clientId]));
+  if (otro.rowCount) throw errorsCrm.invalido(PLANILLA_DE_OTRO);
   await asOwner((c) => c.query(
     `insert into sdr.crm_conexion (client_id, proveedor, planilla_url, planilla_id, planilla_gid, estado, tope_dia)
      values ($1, 'sheets', $2, $3, $4, coalesce($5, 'activa'), coalesce($6, 50))
@@ -134,9 +138,15 @@ async function configurarPlanilla(clientId, d, actual) {
        ultimo_error = case when $7 then null else sdr.crm_conexion.ultimo_error end,
        tope_dia = coalesce($6, sdr.crm_conexion.tope_dia), actualizado_at = now()`,
     [clientId, destino ? String(d.planilla_url).trim() : null, destino?.id ?? null, destino?.gid ?? null,
-      d.estado ?? null, d.tope_dia ?? null, reconecta]));
+      d.estado ?? null, d.tope_dia ?? null, reconecta]).catch((e) => {
+    // Dos altas a la vez con la misma planilla: lo frena el índice único.
+    if (e.code === '23505') throw errorsCrm.invalido(PLANILLA_DE_OTRO);
+    throw e;
+  }));
   return asOwner((c) => verEn(c, clientId));
 }
+
+const PLANILLA_DE_OTRO = 'Esa planilla ya está conectada a otro cliente. Cada cliente usa una planilla propia.';
 
 const PROPIEDADES_TEXTO = new Set(['string', 'number', 'date', 'datetime']);
 const editableProp = (p) => !p.hidden && !p.calculated && !p.modificationMetadata?.readOnlyValue;

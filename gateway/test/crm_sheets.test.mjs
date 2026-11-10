@@ -339,6 +339,20 @@ test('panel: el cliente conecta su planilla, no mezcla datos de HubSpot y el alt
   assert.match(paso.titulo, /planilla/);
 });
 
+test('una planilla conectada a un cliente no se puede conectar a otro', async () => {
+  const OTRO = 'sheets-otro';
+  await store.upsertClient(OTRO, 'Otro cliente');
+  await sdr.setConfig(OTRO, { calibracion_mails: 0, bots_activos: ['orquestador'] });
+  // La misma planilla, aunque sea con otra pestaña: no.
+  await assert.rejects(crm.configurar(OTRO, { proveedor: 'sheets', planilla_url: `https://docs.google.com/spreadsheets/d/${ID}/edit#gid=0` }),
+    /ya está conectada a otro cliente/);
+  // Tampoco saltando el chequeo: lo frena la base.
+  await assert.rejects(sql(`insert into sdr.crm_conexion (client_id, proveedor, planilla_id) values ($1, 'sheets', $2)`, [OTRO, ID]), /crm_conexion_planilla_unica/);
+  assert.equal((await sql(`select count(*)::int as n from sdr.crm_conexion where client_id = $1`, [OTRO]))[0].n, 0);
+  const propia = await crm.configurar(OTRO, { proveedor: 'sheets', planilla_url: 'https://docs.google.com/spreadsheets/d/9ZyXwVuTsRqPoNmLkJiHgFeDcBa9876543210_-zz/edit' });
+  assert.equal(propia.conectado, true);
+});
+
 test('sin la cuenta de servicio en el gateway: se guarda la URL, pero probar dice qué falta y no escribe', async () => {
   const guardada = process.env.MAILGW_GOOGLE_SA;
   delete process.env.MAILGW_GOOGLE_SA;

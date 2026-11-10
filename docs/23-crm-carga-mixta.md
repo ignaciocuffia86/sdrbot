@@ -347,6 +347,9 @@ tope por día, los mismos reintentos y la misma pausa: sólo cambia lo que hace 
   muestra para copiar. El gateway pide el token con un JWT firmado (scope `spreadsheets`) y lo
   reusa hasta que vence. Si la planilla no está compartida o no existe (403 o 404), la conexión
   queda «sin acceso» y las cargas esperan en la cola, como con un token de HubSpot rechazado.
+- **Una planilla, un cliente:** la cuenta de servicio es la misma para todos, así que una planilla
+  conectada a un cliente no se puede conectar a otro (índice único en `planilla_id`). Si no, un
+  cliente podría pegar la URL de la planilla de otro y leer sus encabezados o agregarle filas.
 - **La pestaña:** la de la URL (`#gid=`); sin gid, la primera. Su nombre se anota al probar.
 - **Probar conexión** lee la planilla y deja listos los encabezados: es la prueba de que la cuenta
   puede escribir.
