@@ -1,4 +1,4 @@
-// Servidor de autorización OAuth del MCP del panel (docs/23 §3). La persona conecta Claude con su
+// Servidor de autorización OAuth del MCP del panel (docs/24 §3). La persona conecta Claude con su
 // usuario y su contraseña del panel; el token que sale de acá sólo sirve en /mcp/panel.
 //
 //   GET  /.well-known/oauth-protected-resource[/mcp/panel]   metadata del recurso (RFC 9728)
@@ -26,7 +26,7 @@ export const RUTA_MCP = '/mcp/panel';
 const VIDA_PEDIDO_S = 900;      // de abrir la página a autorizar
 const VIDA_LOGIN_S = 600;       // del ingreso a apretar «Autorizar»
 const VIDA_CODIGO_S = 300;
-const VIDA_ACCESO_S = 3600;     // 1 hora: un token puede aprobar mensajes desde M2 (docs/23 §3.4)
+const VIDA_ACCESO_S = 3600;     // 1 hora: un token puede aprobar mensajes desde M2 (docs/24 §3.4)
 const VIDA_RENOVACION_S = 30 * 86400;
 
 const q = (text, params) => getPool().query(text, params);

@@ -1,4 +1,4 @@
--- Etapa M1 del MCP del panel (docs/23 §3): OAuth para que una persona conecte Claude con su
+-- Etapa M1 del MCP del panel (docs/24 §3): OAuth para que una persona conecte Claude con su
 -- usuario del panel.
 --
 -- Los clientes OAuth (Claude por CIMD, o cualquiera por DCR) no se guardan: su client_id es una
@@ -7,7 +7,7 @@
 --
 -- Una «conexión» es una familia de tokens: la autorización crea la familia y cada renovación rota
 -- el par dentro de ella. Desconectar es revocar la familia. Si se usa un token de renovación que
--- ya se había rotado, alguien lo copió, y se revoca toda la familia (docs/23 §3.4).
+-- ya se había rotado, alguien lo copió, y se revoca toda la familia (docs/24 §3.4).
 --
 -- Sólo las toca el dueño (el gateway, como admin_user y admin_session): ni mailgw_app ni
 -- mailgw_portal tienen permisos, así que ningún pedido de un bot o de un cliente las puede leer.

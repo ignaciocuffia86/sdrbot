@@ -89,7 +89,7 @@ export async function activate(token, password) {
 // ---------------------------------------------------------------- login y sesiones
 
 // Valida email y contraseña con el bloqueo por intentos fallidos, sin abrir sesión. La usan el
-// login del panel y el login de OAuth del MCP del panel (docs/23 §3.4), con las mismas reglas.
+// login del panel y el login de OAuth del MCP del panel (docs/24 §3.4), con las mismas reglas.
 export async function verificarCredenciales(email, password) {
   const { rows } = await q(
     `select id, email, name, role, client_id, password_hash, active, failed_logins, locked_until

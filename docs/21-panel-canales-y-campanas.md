@@ -622,20 +622,30 @@ punto donde se retoma.
 
 Todo quedó nivelado como punto de partida:
 
-- **Reglas:** `estable` y `canario` en `2026.11.10-2` (48 secciones, 8 routines), igual a
-  `playbooks/` en `main`.
-- **Base:** migraciones `001` a `014` aplicadas, las mismas que hay en `gateway/db/migrations`.
+- **Reglas:** `estable` y `canario` en `2026.11.10-3` (48 secciones, 8 routines; la `-3` suma el
+  recorte en proporción y el reparto de los publicantes), igual a `playbooks/` en `main`.
+- **Base:** migraciones `001` a `015` aplicadas. Hay dos `015`: `015_clientes_nuevos_formulario_empresa`
+  (de `main`) y `015_crm`, que aplicó la rama del CRM (`claude/gallant-mccarthy-nb9k81`) antes de
+  mergearse. El registro usa el nombre entero, así que no chocan; la del CRM entra a `main` con
+  esa rama.
 - **Gateway:** producción corre `main`.
+- **CRM (etapa 4a, `23`):** la rama se mergeó el 10/11 (PR #5) y `canario` pasó a `2026.11.10-4`
+  (la `-3` más las seis secciones del CRM); `estable` sigue en `-3`.
 - **BairesQA** es todavía un cliente de prueba (no opera en producción real), en `estable`.
 
-**Lo que existe pero no se probó todavía**, porque hasta ahora no hubo un cliente real:
+**Probado en producción con BairesQA** (10/11, cliente de prueba):
 
-- El circuito canario → estable con un cliente en canario: hasta hoy las versiones se
-  publicaron en canario sin ningún cliente ahí.
-- La vuelta atrás de la `014` (restaurar «Antes de la migración 014»): cubierta por las pruebas,
-  no ejercitada en producción.
-- La sección única de las reglas viejas (`seccionesCliente` con `porCampana: false`): ya no la usa
-  ninguna versión publicada en un canal; queda para un cliente con versión fija vieja.
+- **Canario → estable con un cliente en canario:** BairesQA pasó a `canario`, se publicó
+  `2026.11.10-3` ahí (BairesQA la leía y `estable` seguía en `-2`), se pasó `estable` a `-3` y
+  BairesQA volvió a `estable`.
+- **Vuelta atrás de la `014`:** Empresa volvió a la versión «Antes de la migración 014» (Empresa
+  recupera lo de la campaña y el panel muestra el formulario de la transición) y
+  `sdr.migrar_empresa_014` la volvió a migrar: quedó igual que antes del ensayo, con las dos vueltas
+  en el historial.
+
+**Sin uso todavía:** la sección única de las reglas viejas (`seccionesCliente` con
+`porCampana: false`). Ya no la usa ninguna versión publicada en un canal; queda para un cliente
+con versión fija vieja.
 
 **Pendientes chicos, vistos al construir:**
 

@@ -1,4 +1,4 @@
-// OAuth y MCP del panel (docs/23 §3 y §4, etapa M1), de punta a punta contra el servidor local:
+// OAuth y MCP del panel (docs/24 §3 y §4, etapa M1), de punta a punta contra el servidor local:
 // el 401 con la metadata, DCR y CIMD, la página de ingreso con la contraseña del panel, el código
 // de uso único, la renovación que rota (y que revoca todo si se reusa), el aislamiento entre
 // clientes por las herramientas y las conexiones en el panel.

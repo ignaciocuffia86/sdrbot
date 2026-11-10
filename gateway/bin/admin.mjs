@@ -227,6 +227,13 @@ async function main() {
         await dripify.setClave(d.client_id, encryptSecret(decryptSecret(d.api_key_enc, aad), aad));
         n += 1;
       }
+      const crm = await import('../src/sdr/crm.mjs');
+      for (const d of await crm.claves()) {
+        if (keyIdOf(d.token_enc) === current) continue;
+        const aad = crm.aadCrm(d.client_id);
+        await crm.setClave(d.client_id, encryptSecret(decryptSecret(d.token_enc, aad), aad));
+        n += 1;
+      }
       console.log(`Recifrados: ${n}. Ya se puede sacar la clave vieja de MAILGW_ENC_KEYS.`);
       break;
     }

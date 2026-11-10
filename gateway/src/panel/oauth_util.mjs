@@ -1,4 +1,4 @@
-// Las piezas del OAuth del MCP del panel que no necesitan HTTP ni base (docs/23 §3). Vienen del
+// Las piezas del OAuth del MCP del panel que no necesitan HTTP ni base (docs/24 §3). Vienen del
 // OAuth de ASCI (repo locasci, mcp/oauth.mjs, docs/32), que ya anda con Claude, ChatGPT y Cursor;
 // cada regla lleva el porqué que se aprendió allá.
 

@@ -1,4 +1,4 @@
-// El servicio del panel sin HTTP (docs/23 §2, etapa M0): las operaciones se llaman con
+// El servicio del panel sin HTTP (docs/24 §2, etapa M0): las operaciones se llaman con
 // { user, params, body } y aplican los mismos permisos que las rutas. Es como las va a usar el
 // MCP del panel, que no tiene cookie ni pedido HTTP.
 

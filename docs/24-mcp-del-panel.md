@@ -435,13 +435,16 @@ los datos del panel.
 | Base | `016_mcp_del_panel_oauth.sql` (§7.1) |
 | Pruebas | `gateway/test/mcp_panel.test.mjs`: los casos de §3.7, con CIMD contra un documento simulado |
 
-**Para ponerlo en producción** (lo hace Biguá; no está hecho):
+**Para ponerlo en producción:**
 
-1. Aplicar la `016` en el proyecto `sdrbot` de Supabase (`node bin/admin.mjs migrate`).
-2. Cargar `OAUTH_FIRMA` en Vercel (proyecto `sdrbot-mail-gateway`): 32 bytes aleatorios en base64
-   (`openssl rand -base64 32`), distinta de la de ASCI. Sin ella, `/oauth/*` responde
-   `server_error` y nadie puede conectar.
-3. Probar con un usuario de Biguá desde claude.ai y desde Claude Code (§3.6), y mirar en los
+1. ~~Aplicar la `016` en el proyecto `sdrbot` de Supabase.~~ Hecho el 10/11 por el MCP de Supabase
+   (con su fila en `mailgw.migration`). Verificado: las dos tablas con RLS, dueño `postgres` y sin
+   permisos para `mailgw_app`, `mailgw_portal`, `anon` ni `authenticated`.
+2. ~~Cargar `OAUTH_FIRMA` en Vercel~~ (proyecto `sdrbot-mail-gateway`). Cargada el 10/11 en
+   Production, Preview y Development; la preview del PR la usa (un `/oauth/authorize` con un
+   cliente inventado responde «no conoce ese cliente», no `server_error`).
+3. Mergear el PR, para que `sdrbot.bigua.lat` tenga el código.
+4. Probar con un usuario de Biguá desde claude.ai y desde Claude Code (§3.6), y mirar en los
    logs de Vercel la secuencia de una conexión buena.
 
 **Lo que §6 propone y M1 todavía no tiene:** los límites por usuario y por IP, y la validación de
