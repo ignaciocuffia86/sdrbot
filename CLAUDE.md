@@ -43,7 +43,14 @@ Las herramientas del MCP del panel llaman a las mismas operaciones de `gateway/s
 que las rutas del panel: un cambio en una operación (qué recibe, qué permisos pide, qué devuelve) se
 revisa también en su herramienta y en su descripción, en el mismo PR.
 
+Una operación nueva del panel (una ruta en `gateway/src/admin/api.mjs`) va a una herramienta del MCP
+del panel, con vista previa si cambia algo (`simular` en la operación, `confirmar` en la herramienta),
+o a `SIN_MCP` en `gateway/src/panel/mcp.mjs` con el motivo (un secreto, algo que no se deshace, un
+archivo).
+
 `gateway/test/asistentes.test.mjs` falla si un campo de Empresa, una sección de la campaña o un
 faltante para activarla no está en ningún paso, si un paso del alta no dice cómo llega desde Claude,
-o si un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`. Al revisar un PR ajeno
+si un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`, si una operación del
+panel no está en una herramienta ni en `SIN_MCP`, o si una herramienta que cambia algo no tiene
+`confirmar`. Al revisar un PR ajeno
 que toque esto, hacer lo mismo antes de mergearlo.

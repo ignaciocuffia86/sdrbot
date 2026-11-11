@@ -107,12 +107,19 @@ mismas operaciones; `alta_ver` muestra los 16 pasos como acá. Sólo para Biguá
 
 | Cómo llega cada paso desde Claude | Pasos |
 |---|---|
-| Con la ficha | Activar el SDR, Usuario del cliente, Quién es y cómo habla, Casos y objeciones, Interesados y derivación, A quién no escribirle (con No contactar) |
+| Con la ficha | Activar el SDR, Usuario del cliente, Quién es y cómo habla, Casos y objeciones, Interesados y derivación, A quién no escribirle (con No contactar), WhatsApp (las reglas del turno) |
 | Se marca listo a mano | Usuario de ASCI, Cuenta de Grok Bot, Routines |
-| No pasa por el chat | Buzones (contraseña), Dominios (después de los buzones), LinkedIn (API key), WhatsApp (Administración), CRM (token o planilla), Token del gateway, Despertadores (clave del webhook) |
+| No pasa por el chat | Buzones (contraseña), Dominios (después de los buzones; después se verifican con `dominio_verificar`), LinkedIn (API key), CRM (token o planilla), Token del gateway, Despertadores (clave del webhook) |
 
 Cualquier paso se puede dejar «esperando una definición» o «no aplica», y cualquier campo de Empresa
 esperando, como acá. La primera campaña se crea en borrador; después se sigue con su asistente.
+
+El asistente de campaña también se sigue desde Claude (`docs/24` §4.2), para el cliente y para
+Biguá: `campana_editar` completa cada paso (Objetivo, Para quién, Qué ofrecemos, Mensaje, Respuestas,
+Canales y ritmo), `campana_cuentas_cargar` carga la lista de cuentas pegada en el chat (hasta 500
+filas; un archivo más grande, acá), `campana_paso_marcar` deja un paso o un campo esperando, y
+`campana_estado` es «Revisar y activar»: dice lo que falta y, si no falta nada, activa con la huella
+de la vista previa. Todo con vista previa antes de cambiar.
 
 ## Que no se quede atrás
 
@@ -120,7 +127,9 @@ Cada PR que toque la configuración de un cliente o de una campaña suma lo nuev
 corresponde y a lo que hace el MCP del panel (regla en `CLAUDE.md`). `gateway/test/asistentes.test.mjs`
 falla si un campo de Empresa, una sección de la campaña o algo que puede faltar para activarla no
 está en ningún paso; si un paso del alta no dice cómo llega desde Claude (`ALTA_DESDE_CLAUDE`); o si
-un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`.
+un campo de Empresa o de la campaña no está en la ficha de `alta_cargar`; si una operación del panel no
+está en una herramienta del MCP ni en `SIN_MCP` con su motivo; o si los pasos de `campana_paso_marcar`
+no son los de este asistente.
 
 ## Un solo formulario de Empresa
 

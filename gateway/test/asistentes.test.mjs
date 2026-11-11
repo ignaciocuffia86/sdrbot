@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CAMPOS_EMPRESA, BLOQUES_CAMPANA, CAMPOS_CAMPANA, COLUMNAS_CAMPANA } from '../src/sdr/ajustes.mjs';
 import { PASOS_ALTA, ALTA_DESDE_CLAUDE, CAMPANA_FUERA_DE_LA_FICHA, esquemaFichaAlta } from '../src/admin/servicio.mjs';
-import { toolsPara } from '../src/panel/mcp.mjs';
+import { toolsPara, SIN_MCP, PASOS_CAMPANA } from '../src/panel/mcp.mjs';
 
 const app = readFileSync(new URL('../src/admin/static/app.js', import.meta.url), 'utf8');
 const ajustes = readFileSync(new URL('../src/sdr/ajustes.mjs', import.meta.url), 'utf8');
@@ -82,4 +82,37 @@ test('MCP: alta_cargar y alta_ver están para Biguá, no para un cliente, y la d
   for (const p of PASOS_ALTA) assert.ok(cargar.description.includes(p.titulo), `la descripción de alta_cargar no nombra «${p.titulo}»`);
   const cliente = toolsPara({ role: 'client_admin', client_id: 'x' }).map((t) => t.name);
   assert.ok(!cliente.includes('alta_cargar') && !cliente.includes('alta_ver'));
+});
+
+// ---------------------------------------------------------------- el panel y el MCP del panel (M3)
+
+const api = readFileSync(new URL('../src/admin/api.mjs', import.meta.url), 'utf8');
+const mcp = readFileSync(new URL('../src/panel/mcp.mjs', import.meta.url), 'utf8');
+
+test('MCP: cada operación del panel está en una herramienta o en SIN_MCP con su motivo', () => {
+  const delPanel = [...new Set([...api.matchAll(/route\('[A-Z]+', '[^']+', S\.(\w+)\)/g)].map((m) => m[1]))];
+  assert.ok(delPanel.length > 40, 'no se leyeron las rutas del panel');
+  const enHerramientas = new Set([...mcp.matchAll(/\bS\.(\w+)\(/g)].map((m) => m[1]));
+  const faltan = delPanel.filter((op) => !enHerramientas.has(op) && !SIN_MCP[op]);
+  assert.deepEqual(faltan, [], `Operaciones del panel que no están en ninguna herramienta del MCP ni en SIN_MCP (src/panel/mcp.mjs): ${faltan.join(', ')}`);
+  const dobles = Object.keys(SIN_MCP).filter((op) => enHerramientas.has(op));
+  assert.deepEqual(dobles, [], `Están en SIN_MCP pero una herramienta ya las usa: ${dobles.join(', ')}`);
+  const sobran = Object.keys(SIN_MCP).filter((op) => !delPanel.includes(op));
+  assert.deepEqual(sobran, [], `SIN_MCP nombra operaciones que el panel ya no tiene: ${sobran.join(', ')}`);
+  for (const [op, motivo] of Object.entries(SIN_MCP)) assert.ok(motivo.length > 20, `${op}: falta el motivo`);
+});
+
+test('MCP: los pasos del asistente de campaña son los del panel', () => {
+  const bloque = app.slice(app.indexOf('const PASOS_CAMPANA'), app.indexOf('function navCampana'));
+  const claves = [...bloque.matchAll(/\{ clave: '([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual(PASOS_CAMPANA, claves, 'PASOS_CAMPANA en src/panel/mcp.mjs no coincide con el asistente de campaña del panel');
+});
+
+test('MCP: lo que cambia algo tiene vista previa (confirmar) o es una acción sin configuración', () => {
+  for (const t of toolsPara({ role: 'bigua_admin' }).filter((x) => x.escribe)) {
+    const props = Object.keys(t.inputSchema.properties);
+    if (t.name === 'campana_paso_marcar') continue; // marca el asistente: se vuelve atrás con estado null
+    assert.ok(props.includes('confirmar'), `${t.name} cambia algo y no tiene confirmar`);
+    assert.match(t.description, /sin confirmar|confirmar: true/, `${t.name}: la descripción no dice que primero va sin confirmar`);
+  }
 });

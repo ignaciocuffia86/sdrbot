@@ -12,6 +12,7 @@ import { activate, createUser } from '../src/admin/auth.mjs';
 import * as S from '../src/admin/servicio.mjs';
 import { newToken } from '../src/crypto.mjs';
 import { redirectPermitido, vaciarCacheCimd } from '../src/panel/oauth_util.mjs';
+import { toolsPara } from '../src/panel/mcp.mjs';
 
 process.env.OAUTH_FIRMA ??= crypto.randomBytes(32).toString('base64');
 // Los topes de uso los prueba test/aprobaciones_panel.test.mjs; acá van altos.
@@ -239,8 +240,16 @@ test('herramientas: el cliente ve sólo su cliente; Biguá, todos', async () => 
   assert.ok(nombres.includes('resumen') && nombres.includes('aprobaciones_listar') && nombres.includes('campanas_listar'));
   assert.ok(nombres.includes('cargas_listar'), 'las cargas de archivos, de lectura');
   assert.ok(!nombres.includes('clientes_listar'));
-  // Todas de lectura, salvo decidir una aprobación (M2), que es destructiveHint.
-  assert.ok(listaA.every((t) => t.annotations.readOnlyHint === (t.name !== 'aprobacion_decidir')));
+  // Cada una anuncia lo que hace: lectura (readOnlyHint), un cambio (destructiveHint, desde M2 y M3)
+  // o una acción que sale a la red sin cambiar la configuración (probar un buzón, verificar un dominio).
+  const deCambio = new Map(toolsPara({ role: 'client_admin', client_id: A }).map((t) => [t.name, t.escribe ? 'cambio' : t.accion ? 'accion' : 'lectura']));
+  for (const t of listaA) {
+    const clase = deCambio.get(t.name);
+    assert.equal(t.annotations.readOnlyHint, clase === 'lectura', `${t.name}: readOnlyHint`);
+    assert.equal(t.annotations.destructiveHint, clase === 'cambio', `${t.name}: destructiveHint`);
+  }
+  assert.equal(deCambio.get('aprobacion_decidir'), 'cambio');
+  assert.equal(deCambio.get('resumen'), 'lectura');
   assert.ok((await mcp(top, 'tools/list')).body.result.tools.some((t) => t.name === 'clientes_listar'));
 
   const propio = await tool(ta, 'buzones_listar');

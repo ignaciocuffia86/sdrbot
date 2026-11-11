@@ -226,6 +226,8 @@ Para personas, no para los bots (`docs/24`): en claude.ai, Configuración → Co
 
 Biguá puede además dar de alta un cliente desde Claude: `alta_cargar` recibe las respuestas de la llamada de inicio en una ficha, muestra el plan y, con `confirmar`, hace lo mismo que el asistente de alta del panel (`docs/24` §4.4, `docs/29`). Lo que lleva secretos (buzones, Dripify, HubSpot, tokens) sigue en el panel.
 
+Desde Claude se gestiona además lo mismo que en el panel (`docs/24` §4.2): campañas (crear, editar, activar, pausar, duplicar, volver a una versión, el asistente), Empresa, No contactar, listas de cuentas pegadas en el chat (hasta 500 filas), deshacer una carga, probar y pausar buzones, verificar dominios y, para Biguá, las reglas de WhatsApp. Todo lo que cambia algo se llama primero sin `confirmar` y devuelve una vista previa sin tocar nada. Lo que el panel hace y el MCP no está en `SIN_MCP` (`src/panel/mcp.mjs`), con su motivo. Después de un cambio en las herramientas, el conector de Claude se reconecta para ver las nuevas.
+
 Desde la etapa M2, el cliente también aprueba sus mensajes (pestaña **Aprobaciones** del panel y `aprobacion_decidir` en Claude), según lo que Biguá elija por cliente en Administración → Configuración del SDR → «Quién aprueba los mensajes»: Biguá, el cliente o Biguá (vale la primera decisión), o sólo el cliente.
 
 El OAuth está en `src/panel/oauth.mjs` (metadata en `/.well-known/oauth-*`, y `/oauth/register`, `authorize`, `login`, `token` y `revoke`) y el MCP en `src/panel/mcp.mjs`. Necesita `OAUTH_FIRMA` en Vercel (`openssl rand -base64 32`); `OAUTH_ISSUER`, `OAUTH_REDIRECTS` y `OAUTH_CIMD_HOSTS` son opcionales.
