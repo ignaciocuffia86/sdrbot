@@ -69,18 +69,21 @@ export function buildMessage(account, m) {
   }));
 }
 
-// "El 03/11/2026 10:00, Laura Gómez <laura@...> escribió:" en la zona del buzón, 24 horas.
-function quoteBlock(original, timeZone) {
+// "El 03/11/2026 10:00, Laura Gómez <laura@...> escribió:" en la zona del buzón, 24 horas; en una
+// campaña en inglés, "On 11/03/2026 10:00, Laura Gómez <laura@...> wrote:" (mes primero, como en EE.UU.).
+function quoteBlock(original, timeZone, idioma = 'es') {
   let when = '';
   if (original.date) {
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
       timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     }).formatToParts(new Date(original.date)).map((x) => [x.type, x.value]));
-    when = `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+    when = idioma === 'en'
+      ? `${parts.month}/${parts.day}/${parts.year} ${parts.hour}:${parts.minute}`
+      : `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
   }
   const who = original.from?.name ? `${original.from.name} <${original.from.address}>` : (original.from?.address ?? '');
   const body = (original.text ?? '').split('\n').map((l) => `> ${l}`).join('\n');
-  return `\n\nEl ${when}, ${who} escribió:\n${body}`;
+  return idioma === 'en' ? `\n\nOn ${when}, ${who} wrote:\n${body}` : `\n\nEl ${when}, ${who} escribió:\n${body}`;
 }
 
 // Campos de una respuesta a partir del original: destinatarios, asunto con "Re:", y las
@@ -111,7 +114,7 @@ export function replyFields(account, original, r) {
   const subject = /^\s*(re|rv|fw|fwd)\s*:/i.test(original.subject ?? '') ? original.subject : `Re: ${original.subject ?? ''}`.trim();
   const references = [...(original.references ?? [])];
   if (original.message_id && !references.includes(original.message_id)) references.push(original.message_id);
-  const quote = r.quote === false ? '' : quoteBlock(original, account.timezone ?? 'UTC');
+  const quote = r.quote === false ? '' : quoteBlock(original, account.timezone ?? 'UTC', r.idioma);
   return {
     to: to.map((a) => (a.name ? `"${a.name.replace(/"/g, '')}" <${a.address}>` : a.address)),
     cc: cc.map((a) => a.address),

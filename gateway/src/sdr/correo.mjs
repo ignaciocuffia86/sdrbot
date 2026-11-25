@@ -38,8 +38,9 @@ const AVISOS_MAX = 3;
 const diaHace = (dias) => new Date(Date.now() - dias * 86_400_000).toISOString().slice(0, 10);
 
 // Pedido de baja por la cabecera List-Unsubscribe (asunto BAJA) o un mail que sólo dice eso.
-const BAJA_ASUNTO = /^\s*((re|rv|fw|fwd)\s*:\s*)*(baja|darme de baja|unsubscribe|remove me|remover)\s*$/i;
-const BAJA_TEXTO = /^\s*(baja|darme de baja|unsubscribe|remove me)[\s.!]*$/i;
+// En inglés también «STOP», «opt out» y «please remove me» (lo que se contesta a un mail de EE.UU.).
+const BAJA_ASUNTO = /^\s*((re|rv|fw|fwd)\s*:\s*)*(baja|darme de baja|unsubscribe( me)?|(please )?remove me|remover|stop|opt[ -]?out)\s*$/i;
+const BAJA_TEXTO = /^\s*(baja|darme de baja|unsubscribe( me)?|(please )?remove me( from your list)?|stop|opt[ -]?out)[\s.!]*$/i;
 export const esBaja = (m) => BAJA_ASUNTO.test(m.subject ?? '') || BAJA_TEXTO.test(m.reply_text ?? '');
 
 export function tipoDe(m) {

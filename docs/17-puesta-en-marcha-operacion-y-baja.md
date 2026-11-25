@@ -43,7 +43,7 @@ buzón, destinatario, asunto y texto.
 - Lo rechazado vuelve al `prospector` con tu motivo: lo reescribe o descarta a la persona.
 - Con 5 cuentas por día (una o dos personas por cuenta), la calibración dura 2 a 4 días hábiles.
 - Terminada, los mails nuevos salen solos. **La respuesta a un positivo se sigue aprobando siempre.**
-- Si el tono o la oferta no convencen, se corrige en los ajustes (pestaña Empresa) y no en cada mail.
+- Si el tono o la oferta no convencen, se corrige en los ajustes de la campaña y no en cada mail.
 
 El Resumen muestra cuántos van («Calibración: N de 20»).
 
@@ -94,7 +94,8 @@ resuelve, al equipo técnico.
 
 | Qué cambia | Dónde | Quién |
 |---|---|---|
-| Oferta, ICP, cargos, tono, firma por defecto, casos, pedido, objeciones, positivos, interesados, agenda | Pestaña Empresa | Cliente u operador |
+| Qué hace la empresa y firma por defecto | Pestaña Empresa | Cliente u operador |
+| Propuesta, ICP, cargos, exclusiones, idioma y tono, casos, pedido, objeciones, positivos, interesados, agenda | Cada campaña | Cliente u operador |
 | No contactar | Pestaña Empresa → No contactar | Cliente u operador |
 | Firma de cada buzón | Pestaña Canales → Correo → Editar | Cliente u operador |
 | Cuentas por día, buzón a usar, mails extrapolados, antigüedad del aviso | Pestaña Empresa → Operación | Operador (el cliente, si es autogestionado) |

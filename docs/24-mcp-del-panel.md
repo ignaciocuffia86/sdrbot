@@ -267,7 +267,7 @@ cambia nada (§4.1).
 | Herramienta | Qué hace | Cliente | Biguá |
 |---|---|---|---|
 | `clientes_listar` | Clientes con su id, nombre, buzones y usuarios | — | Sí |
-| `alta_ver`, `alta_cargar` | El asistente de alta desde Claude: ver los 16 pasos, y cargar o completar un alta con una ficha, con vista previa (§4.4) | — | Sí |
+| `alta_ver`, `alta_cargar` | El asistente de alta desde Claude: ver los 14 pasos, y cargar o completar un alta con una ficha, con vista previa (§4.4) | — | Sí |
 | `resumen` | El Resumen del panel: la semana, por campaña (mails, LinkedIn, respuestas, positivos, calibración) | Sí | Sí |
 | `actividad` | El monitor: canales con su modo y lo que pasó hoy | Sí | Sí |
 | `registro_buscar` | Buscar una cuenta o un prospecto | Sí | Sí |

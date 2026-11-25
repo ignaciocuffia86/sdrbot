@@ -18,7 +18,7 @@ import { verifySmtp } from '../mail/smtp.mjs';
 import { validateHostSyntax, validatePort } from '../mail/net.mjs';
 import {
   aplicarCambiosCampana, aplicarColumnasCampana, CAMPOS_CAMPANA, CAMPOS_EMPRESA, COLUMNAS_CAMPANA, diferencias, editable,
-  FORMULARIO_EMPRESA, tieneLegado, TIPOS, tituloCampana, tituloDe,
+  FORMULARIO_EMPRESA, tieneLegado, tieneLegado024, TIPOS, tituloCampana, tituloDe,
 } from '../sdr/ajustes.mjs';
 import { extraAjustes, renderAjustes, pedir as pedirABot, setConfig } from '../sdr/store.mjs';
 import * as registro from '../sdr/store.mjs';
@@ -598,8 +598,10 @@ async function guardarAjustes(user, clientId, cambios, nota, { restaurado = fals
       `insert into sdr.ajustes_historial (client_id, ajustes, cambios, por_email, por_rol, nota) values ($1, $2, $3, $4, $5, $6)`,
       [clientId, JSON.stringify(nuevo), cambiados, user.email, user.role, nota ?? null]);
     // Una versión de antes de la 014 trae lo de la campaña a Empresa: pasa a la «principal», como en
-    // la migración (Empresa gana). Empresa nunca guarda lo de la campaña (migración 022).
+    // la migración (Empresa gana). Empresa nunca guarda lo de la campaña (migración 022). Una de antes
+    // de la 024 trae el tono, los casos o el responsable: pasan a todas las campañas, como en la 024.
     if (tieneLegado(nuevo)) await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
+    if (tieneLegado024(nuevo)) await c.query(`select sdr.migrar_empresa_024($1)`, [clientId]);
     await audit(c, user, clientId, restaurado ? 'admin.sdr.restaurar' : 'admin.sdr.ajustes', { campos: cambiados });
     return { cambios: cambiados };
   }));
@@ -1653,12 +1655,11 @@ export const aprobacionDecidir = async ({ user, params, body, via = 'panel' }) =
 export const PASOS_ALTA = [
   { etapa: 'Cuenta', clave: 'sdr', titulo: 'Activar el SDR' },
   { etapa: 'Cuenta', clave: 'usuario', titulo: 'Usuario del cliente' },
-  { etapa: 'La empresa', clave: 'empresa', titulo: 'Quién es y cómo habla',
-    campos: ['nombre_comercial', 'descripcion', 'tono', 'idioma', 'firma'], requeridos: ['nombre_comercial', 'descripcion'] },
-  { etapa: 'La empresa', clave: 'casos', titulo: 'Casos y objeciones', campos: ['prueba_social', 'objeciones'], manual: true },
-  { etapa: 'La empresa', clave: 'interesados', titulo: 'Interesados y derivación',
-    campos: ['responsable_positivos', 'responsable_email', 'link_agenda'], requeridos: ['responsable_positivos', 'responsable_email'] },
-  { etapa: 'La empresa', clave: 'exclusiones', titulo: 'A quién no escribirle', campos: ['excluir', 'acepta_mails_extrapolados'], manual: true },
+  // Cómo habla, los casos, las objeciones, las exclusiones y quién toma a los interesados son de cada
+  // campaña (migración 024): se cargan en su asistente, no acá.
+  { etapa: 'La empresa', clave: 'empresa', titulo: 'Quién es',
+    campos: ['nombre_comercial', 'descripcion', 'direccion_postal', 'firma'], requeridos: ['nombre_comercial', 'descripcion'] },
+  { etapa: 'La empresa', clave: 'exclusiones', titulo: 'A quién no escribirle nunca', campos: ['acepta_mails_extrapolados'], manual: true },
   { etapa: 'Correo', clave: 'buzones', titulo: 'Buzones' },
   { etapa: 'Correo', clave: 'dominios', titulo: 'Dominios: SPF, DKIM y DMARC' },
   { etapa: 'Canales', clave: 'linkedin', titulo: 'LinkedIn · Dripify' },
@@ -1832,8 +1833,6 @@ export const ALTA_DESDE_CLAUDE = {
   usuario: { como: 'datos', con: 'usuarios',
     nota: 'El usuario se crea sin mostrar su enlace de activación en el chat: se genera en el panel (Usuarios → Nuevo enlace) y se manda por un canal seguro.' },
   empresa: { como: 'datos', con: 'empresa' },
-  casos: { como: 'datos', con: 'empresa', nota: 'Se marca listo con pasos cuando está completo.' },
-  interesados: { como: 'datos', con: 'empresa' },
   exclusiones: { como: 'datos', con: 'empresa y no_contactar', nota: 'Se marca listo con pasos cuando está completo.' },
   buzones: { como: 'fuera', motivo: 'La contraseña de cada buzón es un secreto: se carga en el panel (Canales → Correo), nunca por el chat.' },
   dominios: { como: 'fuera', motivo: 'Se verifican después de cargar los buzones; dominios_ver dice qué publicar en el DNS.' },
@@ -1858,7 +1857,7 @@ export const esquemaCampo = (c) => {
   switch (c.tipo) {
     case 'numero': return { type: 'integer', minimum: c.min, maximum: c.max, ...desc };
     case 'si_no': return { type: 'boolean', ...desc };
-    case 'lista': case 'urls': case 'seleccion': case 'ids':
+    case 'lista': case 'urls': case 'derivacion': case 'ids':
       return { type: 'array', items: { type: 'string', maxLength: c.max ?? 300 }, maxItems: c.maxItems ?? 50, ...desc };
     case 'opcion': return { enum: c.opciones, ...desc };
     case 'fecha': return { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', ...desc };
@@ -1880,7 +1879,7 @@ export function esquemaFichaAlta() {
   const campana = objeto({
     ...Object.fromEntries(columnas.map((c) => [c.clave, esquemaCampo(c)])),
     ajustes: objeto(Object.fromEntries(CAMPOS_CAMPANA.map((c) => [c.clave, esquemaCampo(c)])), [],
-      { description: 'Lo de la campaña: propuesta, a quién, mensajes, respuestas. Lo que no diga, lo hereda de Empresa.' }),
+      { description: 'Lo de la campaña: propuesta y casos, a quién y a quién no, idioma y tono, mensajes, respuestas y objeciones, y quién toma a los interesados (lo pide para activarla).' }),
   }, ['nombre'], { description: `La primera campaña, que queda en borrador. Tipos: ${Object.entries(TIPOS).map(([k, t]) => `${k} (${t.titulo})`).join(', ')}.` });
   const sdr = V_SDR_PROPS;
   return objeto({
@@ -1889,7 +1888,7 @@ export function esquemaFichaAlta() {
       nombre: { type: 'string', minLength: 1, maxLength: 120 },
     }, ['id', 'nombre']),
     sdr: objeto(sdr, [], { description: 'Activar el SDR: modo, quién aprueba los mensajes, bots, zona horaria, calibración.' }),
-    empresa: objeto(empresa, [], { description: 'Los ajustes de Empresa (pasos «Quién es y cómo habla», «Casos y objeciones», «Interesados y derivación», «A quién no escribirle»).' }),
+    empresa: objeto(empresa, [], { description: 'Los ajustes de Empresa (pasos «Quién es» y «A quién no escribirle nunca»). Cómo habla, los casos, las objeciones, las exclusiones y quién toma a los interesados van en la campaña.' }),
     usuarios: { type: 'array', maxItems: 10, items: objeto({ email: { type: 'string', maxLength: 254 }, nombre: { type: 'string', minLength: 1, maxLength: 120 } }, ['email', 'nombre']),
       description: 'Usuarios del cliente en el panel.' },
     no_contactar: { type: 'array', maxItems: 500, items: objeto({ valor: { type: 'string', maxLength: 300 }, motivo: { type: 'string', maxLength: 200 } }, ['valor']),
@@ -1938,11 +1937,9 @@ async function planDelAlta(user, f) {
     const b = prueba('Activar el SDR', () => { const x = V.sdrConfig(f.sdr && Object.keys(f.sdr).length ? f.sdr : { canal: 'estable' }); if (x.zona_horaria) checkTimezone(x.zona_horaria); return x; });
     if (b) plan.push({ paso: 'sdr', que: cfg ? `Cambiar la configuración del SDR: ${Object.keys(b).join(', ')}.` : `Activar el SDR${f.sdr ? ` (${Object.entries(b).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join('+') : v}`).join(', ')})` : ' con los valores por defecto'}.` });
   }
-  let empresaNueva = cfg?.ajustes ?? {};
   if (f.empresa && Object.keys(f.empresa).length) {
     const nuevo = prueba('Empresa', () => FORMULARIO_EMPRESA.aplicar(cfg?.ajustes ?? {}, f.empresa, { esBigua: true, autogestion: true }));
     if (nuevo) {
-      empresaNueva = nuevo;
       const cambios = diferencias(cfg?.ajustes ?? {}, nuevo);
       plan.push(cambios.length ? { paso: 'empresa', que: `Empresa: ${cambios.map(tituloDe).join(', ')}.` } : { paso: 'empresa', que: 'Empresa: sin cambios.', sin_cambios: true });
     }
@@ -1967,7 +1964,7 @@ async function planDelAlta(user, f) {
       const permiso = { esBigua: true, autogestion: true };
       const ok = prueba('Campaña', () => {
         aplicarColumnasCampana(null, { tipo: 'prospeccion', ...cols }, permiso, { tope: f.sdr?.tope_cuentas_dia ?? cfg?.tope_cuentas_dia ?? null });
-        aplicarCambiosCampana({}, aj, permiso, { empresa: empresaNueva });
+        aplicarCambiosCampana({}, aj, permiso);
         return true;
       });
       if (ok) plan.push({ paso: 'campana', que: `Crear la campaña «${cols.nombre}» (${TIPOS[cols.tipo ?? 'prospeccion'].titulo}) en borrador.` });

@@ -56,11 +56,11 @@ Los niveles se explican en §3.
 | Oferta | `ajustes.oferta` | Cliente | prospector, seguimiento | **Empresa** (descripción general) + **Campaña** (propuesta de valor de esa campaña) |
 | A quién le venden (ICP) | `ajustes.icp` | Cliente | prospector | **Campaña** |
 | Cargos a los que se escribe | `ajustes.roles_objetivo` | Cliente | prospector | **Campaña** |
-| A quién no escribirle | `ajustes.excluir` | Cliente | prospector | **Empresa** (exclusiones de siempre) + **Campaña** (las propias) |
-| Tono | `ajustes.tono` | Cliente | Todos | **Empresa**, con override por campaña |
-| Idioma y trato | `ajustes.idioma` | Cliente | Todos | **Empresa**, con override por campaña |
+| A quién no escribirle | `ajustes.excluir` | Cliente | prospector | **Campaña** (desde la `024`; las empresas puntuales, en No contactar, del cliente) |
+| Tono | `ajustes.tono` | Cliente | Todos | **Campaña** (desde la `024`) |
+| Idioma y trato | `ajustes.idioma` | Cliente | Todos | **Campaña** (desde la `024`) |
 | Firma | `ajustes.firma` | Cliente | prospector, seguimiento | **Canal → buzón** (la firma es de quien manda), con default en Empresa; la campaña no tiene firma (decisión 11) |
-| Objeciones | `ajustes.objeciones` | Cliente | seguimiento | **Empresa** (generales) + **Campaña** (las de esa oferta) |
+| Objeciones | `ajustes.objeciones` | Cliente | seguimiento | **Campaña** (desde la `024`) |
 | Qué cuenta como positivo | `ajustes.positivos` | Cliente | seguimiento | **Campaña** (en un webinar, positivo es «se inscribió») |
 | Qué buzón usar para qué | `ajustes.buzones` (texto libre) | Biguá | prospector | **Campaña** → buzones asignados (selección, no texto) |
 | Cuentas nuevas por día | `ajustes.cuentas_por_dia` | Biguá | orquestador | **Campaña** (con un tope total del cliente en Operación; sin peso, decisión 12) |
@@ -107,16 +107,17 @@ Cinco niveles, de lo que más se usa a lo que menos:
 Cliente
 ├── Resumen        ← estado y pendientes (lo primero que se ve)
 ├── Campañas       ← el núcleo: cada una con su configuración de SDR
-├── Empresa        ← lo común a todas las campañas: identidad, tono, exclusiones, prueba social
+├── Empresa        ← lo común a todas las campañas: identidad, firma por defecto, No contactar
 ├── Canales        ← por dónde se habla: correo, LinkedIn, WhatsApp; y adónde va lo bueno: CRM, agenda
 ├── Actividad
 └── ⚙ Administración  ← usuarios, tokens, bots y despertadores, reglas, operación
 ```
 
-**Regla de herencia:** Empresa define los defaults; una campaña sólo dice lo que cambia (tono,
-idioma, extrapolados, link de agenda y quién toma a los interesados; la firma no, es del buzón:
-decisión 11). En el formulario de la campaña, un campo heredado se
-ve atenuado con «De Empresa: …» y un botón «Cambiar para esta campaña».
+**Regla de herencia:** desde la migración `024` (§6.2), la campaña sólo hereda de Empresa si se
+aceptan mails extrapolados; la firma no, es del buzón (decisión 11). El tono, el idioma, los casos,
+las objeciones, las exclusiones y quién toma a los interesados son de cada campaña. En el formulario
+de la campaña, un campo heredado se ve atenuado con «De Empresa: …» y un botón «Cambiar para esta
+campaña».
 
 **Regla de permisos:** el candado reemplaza al «· lo cambia Biguá» al final del título. El cliente
 ve todo lo de su negocio (incluido lo que no puede cambiar, en sólo lectura) y no ve Administración.
@@ -171,11 +172,11 @@ Webinar: automatización de pruebas (28/11)            [Borrador ▾]  Guardar
 ──────────────────────────────────────────────────────────────────────────
  1 Objetivo          Tipo: Invitación a evento · Inicio 10/11 · Cierre 27/11
  2 Propuesta         Qué se ofrece en esta campaña, por qué ahora, prueba social
- 3 Audiencia         ICP · cargos · exclusiones propias · señal (avisos, ninguna, lista)
- 4 Mensajes          Llamado a la acción · links permitidos · tono e idioma (heredados)
+ 3 Audiencia         ICP · cargos · exclusiones · señal (avisos, ninguna, lista)
+ 4 Mensajes          Idioma y tono · llamado a la acción · links permitidos
  5 Secuencia         Mail 1 → 3 días → mail 2 → hasta el 27/11 · LinkedIn: nota + 2 mensajes
  6 Canales y ritmo   Buzones: ana@, info@ · Dripify: campaña 123456 · 8 cuentas/día · 1 persona/cuenta
- 7 Respuestas        Qué es positivo · objeciones propias · a quién avisar
+ 7 Respuestas        Qué es positivo · objeciones · quién toma a los interesados
  ── Avanzado (Biguá) ───────────────────────────────────────────────────
     Calibración de la campaña · extrapolados · reveals de publicantes por tanda · campaña de Dripify
  ── Así lo leen los bots ─── (vista previa, a la derecha en pantallas anchas)
@@ -386,7 +387,7 @@ se ajustan a cada cliente (decisión 14). El detalle de cada una está en §6.2.
 
 | # | Pregunta | Decisión |
 |---|---|---|
-| 9 | ¿Dónde quedan los ajustes de la etapa B? | `llamado_accion` pasa a la **campaña**, con un valor por defecto según el tipo. `prueba_social` queda en **Empresa** como biblioteca y cada campaña elige qué casos cita (si no elige, todos). `responsable_positivos` y `link_agenda` quedan en **Empresa** y la campaña puede cambiarlos |
+| 9 | ¿Dónde quedan los ajustes de la etapa B? | `llamado_accion` pasa a la **campaña**, con un valor por defecto según el tipo. `prueba_social` queda en **Empresa** como biblioteca y cada campaña elige qué casos cita (si no elige, todos). `responsable_positivos` y `link_agenda` quedan en **Empresa** y la campaña puede cambiarlos. **Cambió en la `024`:** los casos, el responsable y el link de agenda son sólo de la campaña (§6.2) |
 | 10 | ¿Cómo se parten `oferta` y `excluir` al migrar? | La `oferta` de hoy se copia entera a la **propuesta** de la campaña «principal» y también a la nueva **descripción** de Empresa, con un aviso en Resumen para recortarla. `excluir` queda entero en **Empresa** (exclusiones de siempre); las exclusiones propias de la «principal» arrancan vacías |
 | 11 | ¿Qué firma gana? | **Buzón > Empresa.** La campaña no tiene firma: si necesita otra, usa otro buzón |
 | 12 | ¿Peso o cuentas por día? | **Sólo cuentas por día**, por campaña. Se elimina el peso. La suma de las activas no puede pasar el tope del cliente; si un día los buzones no dan, el orquestador recorta en proporción. El presupuesto de ASCI se reparte con la misma proporción |
@@ -418,14 +419,41 @@ Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
 
 | Nivel | Campos |
 |---|---|
-| **Empresa** | `nombre_comercial`, `descripcion` (nueva: qué hace la empresa), zona horaria, `tono`, `idioma`, `firma` (por defecto), `excluir` (de siempre), no contactar, `prueba_social` (biblioteca), `objeciones` (generales), `responsable_positivos`, `link_agenda`, `acepta_mails_extrapolados` (el valor por defecto) |
-| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `icp`, `roles_objetivo`, `excluir` (propias), `senal_avisos`, `dias_aviso`, `llamado_accion`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones` (propias), `prueba_social` (cuáles de la biblioteca), buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
-| **La campaña puede cambiar lo de Empresa** | `tono`, `idioma`, `acepta_mails_extrapolados`, `responsable_positivos`, `link_agenda`. Nada más: lo demás se suma (exclusiones, objeciones) o es sólo de un nivel |
+| **Empresa** | `nombre_comercial`, `descripcion` (qué hace la empresa), `direccion_postal` (para el pie de CAN-SPAM), zona horaria, `firma` (por defecto), no contactar, `acepta_mails_extrapolados` (el valor por defecto) |
+| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `prueba_social`, `icp`, `roles_objetivo`, `excluir`, `senal_avisos`, `dias_aviso`, `llamado_accion`, `idioma`, `tono`, `links_permitidos`, `can_spam` (envíos a EE.UU.), cadencia, personas por cuenta, `positivos`, `objeciones`, `responsable_positivos`, `responsable_email`, `derivacion` (otros responsables según el interesado), `link_agenda`, buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
+| **La campaña puede cambiar lo de Empresa** | `acepta_mails_extrapolados`. Nada más: lo demás es sólo de un nivel |
 | **Buzón** | `firma` (gana a la de Empresa) |
 | **Se va** | `ajustes.buzones` (texto libre): lo reemplaza la selección de buzones de la campaña |
 
-Las listas que existen en los dos niveles (`excluir`, `objeciones`) **se suman**: el bot ve las de
-Empresa y las de la campaña juntas.
+**Desde la migración `024`**, el tono, el idioma, los casos (`prueba_social`), las objeciones, las
+exclusiones (`excluir`) y quién toma a los interesados (`responsable_positivos`, `responsable_email`,
+`link_agenda`) son **sólo de la campaña**. Antes Empresa los tenía como base: la campaña heredaba el
+tono, el idioma y el responsable, sumaba sus exclusiones y objeciones a las de Empresa y elegía sus
+casos de una biblioteca de Empresa. Con una campaña en inglés y otra en español, o un AM por vertical
+o por territorio, esa base no servía: había que pisarla en cada campaña y lo que quedaba en Empresa
+se filtraba a las campañas que no la pisaban. Lo que se repite entre campañas (el mismo producto con
+otro buyer persona) se copia con **Duplicar**. «No contactar» sigue siendo del cliente: una baja, un
+cliente actual o un competidor no se tocan desde ninguna campaña.
+
+La `024` copió a cada campaña (también a las pausadas y las terminadas, que siguen contestando) lo
+que hasta ese momento le llegaba de Empresa: su tono, idioma y responsable si no tenía; las
+exclusiones y objeciones de Empresa más las suyas; y los casos que había elegido (o todos, si no
+había elegido). Si lo de la campaña vuelve a Empresa por otro camino (la CLI, o Biguá restaurando
+una versión vieja de Empresa), `sdr.migrar_empresa_024` lo pasa a todas las campañas sin pisar lo
+suyo. Una campaña no se activa sin quién toma a los interesados y su mail (`docs/26`), ni sin el
+idioma en que se escribe (sin él, los bots escribirían en español neutro aunque la campaña sea en
+inglés). Si el responsable depende del interesado dentro de una misma campaña (un AM por país o por
+vertical), cada uno va con su condición en `derivacion` («condición: Nombre <mail>»).
+
+**Envíos a EE.UU. (CAN-SPAM).** Una campaña con `can_spam` (lo marca Biguá) no se activa sin la
+`direccion_postal` de Empresa. A cada mail suyo, nuevo o respuesta, el gateway le agrega debajo del
+texto del bot la dirección postal (con el nombre legal) y cómo darse de baja («reply "unsubscribe"» o
+«responda «baja»», según el idioma de la campaña), y la cabecera `List-Unsubscribe` con ese asunto.
+Se agrega después de controlar lo aprobado (la aprobación compara el texto del bot), por eso lleva sólo
+lo que carga Biguá: la dirección la edita Biguá, sin links (Vercel Security Review #31). Si la dirección se borra con la campaña ya activa (o vuelve una versión de Empresa sin
+ella), el gateway no manda ningún mail de esa campaña (`sin_direccion_postal`) hasta que se cargue. La memoria del
+correo toma como baja «baja», «unsubscribe», «STOP», «opt out» y «remove me». La cita del original
+en una respuesta también va en el idioma de la campaña («On …, X wrote:»).
 
 **En el código.** `gateway/src/sdr/ajustes.mjs` tiene los dos esquemas:
 

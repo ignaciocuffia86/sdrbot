@@ -19,7 +19,7 @@ el hilo sigue entero y el dominio principal sólo le escribe a quien ya contest�
 
 | Regla | Dónde |
 |---|---|
-| La copia sólo va a quien toma a los interesados (`responsable_email` de la campaña o de Empresa; si no está, el mail escrito en `responsable_positivos`) o a alguien de su mismo dominio. Con un dominio público (gmail.com…), sólo esa dirección. El prospecto no va en copia | `controlarCopia` (`copia_no_permitida`, `sin_responsable`) |
+| La copia sólo va a quien toma a los interesados (`responsable_email` de la campaña; si no está, el mail escrito en `responsable_positivos`), o a uno de los «Otros responsables, según el interesado» de la campaña (`derivacion`), o a alguien de su mismo dominio. Con un dominio público (gmail.com…), sólo esa dirección. El prospecto no va en copia | `controlarCopia` (`copia_no_permitida`, `sin_responsable`) |
 | La copia va sólo en una respuesta a un positivo por mail, y sólo con una aprobación que la lleve igual: ni una dirección de más ni de menos | `pedirAprobacion`, `controlarEnvio` (`aprobacion_no_coincide`) |
 | El cliente y el operador ven la copia antes de aprobar y no la cambian: si no es la persona, se rechaza con una nota | panel (`contenidoAprobacion`), MCP del panel, reglas del orquestador |
 | A un derivado no le sale ningún mail nuevo del SDR, y lo que se le conteste pide aprobación aunque ya no figure como positivo (mail, LinkedIn y WhatsApp) | `controlarDestinatarios` (`prospecto_derivado`), `pideAprobacionComoPositivo` |
@@ -38,5 +38,10 @@ copia aprobada.
 - Que la web del dominio secundario redirija a la del principal.
 - Nada de `Reply-To` del dominio principal en los mails fríos: es señal de spam y el gateway
   dejaría de ver las respuestas.
-- Con más de un responsable (por país, por producto), cada campaña tiene el suyo
-  («Mail de quien toma a los interesados» en la campaña).
+- Quién toma a los interesados es de cada campaña (migración `024`), y una campaña no se activa sin
+  él. Si dentro de una misma campaña depende del interesado (un AM por país, por vertical, por
+  tamaño), van en «Otros responsables, según el interesado», uno por renglón: «condición: Nombre
+  <mail>» (por ejemplo «Chile: Augusto Pérez <augusto@empresa.com>»). `seguimiento` elige con lo que
+  sabe de la persona y su cuenta, y dice en la aprobación qué regla usó; si no cumple ninguna, va el
+  responsable principal. El gateway no evalúa la condición: controla que la copia sea a uno de los
+  responsables cargados (o a alguien de su dominio), y quien aprueba ve a quién va.

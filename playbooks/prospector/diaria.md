@@ -31,7 +31,7 @@ aviso»; si no dice, **14 días**.
 2. **Fuera lo que ya trabajamos:** para cada candidata, `registro_buscar` por `dominio` (o por
    `nombre` si no hay dominio). Salteá las que están en contacto, excluidas o descartadas, y las en
    pausa cuya fecha no llegó.
-3. **Fuera lo que no encaja:** lo que excluye la campaña (sus exclusiones ya suman las de Empresa), y el ruido de la búsqueda por texto
+3. **Fuera lo que no encaja:** lo que excluye la campaña (sus exclusiones; «No contactar» lo hace cumplir el gateway), y el ruido de la búsqueda por texto
    (un aviso que no es del rol aunque lo nombre). `industrias` y `tamano` sólo filtran a las
    empresas con cuenta resuelta (`cuenta_resuelta: true`): a las demás mirá el nombre, el aviso y,
    si hace falta, su LinkedIn.
@@ -117,7 +117,9 @@ persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
 
 Cada mail sale por un buzón **de la campaña** de la persona (los de «Campañas de este cliente»;
 el gateway rechaza otro con `buzon_fuera_de_campana`), y sólo con los links que permite la campaña
-(`link_no_permitido`).
+(`link_no_permitido`). En una campaña de envíos a EE.UU. (CAN-SPAM) el gateway agrega el pie solo; si
+Empresa no tiene la dirección postal, rechaza el mail con `sin_direccion_postal`: no lo reintentes
+y avisale al orquestador.
 
 **Si la campaña está en calibración** (lo dice «Campañas de este cliente»):
 

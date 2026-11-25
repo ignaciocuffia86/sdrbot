@@ -636,18 +636,11 @@ async function campanasView({ clientId, bigua, base, reload }) {
 const valorTexto = (v) => (v === undefined || v === null || v === '' ? '(vacío)'
   : Array.isArray(v) ? v.join(' · ') : typeof v === 'boolean' ? (v ? 'Sí' : 'No') : String(v));
 
-// Un campo de la campaña. Los que se heredan de Empresa muestran el valor de Empresa hasta que se
-// cambian para esta campaña; las listas que se suman muestran también las de Empresa.
+// Un campo de la campaña. Los que se heredan de Empresa (si se aceptan mails deducidos) muestran el
+// valor de Empresa hasta que se cambian para esta campaña. Lo demás es sólo de la campaña.
 function campoCampana(c, valor, d) {
   const empresa = d.empresa[c.clave];
-  if (c.tipo === 'seleccion') {
-    const lib = d.empresa[c.de] ?? [];
-    if (!lib.length) return field(conCandado(c), h('p', { class: 'small muted' }, 'Empresa no tiene casos cargados.'), c.ayuda);
-    const elegidos = new Set(valor ?? []);
-    return field(conCandado(c), h('div', { class: 'opciones', 'data-campo': c.clave },
-      lib.map((x) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: x, checked: elegidos.has(x), disabled: !c.editable }), x))), c.ayuda);
-  }
-  const input = campoInput({ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }, valor);
+  const input = campoInput({ ...c, tipo: ['urls', 'derivacion'].includes(c.tipo) ? 'lista' : c.tipo }, valor);
   if (c.hereda) {
     const propio = valor !== undefined;
     const wrap = h('div', { class: 'hereda', 'data-campo': c.clave, 'data-modo': propio ? 'propio' : 'empresa' });
@@ -667,22 +660,15 @@ function campoCampana(c, valor, d) {
     pintar();
     return field(conCandado(c), wrap, c.ayuda);
   }
-  const suma = Array.isArray(empresa) && empresa.length && (c.clave === 'excluir' || c.clave === 'objeciones')
-    ? h('div', { class: 'small muted' }, `Además de las de Empresa: ${empresa.join(' · ')}`) : null;
-  return field(conCandado(c), h('div', {}, input, suma), c.ayuda);
+  return field(conCandado(c), input, c.ayuda);
 }
 
 function leerCampana(form, campos) {
   const out = {};
   for (const c of campos) {
     if (!c.editable) continue;
-    if (c.tipo === 'seleccion') {
-      const box = form.querySelector(`[data-campo="${c.clave}"]`);
-      if (box) out[c.clave] = [...box.querySelectorAll('input:checked')].map((x) => x.value);
-      continue;
-    }
     if (c.hereda && form.querySelector(`[data-campo="${c.clave}"]`)?.dataset.modo === 'empresa') { out[c.clave] = null; continue; }
-    Object.assign(out, leerCampos(form, [{ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }]));
+    Object.assign(out, leerCampos(form, [{ ...c, tipo: ['urls', 'derivacion'].includes(c.tipo) ? 'lista' : c.tipo }]));
   }
   return out;
 }
@@ -753,7 +739,7 @@ function resumenBloque(b, k, d) {
   }
 }
 
-const ORIGEN = { empresa: 'de Empresa', campana: 'de la campaña', ambas: 'Empresa + campaña', tipo: 'del tipo' };
+const ORIGEN = { empresa: 'de Empresa', campana: 'de la campaña', tipo: 'del tipo' };
 
 async function campanaView({ clientId, bigua, base, reload }, id) {
   const path = `/clients/${enc(clientId)}/sdr/campanas/${enc(id)}`;
@@ -2297,10 +2283,8 @@ function pieNavegacion(anterior, siguiente, extra = []) {
 const GUIA_ALTA = {
   sdr: 'Antes de cargar nada: si lo opera Biguá o el cliente, quién aprueba los mensajes y cuántos mails se calibran.',
   usuario: 'Quién del cliente entra al panel. Recibe un enlace de un solo uso para elegir su contraseña.',
-  empresa: 'Cómo se presenta la empresa y qué hace en general (lo de cada campaña va en su asistente). El tono, el idioma y la firma de los buzones que no tengan una propia.',
-  casos: 'Los resultados que se pueden citar, con su fuente, y las objeciones de siempre con su respuesta. Los bots no citan nada que no esté acá.',
-  interesados: 'A quién se le pasa un interesado: su nombre y su casilla del dominio principal, que va en copia en la respuesta (docs/26), y el link de agenda.',
-  exclusiones: 'Los tipos de empresa y los cargos a evitar en todas las campañas, si se escribe a mails deducidos, y las empresas o personas puntuales a las que no se les escribe nunca.',
+  empresa: 'Cómo se presenta la empresa y qué hace en general, su dirección postal si va a escribirle a EE.UU. (CAN-SPAM la pide al pie de cada mail), y la firma de los buzones que no tengan una propia. Cómo habla, los casos, las objeciones, a quién se evita y quién toma a los interesados se definen en cada campaña: una campaña en inglés y otra en español, o un responsable por vertical, no comparten nada de eso.',
+  exclusiones: 'Las empresas o personas puntuales a las que no se les escribe nunca, desde ninguna campaña (clientes actuales, competidores, bajas), y si se escribe a mails deducidos. Los tipos de empresa y cargos a evitar van en cada campaña.',
   buzones: 'Las casillas de los dominios secundarios, cada una a nombre de una persona real del equipo del cliente, con su firma. Se prueban acá mismo.',
   dominios: 'SPF, DKIM y DMARC de cada dominio de envío: deciden si los mails llegan a la bandeja. Si algo está mal, la ayuda dice qué registro cargar.',
   linkedin: 'Si se suma LinkedIn: la API key de Dripify del cliente, la prueba de conexión y la URL del webhook para su campaña.',
@@ -2330,7 +2314,7 @@ const LISTA_ALTA = {
   ],
 };
 // Los pasos que un cliente puede no usar.
-const PUEDE_NO_APLICAR = new Set(['usuario', 'casos', 'exclusiones', 'linkedin', 'whatsapp', 'crm']);
+const PUEDE_NO_APLICAR = new Set(['usuario', 'exclusiones', 'linkedin', 'whatsapp', 'crm']);
 
 function navAlta(alta, base, actual) {
   const nav = h('nav', { class: 'sidenav pasos', 'aria-label': 'Pasos del alta' },
@@ -2487,7 +2471,7 @@ function camposAlta(v, alta, sdr, p, siguiente, formulario = {}) {
     const seguir = ev.submitter?.value === 'seguir';
     const r = await busy(seguir ? btnSeguir : btnGuardar, async () => {
       const x = await guardar();
-      // Un paso sin campos obligatorios (casos, exclusiones) queda listo al guardarlo, salvo que
+      // Un paso sin campos obligatorios (exclusiones) queda listo al guardarlo, salvo que
       // espere una definición.
       if (p.manual && !p.que) await marcarPaso(clientId, 'alta', p.clave, { estado: 'listo' });
       return x;
@@ -2505,17 +2489,17 @@ const PASOS_CAMPANA = [
   { clave: 'objetivo', titulo: 'Objetivo', bloques: ['objetivo'],
     guia: 'Qué se busca con esta campaña: prospectar por una señal, invitar a un evento o reactivar contactos viejos. El nombre y, si tiene, las fechas.' },
   { clave: 'audiencia', titulo: 'Para quién', bloques: ['audiencia'],
-    guia: 'A quién se le escribe: país, industrias, tamaño, los cargos y la señal que dispara el primer contacto. Lo que se evita, además de lo de Empresa.' },
+    guia: 'A quién se le escribe: país, industrias, tamaño, los cargos y la señal que dispara el primer contacto. Qué tipos de empresa y cargos se evitan en esta campaña (las empresas puntuales van en «No contactar», en Empresa, y valen para todas).' },
   // Las cuentas que vienen de un archivo (docs/27): en una «Lista del cliente», las que se prospectan
   // (obligatorio); en las demás, las cuentas modelo del ICP (opcional).
   { clave: 'cuentas', titulo: 'Cuentas', bloques: ['lista'], archivo: true,
     guia: 'Las empresas que el cliente ya tiene identificadas, desde un Excel o un CSV.' },
   { clave: 'propuesta', titulo: 'Qué ofrecemos', bloques: ['propuesta'],
-    guia: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora, y qué casos de Empresa se pueden citar.' },
+    guia: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora, y los casos y datos que se pueden citar, con su fuente. Si otra campaña ya los tiene, conviene duplicarla.' },
   { clave: 'mensajes', titulo: 'Mensaje y llamado a la acción', bloques: ['mensajes'],
-    guia: 'Qué se le pide al prospecto al final del primer mail, qué links pueden ir y si el tono o el idioma cambian para esta campaña.' },
+    guia: 'En qué idioma y con qué tono se escribe en esta campaña (el idioma hace falta para activarla), qué se le pide al prospecto al final del primer mail, qué links pueden ir y, si va a EE.UU., el pie de CAN-SPAM (dirección postal y baja, en el idioma de la campaña).' },
   { clave: 'respuestas', titulo: 'Respuestas e interesados', bloques: ['respuestas'],
-    guia: 'Qué cuenta como positivo en esta campaña, sus objeciones propias y, si no es el de Empresa, quién toma a los interesados.' },
+    guia: 'Qué cuenta como positivo en esta campaña, las objeciones con su respuesta y quién toma a los interesados: su nombre y su casilla del dominio principal, que va en copia (docs/26), y el link de agenda. Si depende del interesado (un AM por país, por vertical), cada responsable con su condición en «Otros responsables».' },
   { clave: 'canales', titulo: 'Canales y ritmo', bloques: ['ritmo', 'avanzado'],
     guia: 'Por qué buzones sale, cuántas cuentas nuevas por día y la campaña de Dripify si va también por LinkedIn.' },
 ];

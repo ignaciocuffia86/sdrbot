@@ -5,8 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CAMPOS, CAMPOS_EMPRESA, CAMPOS_CAMPANA, HEREDABLES, aplicarCambiosEmpresa, aplicarCambiosCampana,
-  aplicarColumnasCampana, faltantesParaActivar, ajustesEfectivos,
+  CAMPOS, CAMPOS_EMPRESA, CAMPOS_CAMPANA, HEREDABLES, DE_CAMPANA_DESDE_024, aplicarCambiosEmpresa, aplicarCambiosCampana,
+  aplicarColumnasCampana, faltantesParaActivar, ajustesEfectivos, idiomaCorto, pieDelMail,
 } from '../src/sdr/ajustes.mjs';
 
 const BIGUA = { esBigua: true };
@@ -15,11 +15,14 @@ const AUTO = { esBigua: false, autogestion: true };
 const claves = (campos) => campos.map((c) => c.clave);
 
 test('ajustes: cada campo vive en su nivel', () => {
-  assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'tono', 'idioma', 'firma', 'excluir',
-    'prueba_social', 'objeciones', 'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_extrapolados']);
+  // Empresa es sólo quién es (migración 024): cómo habla, los casos, las objeciones, las exclusiones y
+  // quién toma a los interesados son de cada campaña.
+  assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'direccion_postal', 'firma', 'acepta_mails_extrapolados']);
   assert.deepEqual(claves(CAMPOS_CAMPANA), ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos',
-    'dias_aviso', 'llamado_accion', 'links_permitidos', 'tono', 'idioma', 'positivos', 'objeciones',
-    'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
+    'dias_aviso', 'llamado_accion', 'idioma', 'tono', 'links_permitidos', 'can_spam', 'positivos', 'objeciones',
+    'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
+  for (const k of DE_CAMPANA_DESDE_024) assert.ok(!claves(CAMPOS_EMPRESA).includes(k) && claves(CAMPOS_CAMPANA).includes(k), k);
+  assert.deepEqual(HEREDABLES, ['acepta_mails_extrapolados']);
   // La firma es del buzón y de Empresa, nunca de la campaña (decisión 11); el texto libre de
   // buzones y la oferta no siguen.
   for (const k of ['firma', 'buzones', 'oferta', 'cuentas_por_dia']) assert.ok(!claves(CAMPOS_CAMPANA).includes(k), k);
@@ -35,23 +38,24 @@ test('ajustes: cada campo vive en su nivel', () => {
 });
 
 test('ajustes: Empresa valida su formulario y no acepta campos de campaña', () => {
-  const e = aplicarCambiosEmpresa({}, { nombre_comercial: ' Acme ', descripcion: 'QA', excluir: 'consultoras\n\nestudios' }, OPERADO);
-  assert.deepEqual(e, { nombre_comercial: 'Acme', descripcion: 'QA', excluir: ['consultoras', 'estudios'] });
+  const e = aplicarCambiosEmpresa({}, { nombre_comercial: ' Acme ', descripcion: 'QA', firma: 'Equipo Acme' }, OPERADO);
+  assert.deepEqual(e, { nombre_comercial: 'Acme', descripcion: 'QA', firma: 'Equipo Acme' });
   assert.throws(() => aplicarCambiosEmpresa(e, { icp: 'x' }, BIGUA), /No existe el campo «icp»/);
+  for (const k of ['tono', 'idioma', 'excluir', 'prueba_social', 'objeciones', 'responsable_email']) {
+    assert.throws(() => aplicarCambiosEmpresa(e, { [k]: 'x' }, BIGUA), new RegExp(`No existe el campo «${k}»`));
+  }
   assert.throws(() => aplicarCambiosEmpresa(e, { acepta_mails_extrapolados: true }, OPERADO), /lo cambia Biguá/);
   assert.equal(aplicarCambiosEmpresa(e, { acepta_mails_extrapolados: true }, AUTO).acepta_mails_extrapolados, true);
   assert.equal(aplicarCambiosEmpresa(e, { descripcion: '' }, OPERADO).descripcion, undefined);
 });
 
-test('ajustes: campaña, links permitidos y casos elegidos de la biblioteca de Empresa', () => {
-  const empresa = { prueba_social: ['Banca: 5 días a 6 horas (caso publicado)', 'Retail: 40 % menos de regresión'] };
+test('ajustes: campaña, links permitidos y sus propios casos', () => {
   const c = aplicarCambiosCampana({}, {
     propuesta: 'Webinar de automatización', links_permitidos: 'https://acme.test/webinar\nhttps://acme.test/webinar',
-    prueba_social: ['Retail: 40 % menos de regresión'],
-  }, OPERADO, { empresa });
+    prueba_social: 'Retail: 40 % menos de regresión\n\nBanca: 5 días a 6 horas (caso publicado)',
+  }, OPERADO);
   assert.deepEqual(c.links_permitidos, ['https://acme.test/webinar']);
-  assert.deepEqual(c.prueba_social, ['Retail: 40 % menos de regresión']);
-  assert.throws(() => aplicarCambiosCampana(c, { prueba_social: ['Un caso inventado'] }, OPERADO, { empresa }), /no está en/);
+  assert.deepEqual(c.prueba_social, ['Retail: 40 % menos de regresión', 'Banca: 5 días a 6 horas (caso publicado)']);
   assert.throws(() => aplicarCambiosCampana(c, { links_permitidos: 'http://acme.test' }, OPERADO), /https:\/\//);
   assert.throws(() => aplicarCambiosCampana(c, { links_permitidos: ['https://a.test', 'https://b.test', 'https://c.test', 'https://d.test'] },
     OPERADO), /máximo es 3/);
@@ -124,48 +128,80 @@ test('ajustes: el volumen de las activas no pasa el tope del cliente (decisión 
 test('ajustes: lo que falta para activar una campaña', () => {
   const empresa = { nombre_comercial: 'Acme' };
   const vacia = { tipo: 'prospeccion', ajustes: {}, buzones: [], cuentas_por_dia: 0 };
-  assert.deepEqual(faltantesParaActivar(vacia, empresa).map((f) => f.clave), ['propuesta', 'icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia']);
+  assert.deepEqual(faltantesParaActivar(vacia, empresa).map((f) => f.clave), ['propuesta', 'icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia',
+    'responsable_positivos', 'responsable_email', 'idioma']);
 
-  const lista = { tipo: 'prospeccion', ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'] },
+  const lista = { tipo: 'prospeccion', ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'],
+    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@acme.test', idioma: 'español' },
     buzones: ['00000000-0000-0000-0000-000000000001'], cuentas_por_dia: 5 };
   assert.deepEqual(faltantesParaActivar(lista, empresa), []);
+  // Quién toma a los interesados es de la campaña: el de Empresa ya no cuenta.
+  const sinResponsable = { ...lista, ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'], idioma: 'inglés' } };
+  assert.deepEqual(faltantesParaActivar(sinResponsable, { ...empresa, responsable_positivos: 'Ana', responsable_email: 'ana@acme.test' })
+    .map((f) => f.clave), ['responsable_positivos', 'responsable_email']);
   assert.deepEqual(faltantesParaActivar(lista, {}).map((f) => f.clave), ['nombre_comercial']);
 
   const evento = { ...lista, tipo: 'evento' };
   assert.deepEqual(faltantesParaActivar(evento, empresa).map((f) => f.clave), ['fin', 'links_permitidos']);
   // La reactivación no necesita audiencia: trabaja sobre prospectos propios.
-  const reac = { ...lista, tipo: 'reactivacion', ajustes: { propuesta: 'Retomar' } };
+  const reac = { ...lista, tipo: 'reactivacion', ajustes: { propuesta: 'Retomar', responsable_positivos: 'Ana', responsable_email: 'ana@acme.test', idioma: 'español' } };
   assert.deepEqual(faltantesParaActivar(reac, empresa), []);
 });
 
-test('ajustes: lo que leen los bots, Empresa con la campaña encima', () => {
+test('ajustes: lo que leen los bots, quién es la empresa y lo de la campaña', () => {
+  // Lo que quede en Empresa de antes de la 024 (la CLI, una versión vieja) no llega a los bots: sólo
+  // cuenta lo de la campaña.
   const empresa = {
     nombre_comercial: 'Acme', descripcion: 'QA', firma: 'Equipo Acme', tono: 'formal', idioma: 'español',
     excluir: ['consultoras'], objeciones: ['Caro: vale la pena'], prueba_social: ['Caso A', 'Caso B'],
-    link_agenda: 'https://acme.test/agenda', acepta_mails_extrapolados: false,
+    responsable_email: 'ana@acme.test', link_agenda: 'https://acme.test/agenda', acepta_mails_extrapolados: false,
   };
   const campana = {
-    propuesta: 'Webinar', tono: 'cercano', excluir: ['consultoras', 'estudios'], prueba_social: ['Caso B'],
+    propuesta: 'Webinar', tono: 'cercano', idioma: 'inglés', excluir: ['estudios'], prueba_social: ['Caso C'],
+    responsable_positivos: 'John Doe', responsable_email: 'john@acme.test',
     acepta_mails_extrapolados: true, links_permitidos: ['https://acme.test/webinar'],
   };
   const { valores, origen } = ajustesEfectivos(empresa, campana, 'evento');
   assert.equal(valores.tono, 'cercano');
   assert.equal(origen.tono, 'campana');
-  assert.equal(valores.idioma, 'español');
-  assert.equal(origen.idioma, 'empresa');
+  assert.equal(valores.idioma, 'inglés');
   assert.equal(valores.acepta_mails_extrapolados, true);
-  assert.deepEqual(valores.excluir, ['consultoras', 'estudios']);
-  assert.equal(origen.excluir, 'ambas');
-  assert.deepEqual(valores.objeciones, ['Caro: vale la pena']);
-  assert.equal(origen.objeciones, 'empresa');
-  assert.deepEqual(valores.prueba_social, ['Caso B']);
+  assert.deepEqual(valores.excluir, ['estudios']);
+  assert.equal(origen.excluir, 'campana');
+  assert.equal(valores.objeciones, undefined);
+  assert.deepEqual(valores.prueba_social, ['Caso C']);
+  assert.equal(valores.responsable_email, 'john@acme.test');
+  assert.equal(valores.link_agenda, undefined);
   assert.equal(valores.firma, 'Equipo Acme');
   assert.equal(valores.llamado_accion, 'Inscribirse con el link.');
   assert.equal(origen.llamado_accion, 'tipo');
   assert.equal(Object.keys(valores)[0], 'nombre_comercial');
 
-  // Sin casos elegidos, la campaña cita todos.
-  assert.deepEqual(ajustesEfectivos(empresa, {}).valores.prueba_social, ['Caso A', 'Caso B']);
-  // Un caso que se borró de Empresa deja de citarse, aunque la campaña lo tenga elegido.
-  assert.equal(ajustesEfectivos({ prueba_social: ['Caso A'] }, { prueba_social: ['Caso B'] }).valores.prueba_social, undefined);
+  // Sin nada propio, la campaña no toma el tono ni los casos de Empresa; los mails deducidos, sí.
+  const sola = ajustesEfectivos(empresa, {}).valores;
+  for (const k of ['tono', 'idioma', 'prueba_social', 'objeciones', 'excluir', 'responsable_email']) assert.equal(sola[k], undefined, k);
+  assert.equal(sola.acepta_mails_extrapolados, false);
+});
+
+test('ajustes: CAN-SPAM, el pie del mail en el idioma de la campaña', () => {
+  for (const [t, e] of [['Inglés', 'en'], ['English (US)', 'en'], ['en-US', 'en'], ['Español, de vos en Argentina', 'es'],
+    ['español; inglés si contestan en inglés', 'es'], [undefined, 'es']]) assert.equal(idiomaCorto(t), e, t);
+  assert.equal(pieDelMail({ idioma: 'Inglés', direccion_postal: '1 Main St' }), null, 'sin CAN-SPAM, sin pie');
+  assert.equal(pieDelMail({ can_spam: true }), null, 'sin dirección no hay pie (la campaña no se activa)');
+  const en = pieDelMail({ can_spam: true, idioma: 'English', nombre_comercial: 'Lo que escribió el cliente', direccion_postal: 'Crombie LLC\n1 Main St\nMiami, FL 33131' });
+  assert.deepEqual([en.idioma, en.asuntoBaja], ['en', 'unsubscribe']);
+  assert.match(en.texto, /^Crombie LLC, 1 Main St, Miami, FL 33131\nIf you would rather not hear from us, just reply "unsubscribe"/);
+  assert.doesNotMatch(en.texto, /cliente/, 'el pie lleva sólo lo que carga Biguá: sale sin la aprobación de cada mail');
+  // La dirección la carga Biguá, y sin links (el pie no pasa por el control de links).
+  assert.throws(() => aplicarCambiosEmpresa({}, { direccion_postal: '1 Main St' }, AUTO), /lo cambia Biguá/);
+  assert.throws(() => aplicarCambiosEmpresa({}, { direccion_postal: '1 Main St https://x.test' }, BIGUA), /no lleva links/);
+  assert.equal(aplicarCambiosEmpresa({}, { direccion_postal: 'Crombie LLC, 1 Main St' }, BIGUA).direccion_postal, 'Crombie LLC, 1 Main St');
+  assert.match(pieDelMail({ can_spam: true, idioma: 'español', direccion_postal: 'Calle 1' }).texto, /responda «baja»/);
+
+  // Activar una campaña con CAN-SPAM pide la dirección postal de Empresa.
+  const k = { tipo: 'reactivacion', buzones: ['00000000-0000-0000-0000-000000000001'], cuentas_por_dia: 5,
+    ajustes: { propuesta: 'X', idioma: 'English', responsable_positivos: 'Ana', responsable_email: 'ana@x.test', can_spam: true } };
+  assert.deepEqual(faltantesParaActivar(k, { nombre_comercial: 'Acme' }).map((f) => [f.bloque, f.clave]), [['empresa', 'direccion_postal']]);
+  assert.deepEqual(faltantesParaActivar(k, { nombre_comercial: 'Acme', direccion_postal: '1 Main St' }), []);
+  assert.throws(() => aplicarCambiosCampana({}, { can_spam: true }, OPERADO), /lo cambia Biguá/);
 });

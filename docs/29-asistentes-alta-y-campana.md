@@ -12,20 +12,19 @@ los dos asistentes que ordenan esa carga y dejan pausar lo que todavía no está
 | Orden | Primero se configura el cliente (alta); la campaña tiene su propio asistente, que se recorre cada vez que se crea una |
 | Pausa | Un paso o un campo puede quedar «esperando una definición», con qué falta y quién lo define. Sin recordatorios por mail: lo pendiente se ve en el panel |
 | Dónde se guarda | Cada paso guarda donde ya guardaba el panel (ajustes de Empresa, campaña, buzones, tokens…). El asistente no tiene una copia propia de los datos |
+| Qué es de la empresa y qué de la campaña | Empresa es sólo quién es (nombre, qué hace, firma por defecto, mails deducidos) y «No contactar». Cómo habla (idioma y tono), los casos, las objeciones, las exclusiones y quién toma a los interesados son de cada campaña (migración `024`, `21` §6.2): una campaña en inglés y otra en español, o un AM por vertical o por territorio, no comparten nada de eso. Lo que se repite se copia con **Duplicar** |
 
 ## Alta del cliente
 
 Pestaña **Alta** de la ficha del cliente (sólo Biguá). «Nuevo cliente» la abre sola. Mientras no
-esté completa, el Resumen muestra «Alta: N de 16 pasos listos».
+esté completa, el Resumen muestra «Alta: N de 14 pasos listos».
 
 | Etapa | Paso | Queda listo cuando | Se puede marcar «no aplica» |
 |---|---|---|---|
 | Cuenta | Activar el SDR | El SDR está activado | |
 | | Usuario del cliente | Tiene al menos un usuario | Sí |
-| La empresa | Quién es y cómo habla | Tiene nombre comercial y qué hace la empresa | |
-| | Casos y objeciones | Se marca hecho | Sí |
-| | Interesados y derivación | Tiene quién toma a los interesados y su mail (`26`) | |
-| | A quién no escribirle | Se marca hecho (incluye «No contactar») | Sí |
+| La empresa | Quién es | Tiene nombre comercial y qué hace la empresa (y, si van, la dirección postal para EE.UU. y la firma por defecto) | |
+| | A quién no escribirle nunca | Se marca hecho: «No contactar» y si se aceptan mails deducidos | Sí |
 | Correo | Buzones | Hay un buzón activo que pasó la prueba | |
 | | Dominios | Los dominios de los buzones están verificados y sin errores | |
 | Canales | LinkedIn · Dripify | La API key está cargada y probada, sin error | Sí |
@@ -41,6 +40,10 @@ Cada paso muestra qué preguntarle al cliente, qué le falta y, debajo, el mismo
 tarjeta que en el resto del panel. Los pasos que se comprueban con datos no se pueden marcar listos
 a mano. Los que pasan fuera del panel (ASCI, Grok, routines) traen su lista de `15`.
 
+Los pasos «Casos y objeciones» e «Interesados y derivación» y el tono y el idioma de «Quién es y cómo
+habla» salieron del alta en la `024`: se cargan en el asistente de cada campaña («Qué ofrecemos»,
+«Mensaje», «Respuestas e interesados»). Las marcas que tenían en el alta se borraron.
+
 El **resumen del alta** junta lo que espera una definición (pasos y campos, con quién lo define) y
 lo que falta hacer. Completa el alta, lleva al asistente de la primera campaña en borrador.
 
@@ -53,11 +56,11 @@ campaña.
 | Paso | Secciones de la campaña |
 |---|---|
 | Objetivo | Tipo, nombre y fechas |
-| Para quién | A quién se le escribe, cargos, exclusiones y señal |
+| Para quién | A quién se le escribe, cargos, tipos de empresa y cargos a evitar, y señal |
 | Cuentas | En una «Lista del cliente», la lista de cuentas a prospectar (obligatoria); en las demás, las cuentas modelo del ICP (opcional). Se cargan por Excel o CSV (`27`) |
-| Qué ofrecemos | Propuesta y casos que se citan |
-| Mensaje y llamado a la acción | Qué se le pide al prospecto, links, tono e idioma |
-| Respuestas e interesados | Positivos, objeciones y quién toma a los interesados si no es el de Empresa |
+| Qué ofrecemos | Propuesta y los casos y datos que se pueden citar, con su fuente |
+| Mensaje y llamado a la acción | Idioma (obligatorio para activarla) y tono, qué se le pide al prospecto, links y, si va a EE.UU., «Envíos a EE.UU. (CAN-SPAM)» (lo marca Biguá; pide la dirección postal de Empresa) |
+| Respuestas e interesados | Positivos, objeciones y quién toma a los interesados: nombre, mail (obligatorios para activarla, `26`), otros responsables según el interesado («condición: Nombre <mail>», por ejemplo un AM por país o vertical) y link de agenda |
 | Canales y ritmo | Buzones, cuentas por día, la campaña de Dripify (vacía, la por defecto de la cuenta) y calibración |
 | Revisar y activar | Lo que falta para activarla, lo pendiente y cómo la leen los bots |
 
@@ -80,7 +83,7 @@ lo dicen. El rol del portal sólo ve y escribe las filas de las campañas de su 
 
 | Ruta | Qué hace |
 |---|---|
-| `GET /admin/api/clients/:client/asistente/alta` | Los 16 pasos con su estado calculado, qué les falta y lo pendiente (sólo Biguá) |
+| `GET /admin/api/clients/:client/asistente/alta` | Los 14 pasos con su estado calculado, qué les falta y lo pendiente (sólo Biguá) |
 | `GET /admin/api/clients/:client/asistente/campana:<id>` | Los pasos y campos pausados de una campaña |
 | `PUT /admin/api/clients/:client/asistente/:ambito/:paso` | `{ estado: "esperando" \| "listo" \| "no_aplica" \| null, que, quien }` |
 
@@ -103,11 +106,11 @@ Cada dato vive en un solo lugar, según quién lo carga y para qué:
 
 El alta también se carga desde Claude, con el MCP del panel (`docs/24` §4.4): `alta_cargar` recibe
 las respuestas de la llamada de inicio en una sola ficha y hace lo mismo que este asistente, con las
-mismas operaciones; `alta_ver` muestra los 16 pasos como acá. Sólo para Biguá.
+mismas operaciones; `alta_ver` muestra los 14 pasos como acá. Sólo para Biguá.
 
 | Cómo llega cada paso desde Claude | Pasos |
 |---|---|
-| Con la ficha | Activar el SDR, Usuario del cliente, Quién es y cómo habla, Casos y objeciones, Interesados y derivación, A quién no escribirle (con No contactar), WhatsApp (las reglas del turno) |
+| Con la ficha | Activar el SDR, Usuario del cliente, Quién es, A quién no escribirle nunca (con No contactar), WhatsApp (las reglas del turno). El tono, el idioma, los casos, las objeciones, las exclusiones y quién toma a los interesados van en la `campana` de la ficha |
 | Se marca listo a mano | Usuario de ASCI, Cuenta de Grok Bot, Routines |
 | No pasa por el chat | Buzones (contraseña), Dominios (después de los buzones; después se verifican con `dominio_verificar`), LinkedIn (API key), CRM (token o planilla), Token del gateway, Despertadores (clave del webhook) |
 

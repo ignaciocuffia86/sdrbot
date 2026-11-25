@@ -44,7 +44,6 @@ before(async () => {
   await buzon(DARIO);
   await q(`insert into sdr.cliente_config (client_id, calibracion_mails, ajustes, tope_cuentas_dia) values ($1, 0, $2, 20)`, [C, {
     nombre_comercial: 'Cliente C', firma: 'Equipo C · https://www.cliente-c.test',
-    link_agenda: 'https://agenda.test/cliente-c',
   }]);
   k.principal = (await q(`select * from sdr.campana where client_id = $1 and clave = 'principal'`, [C])).rows[0];
   // Un buzón que llega después de la «principal» entra en ella solo (migración 013).
@@ -52,7 +51,7 @@ before(async () => {
   k.webinar = (await q(
     `insert into sdr.campana (client_id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails, ajustes)
      values ($1, 'webinar', 'Webinar', 'evento', 'activa', 5, 1, $2) returning *`,
-    [C, { propuesta: 'Webinar', links_permitidos: ['https://cliente-c.test/webinar'] }])).rows[0];
+    [C, { propuesta: 'Webinar', links_permitidos: ['https://cliente-c.test/webinar'], link_agenda: 'https://agenda.test/cliente-c' }])).rows[0];
   await q(`insert into sdr.campana_buzon (client_id, campana_id, account_id)
            select $1, $2, id from mailgw.account where client_id = $1 and email = $3`, [C, k.webinar.id, BETO]);
   k.otra = (await q(
@@ -194,6 +193,37 @@ test('campañas MCP: la campaña de un mail sale de sus destinatarios, no del pr
   // A alguien que no es prospecto, como antes.
   await ok('send', { ...base, mailbox: DARIO, to: 'alguien@fuera.test', text: 'Hola', idempotency_key: 'fuera:mail-1' });
   await q(`update sdr.campana set calibracion_mails = 1 where id = $1`, [k.webinar.id]);
+});
+
+test('campañas MCP: CAN-SPAM, el pie y la baja en el idioma de la campaña', async () => {
+  const qp = (raw) => Buffer.from(raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))), 'latin1').toString('utf8');
+  const antes = (await q(`select ajustes from sdr.campana where id = $1`, [k.webinar.id])).rows[0].ajustes;
+  await q(`update sdr.cliente_config set ajustes = ajustes || $2 where client_id = $1`, [C, { direccion_postal: 'Cliente C LLC\n1234 Main St\nMiami, FL 33131' }]);
+  await q(`update sdr.campana set ajustes = ajustes || '{"can_spam": true, "idioma": "English (US)"}' where id = $1`, [k.webinar.id]);
+  try {
+    const n = smtp.received.length;
+    await ok('send', MAIL({ text: 'Hi Ana,\nare you joining the webinar?', subject: 'QA webinar', idempotency_key: 'ana:mail-canspam' }));
+    assert.equal(smtp.received.length, n + 1);
+    const raw = smtp.received.at(-1).raw;
+    assert.match(raw, /^List-Unsubscribe: <mailto:beto@[^?]+\?subject=unsubscribe>/m);
+    const cuerpo = qp(raw);
+    assert.match(cuerpo, /are you joining the webinar\?\r?\n\r?\n--\r?\nCliente C LLC, 1234 Main St, Miami, FL 33131\r?\nIf you would rather not hear from us, just reply "unsubscribe"/);
+    // Contestar «STOP» es una baja.
+    const { esBaja } = await import('../src/sdr/correo.mjs');
+    for (const t of ['STOP', 'Opt out', 'please remove me', 'Unsubscribe me.']) assert.ok(esBaja({ subject: 'Re: QA webinar', reply_text: t }), t);
+    assert.ok(!esBaja({ subject: 'Re: QA webinar', reply_text: 'Stop by our booth!' }));
+    // Si la dirección se borra con la campaña ya activa, no sale nada sin el pie.
+    await q(`update sdr.cliente_config set ajustes = ajustes - 'direccion_postal' where client_id = $1`, [C]);
+    const sinDireccion = await call('send', MAIL({ text: 'Hi Ana', subject: 'QA webinar', idempotency_key: 'ana:mail-sin-direccion' }));
+    assert.equal(sinDireccion.error?.code, 'sin_direccion_postal', JSON.stringify(sinDireccion));
+    assert.equal(smtp.received.length, n + 1, 'no salió');
+  } finally {
+    await q(`update sdr.campana set ajustes = $2 where id = $1`, [k.webinar.id, antes]);
+    await q(`update sdr.cliente_config set ajustes = ajustes - 'direccion_postal' where client_id = $1`, [C]);
+  }
+  // Sin CAN-SPAM, el mail sale como lo escribió el bot.
+  await ok('send', MAIL({ text: 'Hola Ana, último recordatorio', subject: 'Webinar', idempotency_key: 'ana:mail-sin-pie' }));
+  assert.doesNotMatch(smtp.received.at(-1).raw, /List-Unsubscribe|rather not hear/);
 });
 
 test('campañas MCP: una campaña en pausa no manda mails nuevos ni toma personas nuevas', async () => {

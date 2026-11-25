@@ -22,19 +22,17 @@ before(async () => {
 const FICHA = {
   cliente: { id: ID, nombre: 'Alta MCP SA' },
   sdr: { modo: 'operado', aprueba: 'cliente_y_bigua', bots_activos: ['orquestador', 'prospector', 'seguimiento'], calibracion_mails: 10 },
-  empresa: {
-    nombre_comercial: 'Alta MCP', descripcion: 'Hacemos testing de software para bancos.',
-    tono: 'Cercano, técnico, sin exagerar.', idioma: 'Español, de vos',
-    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@altamcp.test',
-    prueba_social: ['Banca: regresión de 5 días a 6 horas (caso publicado)'],
-    excluir: ['Consultoras de testing'],
-  },
+  empresa: { nombre_comercial: 'Alta MCP', descripcion: 'Hacemos testing de software para bancos.' },
   usuarios: [{ email: 'ana@altamcp.test', nombre: 'Ana Pérez' }],
   no_contactar: [{ valor: 'competidor.test', motivo: 'competencia' }, { valor: 'Banco Amigo SA' }],
   campana: { nombre: 'Bancos 2027', tipo: 'prospeccion', cuentas_por_dia: 5,
-    ajustes: { propuesta: 'Regresión automatizada para core bancario.', roles_objetivo: ['Head of QA', 'CTO'] } },
+    // Cómo habla, los casos, las exclusiones y quién toma a los interesados son de la campaña (migración 024).
+    ajustes: { propuesta: 'Regresión automatizada para core bancario.', roles_objetivo: ['Head of QA', 'CTO'],
+      tono: 'Cercano, técnico, sin exagerar.', idioma: 'Español, de vos',
+      responsable_positivos: 'Ana Pérez', responsable_email: 'ana@altamcp.test',
+      prueba_social: ['Banca: regresión de 5 días a 6 horas (caso publicado)'], excluir: ['Consultoras de testing'] } },
   pasos: { asci: { estado: 'listo' }, whatsapp: { estado: 'no_aplica' }, crm: { estado: 'esperando', que: 'Si usan HubSpot o planilla', quien: 'el cliente' } },
-  campos_pendientes: { link_agenda: { que: 'El link de Calendly de Ana', quien: 'Ana' } },
+  campos_pendientes: { firma: { que: 'La firma de los buzones nuevos', quien: 'Ana' } },
 };
 
 test('la vista previa arma el plan y no crea nada', async () => {
@@ -49,11 +47,14 @@ test('la vista previa arma el plan y no crea nada', async () => {
 });
 
 test('un dato inválido frena todo y no se carga nada', async () => {
-  const mala = { ...FICHA, empresa: { ...FICHA.empresa, responsable_email: 'no-es-un-mail' },
+  const mala = { ...FICHA, campana: { ...FICHA.campana, ajustes: { ...FICHA.campana.ajustes, responsable_email: 'no-es-un-mail' } },
     pasos: { empresa: { estado: 'listo' } } };
   const r = await S.altaCargar({ user: op, body: { ficha: mala, confirmar: true } });
   assert.equal(r.aplicado, false);
   assert.ok(r.errores.some((e) => /Mail de quien toma/.test(e)), r.errores.join(' | '));
+  // Lo que es de la campaña no entra por Empresa.
+  await assert.rejects(S.altaCargar({ user: op, body: { ficha: { ...FICHA, empresa: { ...FICHA.empresa, tono: 'Cercano' } } } }),
+    (e) => e.code === 'invalid_request');
   assert.ok(r.errores.some((e) => /queda listo solo/.test(e)), 'un paso con datos no se marca listo a mano');
   assert.equal((await q(`select count(*)::int as n from mailgw.client where id = $1`, [ID])).rows[0].n, 0);
   await assert.rejects(S.altaCargar({ user: op, body: { ficha: { ...FICHA, empresa: { inventado: 'x' } } } }),
@@ -68,7 +69,7 @@ test('con confirmar carga lo mismo que el asistente y dice lo que no pasa por el
   assert.equal(cfg.aprueba, 'cliente_y_bigua');
   assert.equal(cfg.calibracion_mails, 10);
   assert.equal(cfg.ajustes.nombre_comercial, 'Alta MCP');
-  assert.equal(cfg.ajustes.responsable_email, 'ana@altamcp.test');
+  assert.equal(cfg.ajustes.responsable_email, undefined, 'quién toma a los interesados es de la campaña');
   const u = (await q(`select client_id, role from mailgw.admin_user where email = 'ana@altamcp.test'`)).rows[0];
   assert.deepEqual([u.client_id, u.role], [ID, 'client_admin']);
   assert.ok(!JSON.stringify(r).includes('setup_token'), 'el enlace de activación no vuelve por el chat');
@@ -78,11 +79,14 @@ test('con confirmar carga lo mismo que el asistente y dice lo que no pasa por el
   assert.equal(k.estado, 'borrador');
   assert.equal(k.cuentas_por_dia, 5);
   assert.deepEqual(k.ajustes.roles_objetivo, ['Head of QA', 'CTO']);
+  assert.equal(k.ajustes.responsable_email, 'ana@altamcp.test');
+  assert.equal(k.ajustes.idioma, 'Español, de vos');
+  assert.deepEqual(k.ajustes.prueba_social, ['Banca: regresión de 5 días a 6 horas (caso publicado)']);
 
   const pasos = Object.fromEntries(r.alta.pasos.map((p) => [p.clave, p]));
   assert.equal(pasos.sdr.estado, 'listo');
-  assert.equal(pasos.empresa.estado, 'listo');
-  assert.equal(pasos.interesados.estado, 'esperando', 'link_agenda quedó pendiente, y es de «Interesados»');
+  assert.equal(pasos.empresa.estado, 'esperando', 'la firma quedó pendiente, y es de «Quién es»');
+  assert.equal(pasos.interesados, undefined, 'quién toma a los interesados se carga en la campaña');
   assert.equal(pasos.asci.estado, 'listo');
   assert.equal(pasos.whatsapp.estado, 'no_aplica');
   assert.equal(pasos.crm.estado, 'esperando');
@@ -95,17 +99,17 @@ test('con confirmar carga lo mismo que el asistente y dice lo que no pasa por el
 });
 
 test('volver a llamar con más respuestas completa sin duplicar', async () => {
-  const mas = { ...FICHA, empresa: { ...FICHA.empresa, link_agenda: 'https://calendly.com/ana' }, campos_pendientes: undefined };
+  const mas = { ...FICHA, empresa: { ...FICHA.empresa, firma: 'Ana Pérez · Alta MCP' }, campos_pendientes: undefined };
   delete mas.campos_pendientes;
   const previa = await S.altaCargar({ user: op, body: { ficha: mas } });
   assert.ok(previa.plan.some((p) => p.paso === 'cliente' && p.sin_cambios));
   assert.ok(previa.plan.some((p) => p.paso === 'campana' && p.sin_cambios));
-  assert.ok(previa.plan.some((p) => p.paso === 'empresa' && /Link de agenda/.test(p.que)));
+  assert.ok(previa.plan.some((p) => p.paso === 'empresa' && /Firma por defecto/.test(p.que)));
   const r = await S.altaCargar({ user: op, body: { ficha: mas, confirmar: true } });
   assert.ok(!r.hecho.includes('cliente') && !r.hecho.includes('campana'));
   assert.equal((await q(`select count(*)::int as n from sdr.campana where client_id = $1 and nombre = 'Bancos 2027'`, [ID])).rows[0].n, 1);
   assert.equal((await q(`select count(*)::int as n from sdr.no_contactar where client_id = $1`, [ID])).rows[0].n, 2);
-  assert.equal((await q(`select ajustes->>'link_agenda' as l from sdr.cliente_config where client_id = $1`, [ID])).rows[0].l, 'https://calendly.com/ana');
+  assert.equal((await q(`select ajustes->>'firma' as l from sdr.cliente_config where client_id = $1`, [ID])).rows[0].l, 'Ana Pérez · Alta MCP');
   // El campo sigue esperando hasta que se lo saca de pendientes (como en el panel: «Ya está definido»).
   await S.altaCargar({ user: op, body: { ficha: { cliente: FICHA.cliente, pasos: { crm: { estado: 'no_aplica' } } }, confirmar: true } });
   assert.equal((await S.altaVer({ user: op, params: { client: ID } })).pasos.find((p) => p.clave === 'crm').estado, 'no_aplica');
