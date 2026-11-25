@@ -35,8 +35,10 @@ const DEF = {
     ayuda: 'Cómo se escribe en esta campaña: formal o cercano, técnico o comercial, qué evitar.' },
   idioma: { titulo: 'Idioma y trato', tipo: 'texto', max: 200, cliente: true,
     ayuda: 'En qué idioma se escribe en esta campaña y cómo se trata al prospecto. Por ejemplo: español, de vos en Argentina y de usted en Chile; o inglés. Hace falta para activarla.' },
-  direccion_postal: { titulo: 'Dirección postal', tipo: 'parrafo', max: 300, cliente: true,
-    ayuda: 'La dirección física de la empresa, como va al pie de los mails a EE.UU. (la ley CAN-SPAM la exige). Por ejemplo: «1234 Main St, Suite 100, Miami, FL 33131, USA». Sólo se usa en las campañas con «Envíos a EE.UU. (CAN-SPAM)».' },
+  // La carga Biguá: va al pie de cada mail sin pasar por la aprobación de cada mensaje (Vercel
+  // Security Review #31). Sin links: el pie no pasa por el control de links de la campaña.
+  direccion_postal: { titulo: 'Dirección postal', tipo: 'parrafo', max: 300, cliente: false, sinLinks: true,
+    ayuda: 'El nombre legal y la dirección física de la empresa, como van al pie de los mails a EE.UU. (la ley CAN-SPAM los exige). Por ejemplo: «Crombie LLC · 1234 Main St, Suite 100, Miami, FL 33131, USA». Sin links. Sólo se usa en las campañas con «Envíos a EE.UU. (CAN-SPAM)».' },
   firma: { titulo: 'Firma por defecto', tipo: 'parrafo', max: 400, cliente: true,
     ayuda: 'Para los buzones que no tienen firma propia (la firma de cada buzón se carga en Canales → Correo).' },
   prueba_social: { titulo: 'Casos y datos que se pueden citar', tipo: 'lista', max: 300, maxItems: 15, cliente: true,
@@ -234,6 +236,7 @@ function limpiarValor(c, v) {
         throw invalido(`«${c.titulo}» tiene caracteres de control.`);
       }
       if (t.length > c.max) throw invalido(`«${c.titulo}» tiene ${t.length} caracteres; el máximo es ${c.max}.`);
+      if (c.sinLinks && /https?:|www\.|<|>/i.test(t)) throw invalido(`«${c.titulo}» no lleva links ni etiquetas.`);
       return t || undefined;
     }
     case 'lista': {
@@ -530,12 +533,13 @@ export const idiomaCorto = (idioma) => {
   return /ingl[eé]s|english|^en(-[a-z]{2})?\b/i.test(t) ? 'en' : 'es';
 };
 
-// El pie de un mail de una campaña con CAN-SPAM: quién manda, su dirección postal y cómo darse de
-// baja (contestando, que es lo que la memoria del correo reconoce como baja). null sin CAN-SPAM.
+// El pie de un mail de una campaña con CAN-SPAM: la dirección postal (con el nombre legal, la carga
+// Biguá) y cómo darse de baja (contestando, que es lo que la memoria del correo reconoce como baja).
+// Sólo lleva lo que carga Biguá: va sin pasar por la aprobación de cada mail. null sin CAN-SPAM.
 export function pieDelMail(valores = {}) {
   if (!valores.can_spam || !valores.direccion_postal) return null;
   const en = idiomaCorto(valores.idioma) === 'en';
-  const quien = [valores.nombre_comercial, valores.direccion_postal.replace(/\s*\n\s*/g, ', ')].filter(Boolean).join(' · ');
+  const quien = valores.direccion_postal.replace(/\s*\n\s*/g, ', ');
   const baja = en
     ? 'If you would rather not hear from us, just reply "unsubscribe" and we will not email you again.'
     : 'Si prefiere no recibir más correos, responda «baja» y no le volveremos a escribir.';

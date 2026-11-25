@@ -90,7 +90,7 @@ cambiaste. A la derecha, **«Así lo leen los bots»** muestra el resultado tal 
 |---|---|---|
 | Nombre comercial | Cómo se presenta tu empresa | BairesQA |
 | Qué hace la empresa | La descripción general, en dos o tres líneas | «QA funcional y automatizado como servicio, para web, mobile y API.» |
-| Dirección postal | Si se le escribe a EE.UU.: va al pie de esos mails, junto con cómo darse de baja (lo pide la ley CAN-SPAM) | «1234 Main St, Suite 100, Miami, FL 33131, USA» |
+| Dirección postal 🔒 | Si se le escribe a EE.UU.: el nombre legal y la dirección van al pie de esos mails, junto con cómo darse de baja (lo pide la ley CAN-SPAM). La carga Biguá: pasásela | «Crombie LLC · 1234 Main St, Suite 100, Miami, FL 33131, USA» |
 | Firma por defecto | Para los buzones sin firma propia (cada buzón tiene la suya en Canales) | «Equipo comercial · TuEmpresa» |
 
 **Cada campaña** (pestaña **Campañas**, con su asistente)

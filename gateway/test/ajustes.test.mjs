@@ -188,9 +188,14 @@ test('ajustes: CAN-SPAM, el pie del mail en el idioma de la campaña', () => {
     ['español; inglés si contestan en inglés', 'es'], [undefined, 'es']]) assert.equal(idiomaCorto(t), e, t);
   assert.equal(pieDelMail({ idioma: 'Inglés', direccion_postal: '1 Main St' }), null, 'sin CAN-SPAM, sin pie');
   assert.equal(pieDelMail({ can_spam: true }), null, 'sin dirección no hay pie (la campaña no se activa)');
-  const en = pieDelMail({ can_spam: true, idioma: 'English', nombre_comercial: 'Crombie', direccion_postal: '1 Main St\nMiami, FL 33131' });
+  const en = pieDelMail({ can_spam: true, idioma: 'English', nombre_comercial: 'Lo que escribió el cliente', direccion_postal: 'Crombie LLC\n1 Main St\nMiami, FL 33131' });
   assert.deepEqual([en.idioma, en.asuntoBaja], ['en', 'unsubscribe']);
-  assert.match(en.texto, /^Crombie · 1 Main St, Miami, FL 33131\nIf you would rather not hear from us, just reply "unsubscribe"/);
+  assert.match(en.texto, /^Crombie LLC, 1 Main St, Miami, FL 33131\nIf you would rather not hear from us, just reply "unsubscribe"/);
+  assert.doesNotMatch(en.texto, /cliente/, 'el pie lleva sólo lo que carga Biguá: sale sin la aprobación de cada mail');
+  // La dirección la carga Biguá, y sin links (el pie no pasa por el control de links).
+  assert.throws(() => aplicarCambiosEmpresa({}, { direccion_postal: '1 Main St' }, AUTO), /lo cambia Biguá/);
+  assert.throws(() => aplicarCambiosEmpresa({}, { direccion_postal: '1 Main St https://x.test' }, BIGUA), /no lleva links/);
+  assert.equal(aplicarCambiosEmpresa({}, { direccion_postal: 'Crombie LLC, 1 Main St' }, BIGUA).direccion_postal, 'Crombie LLC, 1 Main St');
   assert.match(pieDelMail({ can_spam: true, idioma: 'español', direccion_postal: 'Calle 1' }).texto, /responda «baja»/);
 
   // Activar una campaña con CAN-SPAM pide la dirección postal de Empresa.

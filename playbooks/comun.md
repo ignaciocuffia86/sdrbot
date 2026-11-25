@@ -195,7 +195,7 @@ usá la misma clave: el gateway devuelve el envío anterior en vez de mandar dos
 - **Firma:** la del buzón que manda el mail («Buzones y firmas» en los ajustes, o `firma` en
   `buzones`); si el buzón no tiene, la «Firma por defecto».
 - **CAN-SPAM:** si la campaña dice «Envíos a EE.UU. (CAN-SPAM)», el gateway agrega solo, debajo de
-  tu texto, el nombre y la dirección postal de la empresa y cómo darse de baja, en el idioma de la
+  tu texto, la dirección postal de la empresa y cómo darse de baja, en el idioma de la
   campaña. No los escribas vos, ni en el mail ni en la aprobación. Si alguien contesta «unsubscribe»,
   «STOP» o «baja», es una baja.
 

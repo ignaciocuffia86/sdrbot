@@ -198,7 +198,7 @@ test('campañas MCP: la campaña de un mail sale de sus destinatarios, no del pr
 test('campañas MCP: CAN-SPAM, el pie y la baja en el idioma de la campaña', async () => {
   const qp = (raw) => Buffer.from(raw.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))), 'latin1').toString('utf8');
   const antes = (await q(`select ajustes from sdr.campana where id = $1`, [k.webinar.id])).rows[0].ajustes;
-  await q(`update sdr.cliente_config set ajustes = ajustes || $2 where client_id = $1`, [C, { direccion_postal: '1234 Main St\nMiami, FL 33131' }]);
+  await q(`update sdr.cliente_config set ajustes = ajustes || $2 where client_id = $1`, [C, { direccion_postal: 'Cliente C LLC\n1234 Main St\nMiami, FL 33131' }]);
   await q(`update sdr.campana set ajustes = ajustes || '{"can_spam": true, "idioma": "English (US)"}' where id = $1`, [k.webinar.id]);
   try {
     const n = smtp.received.length;
@@ -207,7 +207,7 @@ test('campañas MCP: CAN-SPAM, el pie y la baja en el idioma de la campaña', as
     const raw = smtp.received.at(-1).raw;
     assert.match(raw, /^List-Unsubscribe: <mailto:beto@[^?]+\?subject=unsubscribe>/m);
     const cuerpo = qp(raw);
-    assert.match(cuerpo, /are you joining the webinar\?\r?\n\r?\n--\r?\nCliente C · 1234 Main St, Miami, FL 33131\r?\nIf you would rather not hear from us, just reply "unsubscribe"/);
+    assert.match(cuerpo, /are you joining the webinar\?\r?\n\r?\n--\r?\nCliente C LLC, 1234 Main St, Miami, FL 33131\r?\nIf you would rather not hear from us, just reply "unsubscribe"/);
     // Contestar «STOP» es una baja.
     const { esBaja } = await import('../src/sdr/correo.mjs');
     for (const t of ['STOP', 'Opt out', 'please remove me', 'Unsubscribe me.']) assert.ok(esBaja({ subject: 'Re: QA webinar', reply_text: t }), t);

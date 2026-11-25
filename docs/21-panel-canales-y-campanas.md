@@ -447,9 +447,10 @@ vertical), cada uno va con su condición en `derivacion` («condición: Nombre <
 
 **Envíos a EE.UU. (CAN-SPAM).** Una campaña con `can_spam` (lo marca Biguá) no se activa sin la
 `direccion_postal` de Empresa. A cada mail suyo, nuevo o respuesta, el gateway le agrega debajo del
-texto del bot el nombre comercial, la dirección y cómo darse de baja («reply "unsubscribe"» o
+texto del bot la dirección postal (con el nombre legal) y cómo darse de baja («reply "unsubscribe"» o
 «responda «baja»», según el idioma de la campaña), y la cabecera `List-Unsubscribe` con ese asunto.
-Se agrega después de controlar lo aprobado: la aprobación compara el texto del bot. La memoria del
+Se agrega después de controlar lo aprobado (la aprobación compara el texto del bot), por eso lleva sólo
+lo que carga Biguá: la dirección la edita Biguá, sin links (Vercel Security Review #31). La memoria del
 correo toma como baja «baja», «unsubscribe», «STOP», «opt out» y «remove me». La cita del original
 en una respuesta también va en el idioma de la campaña («On …, X wrote:»).
 
