@@ -23,7 +23,7 @@ esté completa, el Resumen muestra «Alta: N de 14 pasos listos».
 |---|---|---|---|
 | Cuenta | Activar el SDR | El SDR está activado | |
 | | Usuario del cliente | Tiene al menos un usuario | Sí |
-| La empresa | Quién es | Tiene nombre comercial y qué hace la empresa (y, si va, la firma por defecto) | |
+| La empresa | Quién es | Tiene nombre comercial y qué hace la empresa (y, si van, la dirección postal para EE.UU. y la firma por defecto) | |
 | | A quién no escribirle nunca | Se marca hecho: «No contactar» y si se aceptan mails deducidos | Sí |
 | Correo | Buzones | Hay un buzón activo que pasó la prueba | |
 | | Dominios | Los dominios de los buzones están verificados y sin errores | |
@@ -59,7 +59,7 @@ campaña.
 | Para quién | A quién se le escribe, cargos, tipos de empresa y cargos a evitar, y señal |
 | Cuentas | En una «Lista del cliente», la lista de cuentas a prospectar (obligatoria); en las demás, las cuentas modelo del ICP (opcional). Se cargan por Excel o CSV (`27`) |
 | Qué ofrecemos | Propuesta y los casos y datos que se pueden citar, con su fuente |
-| Mensaje y llamado a la acción | Idioma (obligatorio para activarla) y tono, qué se le pide al prospecto y links |
+| Mensaje y llamado a la acción | Idioma (obligatorio para activarla) y tono, qué se le pide al prospecto, links y, si va a EE.UU., «Envíos a EE.UU. (CAN-SPAM)» (lo marca Biguá; pide la dirección postal de Empresa) |
 | Respuestas e interesados | Positivos, objeciones y quién toma a los interesados: nombre, mail (obligatorios para activarla, `26`), otros responsables según el interesado («condición: Nombre <mail>», por ejemplo un AM por país o vertical) y link de agenda |
 | Canales y ritmo | Buzones, cuentas por día, la campaña de Dripify (vacía, la por defecto de la cuenta) y calibración |
 | Revisar y activar | Lo que falta para activarla, lo pendiente y cómo la leen los bots |

@@ -2283,7 +2283,7 @@ function pieNavegacion(anterior, siguiente, extra = []) {
 const GUIA_ALTA = {
   sdr: 'Antes de cargar nada: si lo opera Biguá o el cliente, quién aprueba los mensajes y cuántos mails se calibran.',
   usuario: 'Quién del cliente entra al panel. Recibe un enlace de un solo uso para elegir su contraseña.',
-  empresa: 'Cómo se presenta la empresa y qué hace en general, y la firma de los buzones que no tengan una propia. Cómo habla, los casos, las objeciones, a quién se evita y quién toma a los interesados se definen en cada campaña: una campaña en inglés y otra en español, o un responsable por vertical, no comparten nada de eso.',
+  empresa: 'Cómo se presenta la empresa y qué hace en general, su dirección postal si va a escribirle a EE.UU. (CAN-SPAM la pide al pie de cada mail), y la firma de los buzones que no tengan una propia. Cómo habla, los casos, las objeciones, a quién se evita y quién toma a los interesados se definen en cada campaña: una campaña en inglés y otra en español, o un responsable por vertical, no comparten nada de eso.',
   exclusiones: 'Las empresas o personas puntuales a las que no se les escribe nunca, desde ninguna campaña (clientes actuales, competidores, bajas), y si se escribe a mails deducidos. Los tipos de empresa y cargos a evitar van en cada campaña.',
   buzones: 'Las casillas de los dominios secundarios, cada una a nombre de una persona real del equipo del cliente, con su firma. Se prueban acá mismo.',
   dominios: 'SPF, DKIM y DMARC de cada dominio de envío: deciden si los mails llegan a la bandeja. Si algo está mal, la ayuda dice qué registro cargar.',
@@ -2497,7 +2497,7 @@ const PASOS_CAMPANA = [
   { clave: 'propuesta', titulo: 'Qué ofrecemos', bloques: ['propuesta'],
     guia: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora, y los casos y datos que se pueden citar, con su fuente. Si otra campaña ya los tiene, conviene duplicarla.' },
   { clave: 'mensajes', titulo: 'Mensaje y llamado a la acción', bloques: ['mensajes'],
-    guia: 'En qué idioma y con qué tono se escribe en esta campaña (el idioma hace falta para activarla), qué se le pide al prospecto al final del primer mail y qué links pueden ir.' },
+    guia: 'En qué idioma y con qué tono se escribe en esta campaña (el idioma hace falta para activarla), qué se le pide al prospecto al final del primer mail, qué links pueden ir y, si va a EE.UU., el pie de CAN-SPAM (dirección postal y baja, en el idioma de la campaña).' },
   { clave: 'respuestas', titulo: 'Respuestas e interesados', bloques: ['respuestas'],
     guia: 'Qué cuenta como positivo en esta campaña, las objeciones con su respuesta y quién toma a los interesados: su nombre y su casilla del dominio principal, que va en copia (docs/26), y el link de agenda. Si depende del interesado (un AM por país, por vertical), cada responsable con su condición en «Otros responsables».' },
   { clave: 'canales', titulo: 'Canales y ritmo', bloques: ['ritmo', 'avanzado'],

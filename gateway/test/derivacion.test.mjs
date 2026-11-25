@@ -131,6 +131,10 @@ test('replyFields: la copia pedida se suma sin repetir al destinatario ni al buz
   const f = replyFields({ email: BUZON }, original, { text: 'ok', quote: false, cc: [RESPONSABLE, 'juan@lead.test', BUZON] });
   assert.deepEqual(f.cc, [RESPONSABLE]);
   assert.equal(f.to.length, 1);
+  // La cita del original va en el idioma de la campaña.
+  const fecha = { ...original, date: '2026-11-03T13:00:00Z', text: 'Hi' };
+  assert.match(replyFields({ email: BUZON, timezone: 'UTC' }, fecha, { text: 'ok' }).text, /\n\nEl 03\/11\/2026 13:00, Juan <juan@lead\.test> escribió:\n> Hi$/);
+  assert.match(replyFields({ email: BUZON, timezone: 'UTC' }, fecha, { text: 'ok', idioma: 'en' }).text, /\n\nOn 11\/03\/2026 13:00, Juan <juan@lead\.test> wrote:\n> Hi$/);
 });
 
 // ---------------------------------------------------------------- de punta a punta

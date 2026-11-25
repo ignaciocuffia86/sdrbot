@@ -35,6 +35,8 @@ const DEF = {
     ayuda: 'Cómo se escribe en esta campaña: formal o cercano, técnico o comercial, qué evitar.' },
   idioma: { titulo: 'Idioma y trato', tipo: 'texto', max: 200, cliente: true,
     ayuda: 'En qué idioma se escribe en esta campaña y cómo se trata al prospecto. Por ejemplo: español, de vos en Argentina y de usted en Chile; o inglés. Hace falta para activarla.' },
+  direccion_postal: { titulo: 'Dirección postal', tipo: 'parrafo', max: 300, cliente: true,
+    ayuda: 'La dirección física de la empresa, como va al pie de los mails a EE.UU. (la ley CAN-SPAM la exige). Por ejemplo: «1234 Main St, Suite 100, Miami, FL 33131, USA». Sólo se usa en las campañas con «Envíos a EE.UU. (CAN-SPAM)».' },
   firma: { titulo: 'Firma por defecto', tipo: 'parrafo', max: 400, cliente: true,
     ayuda: 'Para los buzones que no tienen firma propia (la firma de cada buzón se carga en Canales → Correo).' },
   prueba_social: { titulo: 'Casos y datos que se pueden citar', tipo: 'lista', max: 300, maxItems: 15, cliente: true,
@@ -71,6 +73,8 @@ const DEF = {
     ayuda: 'Por ejemplo: «ventas@ para Argentina, info@ para Chile».' },
   acepta_mails_extrapolados: { titulo: 'Acepta mails extrapolados', tipo: 'si_no', autogestion: true,
     ayuda: 'Si se le escribe a un mail deducido del patrón de la empresa y no verificado.' },
+  can_spam: { titulo: 'Envíos a EE.UU. (CAN-SPAM)', tipo: 'si_no', cliente: false,
+    ayuda: 'Si los mails de esta campaña van a EE.UU.: el gateway les agrega al pie el nombre y la dirección postal de la empresa (Empresa) y cómo darse de baja, en el idioma de la campaña, y la cabecera List-Unsubscribe. La activa Biguá; sin dirección postal la campaña no se activa.' },
   acepta_mails_del_cliente: { titulo: 'Acepta los mails del archivo', tipo: 'si_no', autogestion: true,
     ayuda: 'En una campaña «Lista del cliente»: si el primer mail puede ir al mail que trae el archivo, sin verificarlo. Si no dice nada, sí.' },
 };
@@ -90,6 +94,7 @@ export const BLOQUES_EMPRESA = [
 export const CAMPOS_EMPRESA = armar([
   ['nombre_comercial', 'identidad'],
   ['descripcion', 'identidad'],
+  ['direccion_postal', 'identidad'],
   ['firma', 'voz'],
   ['acepta_mails_extrapolados', 'operacion'],
 ]);
@@ -130,6 +135,7 @@ export const CAMPOS_CAMPANA = armar([
   ['idioma', 'mensajes'],
   ['tono', 'mensajes'],
   ['links_permitidos', 'mensajes'],
+  ['can_spam', 'mensajes'],
   ['positivos', 'respuestas'],
   ['objeciones', 'respuestas'],
   ['responsable_positivos', 'respuestas'],
@@ -479,6 +485,9 @@ export function faltantesParaActivar(campana, empresa = {}) {
   if (!a.responsable_email) falta('respuestas', 'responsable_email', 'Falta el mail de quien toma a los interesados.');
   // Sin idioma, los bots escriben en español neutro: una campaña en inglés saldría mal sin que nadie lo note.
   if (!a.idioma) falta('mensajes', 'idioma', 'Falta en qué idioma se escribe.');
+  if (a.can_spam && !empresa.direccion_postal) {
+    falta('empresa', 'direccion_postal', 'Falta la dirección postal en Empresa: los mails a EE.UU. (CAN-SPAM) la llevan al pie.');
+  }
   if (!empresa.nombre_comercial) falta('empresa', 'nombre_comercial', 'Falta el nombre comercial en Empresa.');
   return faltan;
 }
@@ -495,9 +504,9 @@ export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion
   const origen = {};
   const poner = (k, v, o) => { if (v !== undefined) { valores[k] = v; origen[k] = o; } };
 
-  for (const k of ['nombre_comercial', 'descripcion', 'firma']) poner(k, e[k], 'empresa');
+  for (const k of ['nombre_comercial', 'descripcion', 'direccion_postal', 'firma']) poner(k, e[k], 'empresa');
   for (const k of ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos', 'dias_aviso', 'idioma', 'tono',
-    'links_permitidos', 'positivos', 'objeciones', 'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda',
+    'links_permitidos', 'can_spam', 'positivos', 'objeciones', 'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda',
     'acepta_mails_del_cliente']) {
     poner(k, c[k], 'campana');
   }
@@ -508,6 +517,29 @@ export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion
   const orden = new Map([...CAMPOS_EMPRESA, ...CAMPOS_CAMPANA].map((x, i) => [x.clave, i]));
   const claves = Object.keys(valores).sort((a, b) => (orden.get(a) ?? 99) - (orden.get(b) ?? 99));
   return { valores: Object.fromEntries(claves.map((k) => [k, valores[k]])), origen };
+}
+
+// ---------------------------------------------------------------- lo que el gateway agrega al mail
+
+// El idioma de lo que agrega el gateway (el pie, la cita de una respuesta, la baja): inglés si el
+// «Idioma y trato» de la campaña lo dice; si no, español. El texto del mail lo escribe el bot.
+// («Español, de vos en Argentina» es español: «en» suelto sólo cuenta al principio).
+export const idiomaCorto = (idioma) => {
+  const t = String(idioma ?? '').trim();
+  if (/^(es|espa[nñ]ol|castellano)\b/i.test(t)) return 'es';
+  return /ingl[eé]s|english|^en(-[a-z]{2})?\b/i.test(t) ? 'en' : 'es';
+};
+
+// El pie de un mail de una campaña con CAN-SPAM: quién manda, su dirección postal y cómo darse de
+// baja (contestando, que es lo que la memoria del correo reconoce como baja). null sin CAN-SPAM.
+export function pieDelMail(valores = {}) {
+  if (!valores.can_spam || !valores.direccion_postal) return null;
+  const en = idiomaCorto(valores.idioma) === 'en';
+  const quien = [valores.nombre_comercial, valores.direccion_postal.replace(/\s*\n\s*/g, ', ')].filter(Boolean).join(' · ');
+  const baja = en
+    ? 'If you would rather not hear from us, just reply "unsubscribe" and we will not email you again.'
+    : 'Si prefiere no recibir más correos, responda «baja» y no le volveremos a escribir.';
+  return { idioma: en ? 'en' : 'es', texto: `${quien}\n${baja}`, asuntoBaja: en ? 'unsubscribe' : 'BAJA' };
 }
 
 // ---------------------------------------------------------------- utilidades

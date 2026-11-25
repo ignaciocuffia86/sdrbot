@@ -90,12 +90,28 @@ async function onMailbox(ctx, email, fn) {
   }
 }
 
+// El pie de CAN-SPAM de la campaña (dirección postal y cómo darse de baja) al final del texto que
+// escribió el bot, antes de la cita en una respuesta, y la cabecera List-Unsubscribe con el asunto
+// de baja en el idioma de la campaña. Sin pie, sólo el asunto de baja según el idioma.
+const escaparHtml = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function conAgregado(args, agregado) {
+  const pie = agregado?.pie;
+  const asunto = pie?.asuntoBaja ?? (agregado?.idioma === 'en' ? 'unsubscribe' : undefined);
+  const out = { ...args, ...(asunto ? { unsubscribe_subject: asunto } : {}) };
+  if (!pie) return out;
+  out.unsubscribe_mailto = true;
+  if (args.text) out.text = `${args.text.replace(/\s+$/, '')}\n\n--\n${pie.texto}`;
+  if (args.html) out.html = `${args.html}<p style="color:#666;font-size:12px">${escaparHtml(pie.texto).replace(/\n/g, '<br>')}</p>`;
+  return out;
+}
+
 // Envío con idempotencia y cupo. La reserva se libera sólo si el servidor SMTP no aceptó
 // el mensaje: después de eso el envío existe y un reintento devuelve el mismo resultado.
 async function sendFlow(ctx, args, kind) {
   // Calibración y aprobaciones exigidas: se controla antes de tocar el buzón. La supresión y el
   // estado de quien recibe se controlan con los destinatarios ya armados, antes del SMTP.
-  const { aprobacion, campanaId, cc } = await sdr.controlarEnvio(ctx.clientId, args, kind);
+  const { aprobacion, campanaId, cc, agregado } = await sdr.controlarEnvio(ctx.clientId, args, kind);
+  const extra = conAgregado(args, agregado);
   return onMailbox(ctx, args.mailbox, async (account, password) => {
     const today = dayIn(account.timezone);
     const res = await store.reserveSend(account, args.idempotency_key, today, kind);
@@ -134,14 +150,15 @@ async function sendFlow(ctx, args, kind) {
       if (kind === 'reply') {
         await withImap(account, password, async (client) => {
           const original = await originalForReply(client, args.folder, args.uid);
-          built = await buildMessage(account, replyFields(account, original, { ...args, cc }));
+          built = await buildMessage(account, { ...replyFields(account, original, { ...extra, cc, idioma: agregado?.idioma }),
+            unsubscribe_mailto: extra.unsubscribe_mailto, unsubscribe_subject: extra.unsubscribe_subject });
           await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
           smtp = await sendRaw(account, password, built);
           smtpDone = true;
           await afterSend(client);
         });
       } else {
-        built = await buildMessage(account, args);
+        built = await buildMessage(account, extra);
         await controlarDestinatarios(ctx.clientId, built.recipients, kind, args.prospecto_id, campanaId);
         smtp = await sendRaw(account, password, built);
         smtpDone = true;

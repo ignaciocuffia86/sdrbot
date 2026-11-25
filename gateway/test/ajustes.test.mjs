@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CAMPOS, CAMPOS_EMPRESA, CAMPOS_CAMPANA, HEREDABLES, DE_CAMPANA_DESDE_024, aplicarCambiosEmpresa, aplicarCambiosCampana,
-  aplicarColumnasCampana, faltantesParaActivar, ajustesEfectivos,
+  aplicarColumnasCampana, faltantesParaActivar, ajustesEfectivos, idiomaCorto, pieDelMail,
 } from '../src/sdr/ajustes.mjs';
 
 const BIGUA = { esBigua: true };
@@ -17,9 +17,9 @@ const claves = (campos) => campos.map((c) => c.clave);
 test('ajustes: cada campo vive en su nivel', () => {
   // Empresa es sólo quién es (migración 024): cómo habla, los casos, las objeciones, las exclusiones y
   // quién toma a los interesados son de cada campaña.
-  assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'firma', 'acepta_mails_extrapolados']);
+  assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'direccion_postal', 'firma', 'acepta_mails_extrapolados']);
   assert.deepEqual(claves(CAMPOS_CAMPANA), ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos',
-    'dias_aviso', 'llamado_accion', 'idioma', 'tono', 'links_permitidos', 'positivos', 'objeciones',
+    'dias_aviso', 'llamado_accion', 'idioma', 'tono', 'links_permitidos', 'can_spam', 'positivos', 'objeciones',
     'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
   for (const k of DE_CAMPANA_DESDE_024) assert.ok(!claves(CAMPOS_EMPRESA).includes(k) && claves(CAMPOS_CAMPANA).includes(k), k);
   assert.deepEqual(HEREDABLES, ['acepta_mails_extrapolados']);
@@ -181,4 +181,22 @@ test('ajustes: lo que leen los bots, quién es la empresa y lo de la campaña', 
   const sola = ajustesEfectivos(empresa, {}).valores;
   for (const k of ['tono', 'idioma', 'prueba_social', 'objeciones', 'excluir', 'responsable_email']) assert.equal(sola[k], undefined, k);
   assert.equal(sola.acepta_mails_extrapolados, false);
+});
+
+test('ajustes: CAN-SPAM, el pie del mail en el idioma de la campaña', () => {
+  for (const [t, e] of [['Inglés', 'en'], ['English (US)', 'en'], ['en-US', 'en'], ['Español, de vos en Argentina', 'es'],
+    ['español; inglés si contestan en inglés', 'es'], [undefined, 'es']]) assert.equal(idiomaCorto(t), e, t);
+  assert.equal(pieDelMail({ idioma: 'Inglés', direccion_postal: '1 Main St' }), null, 'sin CAN-SPAM, sin pie');
+  assert.equal(pieDelMail({ can_spam: true }), null, 'sin dirección no hay pie (la campaña no se activa)');
+  const en = pieDelMail({ can_spam: true, idioma: 'English', nombre_comercial: 'Crombie', direccion_postal: '1 Main St\nMiami, FL 33131' });
+  assert.deepEqual([en.idioma, en.asuntoBaja], ['en', 'unsubscribe']);
+  assert.match(en.texto, /^Crombie · 1 Main St, Miami, FL 33131\nIf you would rather not hear from us, just reply "unsubscribe"/);
+  assert.match(pieDelMail({ can_spam: true, idioma: 'español', direccion_postal: 'Calle 1' }).texto, /responda «baja»/);
+
+  // Activar una campaña con CAN-SPAM pide la dirección postal de Empresa.
+  const k = { tipo: 'reactivacion', buzones: ['00000000-0000-0000-0000-000000000001'], cuentas_por_dia: 5,
+    ajustes: { propuesta: 'X', idioma: 'English', responsable_positivos: 'Ana', responsable_email: 'ana@x.test', can_spam: true } };
+  assert.deepEqual(faltantesParaActivar(k, { nombre_comercial: 'Acme' }).map((f) => [f.bloque, f.clave]), [['empresa', 'direccion_postal']]);
+  assert.deepEqual(faltantesParaActivar(k, { nombre_comercial: 'Acme', direccion_postal: '1 Main St' }), []);
+  assert.throws(() => aplicarCambiosCampana({}, { can_spam: true }, OPERADO), /lo cambia Biguá/);
 });

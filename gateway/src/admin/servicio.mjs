@@ -1658,7 +1658,7 @@ export const PASOS_ALTA = [
   // Cómo habla, los casos, las objeciones, las exclusiones y quién toma a los interesados son de cada
   // campaña (migración 024): se cargan en su asistente, no acá.
   { etapa: 'La empresa', clave: 'empresa', titulo: 'Quién es',
-    campos: ['nombre_comercial', 'descripcion', 'firma'], requeridos: ['nombre_comercial', 'descripcion'] },
+    campos: ['nombre_comercial', 'descripcion', 'direccion_postal', 'firma'], requeridos: ['nombre_comercial', 'descripcion'] },
   { etapa: 'La empresa', clave: 'exclusiones', titulo: 'A quién no escribirle nunca', campos: ['acepta_mails_extrapolados'], manual: true },
   { etapa: 'Correo', clave: 'buzones', titulo: 'Buzones' },
   { etapa: 'Correo', clave: 'dominios', titulo: 'Dominios: SPF, DKIM y DMARC' },

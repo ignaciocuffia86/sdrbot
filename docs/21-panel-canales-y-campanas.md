@@ -419,8 +419,8 @@ Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
 
 | Nivel | Campos |
 |---|---|
-| **Empresa** | `nombre_comercial`, `descripcion` (qué hace la empresa), zona horaria, `firma` (por defecto), no contactar, `acepta_mails_extrapolados` (el valor por defecto) |
-| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `prueba_social`, `icp`, `roles_objetivo`, `excluir`, `senal_avisos`, `dias_aviso`, `llamado_accion`, `idioma`, `tono`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones`, `responsable_positivos`, `responsable_email`, `derivacion` (otros responsables según el interesado), `link_agenda`, buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
+| **Empresa** | `nombre_comercial`, `descripcion` (qué hace la empresa), `direccion_postal` (para el pie de CAN-SPAM), zona horaria, `firma` (por defecto), no contactar, `acepta_mails_extrapolados` (el valor por defecto) |
+| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `prueba_social`, `icp`, `roles_objetivo`, `excluir`, `senal_avisos`, `dias_aviso`, `llamado_accion`, `idioma`, `tono`, `links_permitidos`, `can_spam` (envíos a EE.UU.), cadencia, personas por cuenta, `positivos`, `objeciones`, `responsable_positivos`, `responsable_email`, `derivacion` (otros responsables según el interesado), `link_agenda`, buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
 | **La campaña puede cambiar lo de Empresa** | `acepta_mails_extrapolados`. Nada más: lo demás es sólo de un nivel |
 | **Buzón** | `firma` (gana a la de Empresa) |
 | **Se va** | `ajustes.buzones` (texto libre): lo reemplaza la selección de buzones de la campaña |
@@ -444,6 +444,14 @@ suyo. Una campaña no se activa sin quién toma a los interesados y su mail (`do
 idioma en que se escribe (sin él, los bots escribirían en español neutro aunque la campaña sea en
 inglés). Si el responsable depende del interesado dentro de una misma campaña (un AM por país o por
 vertical), cada uno va con su condición en `derivacion` («condición: Nombre <mail>»).
+
+**Envíos a EE.UU. (CAN-SPAM).** Una campaña con `can_spam` (lo marca Biguá) no se activa sin la
+`direccion_postal` de Empresa. A cada mail suyo, nuevo o respuesta, el gateway le agrega debajo del
+texto del bot el nombre comercial, la dirección y cómo darse de baja («reply "unsubscribe"» o
+«responda «baja»», según el idioma de la campaña), y la cabecera `List-Unsubscribe` con ese asunto.
+Se agrega después de controlar lo aprobado: la aprobación compara el texto del bot. La memoria del
+correo toma como baja «baja», «unsubscribe», «STOP», «opt out» y «remove me». La cita del original
+en una respuesta también va en el idioma de la campaña («On …, X wrote:»).
 
 **En el código.** `gateway/src/sdr/ajustes.mjs` tiene los dos esquemas:
 

@@ -6,7 +6,7 @@
 
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
-import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, leerRegla, ordenar, tieneLegado, tieneLegado024, tituloCampana, tituloDe } from './ajustes.mjs';
+import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, idiomaCorto, leerRegla, ordenar, pieDelMail, tieneLegado, tieneLegado024, tituloCampana, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
 import * as enCampana from './en_campana.mjs';
 
@@ -1189,7 +1189,11 @@ export async function controlarEnvio(clientId, args, kind) {
       necesita ??= { tipo: 'respuesta_positivo', copia: true };
     }
     const campanaId = k?.id ?? null;
-    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId, cc };
+    // Lo que el gateway agrega al mail según la campaña: el pie de CAN-SPAM y el idioma de la cita.
+    // Va después de lo aprobado: el bot y quien aprueba ven el texto del mail; el pie es siempre igual.
+    const valores = cfg && k ? enCampana.efectivos(cfg, k).valores : {};
+    const agregado = { idioma: idiomaCorto(valores.idioma), pie: pieDelMail(valores) };
+    if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId, cc, agregado };
     if (!args.aprobacion_id) {
       throw errorsSdr.aprobacionRequerida(necesita.copia
         ? 'Una respuesta con copia necesita una aprobación respuesta_positivo con esa copia en contenido.cc. Enviá cuando esté aprobada, pasando aprobacion_id.'
@@ -1232,7 +1236,7 @@ export async function controlarEnvio(clientId, args, kind) {
       throw errorsSdr.aprobacionNoCoincide(`No coincide con lo aprobado: ${diferencias.join(', ')}. Mandá exactamente lo aprobado ` +
         '(si el operador lo editó, la versión editada está en decision_contenido).');
     }
-    return { aprobacion: ap, campanaId, cc };
+    return { aprobacion: ap, campanaId, cc, agregado };
   });
 }
 
