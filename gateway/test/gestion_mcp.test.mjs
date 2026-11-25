@@ -77,7 +77,7 @@ test('Empresa: volver a una versión, con vista previa', async () => {
 test('campañas: crear con vista previa, por mail de buzón, y no crea nada hasta confirmar', async () => {
   const datos = { cliente: C, nombre: 'Bancos', cuentas_por_dia: 5, buzones: [`hola@${C}.test`],
     ajustes: { propuesta: 'Testing para bancos.', icp: 'Bancos medianos.', roles_objetivo: ['CTO'],
-      responsable_positivos: 'Ana Pérez', responsable_email: 'ana@gest.test' } };
+      responsable_positivos: 'Ana Pérez', responsable_email: 'ana@gest.test', idioma: 'español' } };
   // En modo operado el volumen y los buzones los elige Biguá, como en el panel.
   await assert.rejects(tool(cli, 'campana_crear', { ...datos, cliente: undefined }), (e) => e.code === 'forbidden');
   const previa = await tool(op, 'campana_crear', datos);
@@ -125,7 +125,7 @@ test('campañas: activar sólo en autogestionado, con lo que falta a la vista y 
   assert.equal((await q(`select estado from sdr.campana where client_id = $1 and clave = 'retail'`, [AUTO])).rows[0].estado, 'borrador');
 
   await tool(auto, 'campana_editar', { campana: 'retail', cambios: { buzones: [`hola@${AUTO}.test`], ajustes: { icp: 'Retail.', roles_objetivo: ['CMO'],
-    responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@auto.test' } }, confirmar: true });
+    responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@auto.test', idioma: 'español' } }, confirmar: true });
   const previa = await tool(auto, 'campana_estado', { campana: 'retail', estado: 'activa' });
   assert.equal(previa.vista_previa, true);
   assert.equal(previa.se_puede, true);

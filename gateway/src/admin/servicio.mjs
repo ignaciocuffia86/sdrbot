@@ -1857,7 +1857,7 @@ export const esquemaCampo = (c) => {
   switch (c.tipo) {
     case 'numero': return { type: 'integer', minimum: c.min, maximum: c.max, ...desc };
     case 'si_no': return { type: 'boolean', ...desc };
-    case 'lista': case 'urls': case 'seleccion': case 'ids':
+    case 'lista': case 'urls': case 'derivacion': case 'ids':
       return { type: 'array', items: { type: 'string', maxLength: c.max ?? 300 }, maxItems: c.maxItems ?? 50, ...desc };
     case 'opcion': return { enum: c.opciones, ...desc };
     case 'fecha': return { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', ...desc };

@@ -34,7 +34,7 @@ const DEF = {
   tono: { titulo: 'Tono', tipo: 'parrafo', max: 600, cliente: true,
     ayuda: 'Cómo se escribe en esta campaña: formal o cercano, técnico o comercial, qué evitar.' },
   idioma: { titulo: 'Idioma y trato', tipo: 'texto', max: 200, cliente: true,
-    ayuda: 'En qué idioma se escribe en esta campaña y cómo se trata al prospecto. Por ejemplo: español, de vos en Argentina y de usted en Chile; o inglés. Vacío: español neutro.' },
+    ayuda: 'En qué idioma se escribe en esta campaña y cómo se trata al prospecto. Por ejemplo: español, de vos en Argentina y de usted en Chile; o inglés. Hace falta para activarla.' },
   firma: { titulo: 'Firma por defecto', tipo: 'parrafo', max: 400, cliente: true,
     ayuda: 'Para los buzones que no tienen firma propia (la firma de cada buzón se carga en Canales → Correo).' },
   prueba_social: { titulo: 'Casos y datos que se pueden citar', tipo: 'lista', max: 300, maxItems: 15, cliente: true,
@@ -61,6 +61,8 @@ const DEF = {
     ayuda: 'El nombre de quien sigue con un interesado de esta campaña, por ejemplo «Ana Pérez» (el AM de la vertical o del territorio). Los bots lo nombran al proponer la reunión.' },
   responsable_email: { titulo: 'Mail de quien toma a los interesados', tipo: 'email', max: 254, cliente: true,
     ayuda: 'La casilla del dominio principal de quien toma a los interesados, por ejemplo ana@empresa.com. Va en copia en la respuesta a un interesado: desde ahí la conversación sigue con esa persona.' },
+  derivacion: { titulo: 'Otros responsables, según el interesado', tipo: 'derivacion', max: 300, maxItems: 20, cliente: true,
+    ayuda: 'Uno por renglón: «condición: Nombre <mail>». Por ejemplo «Chile: Augusto Pérez <augusto@empresa.com>» o «Banca y seguros: Ana Ruiz <ana@empresa.com>». Si un interesado cumple una condición, lo toma esa persona (va en copia); si no cumple ninguna, quien toma a los interesados de arriba.' },
   link_agenda: { titulo: 'Link de agenda', tipo: 'url', max: 300, cliente: true,
     ayuda: 'Para que un interesado elija horario (Calendly, HubSpot Meetings). Va sólo en la respuesta a un positivo, que siempre se aprueba antes.' },
   cuentas_por_dia: { titulo: 'Cuentas nuevas por día', tipo: 'numero', min: 0, max: 100, autogestion: true,
@@ -132,6 +134,7 @@ export const CAMPOS_CAMPANA = armar([
   ['objeciones', 'respuestas'],
   ['responsable_positivos', 'respuestas'],
   ['responsable_email', 'respuestas'],
+  ['derivacion', 'respuestas'],
   ['link_agenda', 'respuestas'],
   ['acepta_mails_extrapolados', 'ritmo'],
   ['acepta_mails_del_cliente', 'ritmo'],
@@ -236,6 +239,17 @@ function limpiarValor(c, v) {
       const items = [...new Set(renglones(c, v).map((t) => urlValida(c, t)))];
       return items.length ? items : undefined;
     }
+    case 'derivacion': {
+      // «condición: Nombre <mail>», guardado así, normalizado: lo leen los bots y lo controla el gateway.
+      const items = [...new Set(renglones(c, v).map((x) => {
+        const r = leerRegla(x);
+        if (!r) throw invalido(`«${x.slice(0, 60)}» en «${c.titulo}»: va «condición: Nombre <mail>», por ejemplo «Chile: Ana Pérez <ana@empresa.com>».`);
+        const linea = `${r.condicion}: ${r.nombre} <${r.email}>`;
+        if (linea.length > c.max) throw invalido(`Un renglón de «${c.titulo}» pasa los ${c.max} caracteres.`);
+        return linea;
+      }))];
+      return items.length ? items : undefined;
+    }
     case 'email': {
       if (typeof v !== 'string') throw invalido(`«${c.titulo}» tiene que ser texto.`);
       const t = v.trim().toLowerCase();
@@ -279,6 +293,18 @@ function limpiarValor(c, v) {
     default:
       return undefined;
   }
+}
+
+// Un renglón de «Otros responsables»: { condicion, nombre, email } o null si no tiene esa forma.
+// La condición es lo que va antes del último «:» previo al nombre; el mail, entre < >.
+export function leerRegla(x) {
+  const m = /^(.+):\s*([^:<>]+?)\s*<\s*([^<>\s]+)\s*>$/.exec(String(x ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim());
+  if (!m) return null;
+  const email = m[3].toLowerCase();
+  const condicion = m[1].trim();
+  const nombre = m[2].trim();
+  if (!EMAIL.test(email) || email.length > 254 || !condicion || !nombre) return null;
+  return { condicion, nombre, email };
 }
 
 // Si el usuario puede cambiar un campo. esBigua: operador de Biguá; autogestion: el cliente es
@@ -439,6 +465,8 @@ export function faltantesParaActivar(campana, empresa = {}) {
   // a un positivo no puede salir. Es de cada campaña (el AM de la vertical, del territorio…).
   if (!a.responsable_positivos) falta('respuestas', 'responsable_positivos', 'Falta quién toma a los interesados.');
   if (!a.responsable_email) falta('respuestas', 'responsable_email', 'Falta el mail de quien toma a los interesados.');
+  // Sin idioma, los bots escriben en español neutro: una campaña en inglés saldría mal sin que nadie lo note.
+  if (!a.idioma) falta('mensajes', 'idioma', 'Falta en qué idioma se escribe.');
   if (!empresa.nombre_comercial) falta('empresa', 'nombre_comercial', 'Falta el nombre comercial en Empresa.');
   return faltan;
 }
@@ -457,7 +485,8 @@ export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion
 
   for (const k of ['nombre_comercial', 'descripcion', 'firma']) poner(k, e[k], 'empresa');
   for (const k of ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos', 'dias_aviso', 'idioma', 'tono',
-    'links_permitidos', 'positivos', 'objeciones', 'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_del_cliente']) {
+    'links_permitidos', 'positivos', 'objeciones', 'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda',
+    'acepta_mails_del_cliente']) {
     poner(k, c[k], 'campana');
   }
   for (const k of HEREDABLES) poner(k, c[k] ?? e[k], c[k] !== undefined ? 'campana' : 'empresa');

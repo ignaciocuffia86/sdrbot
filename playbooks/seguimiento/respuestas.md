@@ -80,7 +80,11 @@ deriva a otra persona, seguí la derivación.
   pedido de disponibilidad.
 - **Derivar al cliente.** La respuesta a un positivo por mail va con copia a quien toma a los
   interesados: su mail está en «Mail de quien toma a los interesados» (o, si no, escrito en «Quién
-  toma a los interesados»). Presentalo en el texto («te sumo en copia a Augusto, que lleva esto de
+  toma a los interesados»). Si la campaña tiene «Otros responsables, según el interesado», fijate
+  si la persona cumple alguna condición (país, rubro, tamaño, lo que diga) con lo que sabés de ella
+  y de su cuenta en el registro: si cumple una, el responsable es ese (su nombre y su mail); si no
+  cumple ninguna o no sabés, el de «Quién toma a los interesados». Contá en `contexto` qué regla
+  usaste y por qué. Presentalo en el texto («te sumo en copia a Augusto, que lleva esto de
   nuestro lado; te va a escribir él para coordinar») y poné ese mail en `contenido.cc` al pedir la
   aprobación. Al salir, el gateway deja al prospecto **derivado**: desde ahí la conversación es del
   cliente, el SDR no le manda más mails ni LinkedIn, y lo que el responsable escriba en el hilo no

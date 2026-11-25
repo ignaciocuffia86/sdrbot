@@ -56,7 +56,7 @@ before(async () => {
   await q(`insert into sdr.cliente_config (client_id, ajustes) values ($1, $2), ($3, '{"nombre_comercial":"B SA"}')`, [A, {
     nombre_comercial: 'A SA', oferta: 'QA tercerizado', icp: 'Software B2B', roles_objetivo: ['CTO'], cuentas_por_dia: 5,
     prueba_social: ['Banca: 5 días a 6 horas (caso publicado)', 'Retail: 40 % menos de regresión'],
-    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@cp-a.test',
+    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@cp-a.test', idioma: 'español',
   }, B]);
   // Un cliente de antes de la 024: lo de cómo habla y quién toma a los interesados pasa a la «principal».
   await q(`select sdr.migrar_empresa_024($1, true)`, [A]);
@@ -124,7 +124,7 @@ test('campañas: el cliente operado crea un borrador; el volumen y la activació
   assert.deepEqual(d.efectivos.valores.prueba_social, ['Retail: 40 % menos de regresión']);
   // Quién toma a los interesados es de cada campaña: el de la «principal» no le vale al webinar.
   assert.deepEqual(d.faltantes.map((f) => f.clave), ['icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia', 'fin', 'links_permitidos',
-    'responsable_positivos', 'responsable_email']);
+    'responsable_positivos', 'responsable_email', 'idioma']);
   assert.equal(d.efectivos.valores.responsable_email, undefined);
 
   // El orquestador se entera de lo que hace el cliente, en la campaña que corresponde.
@@ -156,7 +156,7 @@ test('campañas: activar pide todo lo que falta y respeta el tope de cuentas del
   ok(await u.bigua.call('PUT', url, {
     buzones: [buzon.a1], cuentas_por_dia: 10, inicio: '2026-11-10', fin: '2026-11-27',
     ajustes: { icp: 'Equipos de QA', roles_objetivo: ['Líder de QA'], links_permitidos: 'https://cp-a.test/webinar',
-      responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@cp-a.test' },
+      responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@cp-a.test', idioma: 'español, de vos' },
   }));
 
   // Con la «principal» activa y sin tope cargado, no puede haber otra activa.

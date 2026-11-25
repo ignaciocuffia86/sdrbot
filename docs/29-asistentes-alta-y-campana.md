@@ -59,8 +59,8 @@ campaña.
 | Para quién | A quién se le escribe, cargos, tipos de empresa y cargos a evitar, y señal |
 | Cuentas | En una «Lista del cliente», la lista de cuentas a prospectar (obligatoria); en las demás, las cuentas modelo del ICP (opcional). Se cargan por Excel o CSV (`27`) |
 | Qué ofrecemos | Propuesta y los casos y datos que se pueden citar, con su fuente |
-| Mensaje y llamado a la acción | Idioma y tono, qué se le pide al prospecto y links |
-| Respuestas e interesados | Positivos, objeciones y quién toma a los interesados: nombre, mail (obligatorios para activarla, `26`) y link de agenda |
+| Mensaje y llamado a la acción | Idioma (obligatorio para activarla) y tono, qué se le pide al prospecto y links |
+| Respuestas e interesados | Positivos, objeciones y quién toma a los interesados: nombre, mail (obligatorios para activarla, `26`), otros responsables según el interesado («condición: Nombre <mail>», por ejemplo un AM por país o vertical) y link de agenda |
 | Canales y ritmo | Buzones, cuentas por día, la campaña de Dripify (vacía, la por defecto de la cuenta) y calibración |
 | Revisar y activar | Lo que falta para activarla, lo pendiente y cómo la leen los bots |
 

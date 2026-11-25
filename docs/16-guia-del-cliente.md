@@ -101,13 +101,14 @@ cambiaste. A la derecha, **«Así lo leen los bots»** muestra el resultado tal 
 | A quién le venden | País, industrias, tamaño y las señales que importan | «Bancos medianos de Argentina con avisos de QA abiertos.» |
 | Cargos a los que se escribe | Uno por renglón. Es a quién se revela el contacto | Head of QA · QA Manager · CTO |
 | Tipos de empresa y cargos a evitar | Uno por renglón. Las empresas puntuales van en «No contactar» (§5) | Consultoras y staffing · Cargos junior |
-| Idioma y trato | Idioma y si va de vos o de usted | «Español; de vos en Argentina, de usted en Chile.» o «Inglés» |
+| Idioma y trato | Idioma y si va de vos o de usted. Sin esto la campaña no se activa | «Español; de vos en Argentina, de usted en Chile.» o «Inglés» |
 | Tono | Cómo escriben en esta campaña | «Directo y técnico, sin superlativos ni signos de exclamación.» |
 | Qué le pedimos al prospecto | El pedido del final del primer mail | «Una charla de 20 minutos esta semana» |
 | Objeciones y cómo responderlas | Una por renglón: lo que dicen y cómo se responde | «"Ya tenemos QA": ofrecemos cubrir picos o automatizar lo repetitivo.» |
 | Qué cuenta como respuesta positiva | Uno por renglón | Interesado · Pide reunión · Pide información |
 | Quién toma a los interesados | El nombre de quien sigue la conversación (por ejemplo, el AM de la vertical o del territorio) | «Ana Pérez» |
 | Mail de quien toma a los interesados | Su casilla del **dominio principal**. Va en copia en la respuesta a un interesado (§7). Sin esto la campaña no se activa | `ana@tuempresa.com` |
+| Otros responsables, según el interesado | Si depende del interesado (un AM por país, por rubro): uno por renglón, «condición: Nombre <mail>». Si no cumple ninguna, lo toma el de arriba | «Chile: Augusto Pérez <augusto@tuempresa.com>» |
 | Link de agenda | Para que un interesado elija horario. Va sólo en la respuesta a un positivo | `https://calendly.com/tuempresa/20min` |
 
 **Operación:** cuántas empresas nuevas por día, por qué buzones sale cada campaña y si se escribe a

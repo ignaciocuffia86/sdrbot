@@ -420,7 +420,7 @@ Es trabajo de la etapa C (entrega C2, decisión 14), no un proyecto aparte.
 | Nivel | Campos |
 |---|---|
 | **Empresa** | `nombre_comercial`, `descripcion` (qué hace la empresa), zona horaria, `firma` (por defecto), no contactar, `acepta_mails_extrapolados` (el valor por defecto) |
-| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `prueba_social`, `icp`, `roles_objetivo`, `excluir`, `senal_avisos`, `dias_aviso`, `llamado_accion`, `idioma`, `tono`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones`, `responsable_positivos`, `responsable_email`, `link_agenda`, buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
+| **Campaña** | Tipo, estado, `inicio`/`fin`, `propuesta`, `prueba_social`, `icp`, `roles_objetivo`, `excluir`, `senal_avisos`, `dias_aviso`, `llamado_accion`, `idioma`, `tono`, `links_permitidos`, cadencia, personas por cuenta, `positivos`, `objeciones`, `responsable_positivos`, `responsable_email`, `derivacion` (otros responsables según el interesado), `link_agenda`, buzones, Dripify, `cuentas_por_dia`, `calibracion_mails`, `acepta_mails_extrapolados` |
 | **La campaña puede cambiar lo de Empresa** | `acepta_mails_extrapolados`. Nada más: lo demás es sólo de un nivel |
 | **Buzón** | `firma` (gana a la de Empresa) |
 | **Se va** | `ajustes.buzones` (texto libre): lo reemplaza la selección de buzones de la campaña |
@@ -440,7 +440,10 @@ que hasta ese momento le llegaba de Empresa: su tono, idioma y responsable si no
 exclusiones y objeciones de Empresa más las suyas; y los casos que había elegido (o todos, si no
 había elegido). Si lo de la campaña vuelve a Empresa por otro camino (la CLI, o Biguá restaurando
 una versión vieja de Empresa), `sdr.migrar_empresa_024` lo pasa a todas las campañas sin pisar lo
-suyo. Una campaña no se activa sin quién toma a los interesados y su mail (`docs/26`).
+suyo. Una campaña no se activa sin quién toma a los interesados y su mail (`docs/26`), ni sin el
+idioma en que se escribe (sin él, los bots escribirían en español neutro aunque la campaña sea en
+inglés). Si el responsable depende del interesado dentro de una misma campaña (un AM por país o por
+vertical), cada uno va con su condición en `derivacion` («condición: Nombre <mail>»).
 
 **En el código.** `gateway/src/sdr/ajustes.mjs` tiene los dos esquemas:
 

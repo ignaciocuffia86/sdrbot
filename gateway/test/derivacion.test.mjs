@@ -98,14 +98,23 @@ test('quién puede ir en copia: el responsable o su dominio, nunca un dominio p�
     ['augusto@principal.test', 'ventas@principal.test']);
 });
 
+const BIGUA_ = { esBigua: true };
 test('el mail de quien toma a los interesados: ajuste propio, o el que estaba escrito en el nombre', () => {
   const k = (ajustes) => ({ tipo: 'prospeccion', clave: 'principal', ajustes });
-  assert.deepEqual(sdr.responsable({ ajustes: {} }, k(AJUSTES)), { nombre: 'Augusto Pérez', email: RESPONSABLE });
+  assert.deepEqual(sdr.responsable({ ajustes: {} }, k(AJUSTES)), { nombre: 'Augusto Pérez', email: RESPONSABLE, otros: [] });
   assert.deepEqual(sdr.responsable({ ajustes: {} }, k({ responsable_positivos: 'Ana Pérez, Ana@Empresa.test' })),
-    { nombre: 'Ana Pérez, Ana@Empresa.test', email: 'ana@empresa.test' });
+    { nombre: 'Ana Pérez, Ana@Empresa.test', email: 'ana@empresa.test', otros: [] });
   assert.equal(sdr.responsable({ ajustes: {} }, k({ responsable_positivos: 'Ana Pérez' })).email, null);
   // Es de cada campaña: lo que quede en Empresa (de antes de la 024) no cuenta.
-  assert.deepEqual(sdr.responsable({ ajustes: AJUSTES }, k({})), { nombre: null, email: null });
+  assert.deepEqual(sdr.responsable({ ajustes: AJUSTES }, k({})), { nombre: null, email: null, otros: [] });
+  // Otros responsables, según el interesado (un AM por país o vertical): el bot elige, el gateway controla.
+  assert.deepEqual(sdr.responsable({ ajustes: {} }, k({ ...AJUSTES, derivacion: ['Chile: Ana Ruiz <ana@chile.test>'] })).otros,
+    [{ condicion: 'Chile', nombre: 'Ana Ruiz', email: 'ana@chile.test' }]);
+  assert.deepEqual(aplicarCambiosCampana({}, { derivacion: ' Banca y seguros:  Ana Ruiz <Ana@Empresa.test> \n\nChile: Juan <juan@chile.test>' }, BIGUA_).derivacion,
+    ['Banca y seguros: Ana Ruiz <ana@empresa.test>', 'Chile: Juan <juan@chile.test>']);
+  for (const mal of ['Chile Ana Ruiz <ana@chile.test>', 'Chile: Ana Ruiz', 'Chile: Ana <no-es-mail>', ': Ana <ana@x.test>']) {
+    assert.throws(() => aplicarCambiosCampana({}, { derivacion: [mal] }, BIGUA_), /condición: Nombre <mail>/, mal);
+  }
   assert.equal(sdr.responsable({ ajustes: AJUSTES }, k({ responsable_email: 'ana@principal.test' })).email, 'ana@principal.test');
 
   const BIGUA = { esBigua: true };
@@ -227,6 +236,12 @@ test('sin el mail del responsable no hay copia; el mail escrito en el nombre sir
     assert.match(sin.error.message, /en los ajustes de la campaña/);
     await campana({ responsable_positivos: 'Augusto Pérez, augusto@principal.test' });
     assert.equal((await pedir([RESPONSABLE])).status, 200);
+    // Con otros responsables según el interesado, la copia puede ir a cualquiera de ellos, y a nadie más.
+    await campana({ ...AJUSTES, derivacion: ['Chile: Ana Ruiz <ana@chile-cliente.test>'] });
+    assert.equal((await pedir(['ana@chile-cliente.test'])).status, 200);
+    const fuera = await pedir(['otro@desconocido.test']);
+    assert.equal(fuera.error.code, 'copia_no_permitida');
+    assert.match(fuera.error.message, /ana@chile-cliente\.test/);
   } finally {
     await campana(AJUSTES);
   }

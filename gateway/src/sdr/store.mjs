@@ -6,7 +6,7 @@
 
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
-import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, ordenar, tieneLegado, tieneLegado024, tituloCampana, tituloDe } from './ajustes.mjs';
+import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, leerRegla, ordenar, tieneLegado, tieneLegado024, tituloCampana, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
 import * as enCampana from './en_campana.mjs';
 
@@ -59,7 +59,7 @@ const AVISO_DATOS_CLIENTE = 'Lo que sigue lo cargó el cliente en el panel (lo c
 // Lo que es de cada campaña y no de Empresa (docs/21 §6.2): no se repite en la sección de Empresa.
 const SOLO_CAMPANA = new Set(['oferta', 'propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion',
   'links_permitidos', 'positivos', 'cuentas_por_dia', 'tono', 'idioma', 'excluir', 'prueba_social', 'objeciones',
-  'responsable_positivos', 'responsable_email', 'link_agenda']);
+  'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda']);
 // Lo de Empresa que no se repite en la sección de cada campaña.
 const SOLO_EMPRESA = new Set(['nombre_comercial', 'descripcion', 'firma']);
 const ESTADOS_CON_SECCION = ['activa', 'pausada', 'terminada'];
@@ -70,7 +70,7 @@ function comoAntes(cfg, principal) {
   const { valores, origen } = enCampana.efectivos(cfg, principal);
   const out = {};
   for (const k of ['tono', 'idioma', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos', 'dias_aviso',
-    'links_permitidos', 'objeciones', 'positivos', 'responsable_positivos', 'responsable_email', 'link_agenda']) {
+    'links_permitidos', 'objeciones', 'positivos', 'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda']) {
     if (valores[k] !== undefined) out[k] = valores[k];
   }
   if (origen.llamado_accion === 'campana') out.llamado_accion = valores.llamado_accion;
@@ -977,14 +977,17 @@ const DOMINIOS_PUBLICOS = new Set(['gmail.com', 'googlemail.com', 'outlook.com',
 const EMAIL_EN_TEXTO = /[a-z0-9._%+'-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/i;
 const dominioDe = (e) => String(e ?? '').split('@')[1] ?? '';
 
-// Quién toma a los interesados de una campaña: { nombre, email }. Sin «Mail de quien toma a los
-// interesados», el mail escrito en «Quién toma a los interesados» (como se cargaba antes).
+// Quién toma a los interesados de una campaña: { nombre, email, otros }. Sin «Mail de quien toma a
+// los interesados», el mail escrito en «Quién toma a los interesados» (como se cargaba antes). otros:
+// los de «Otros responsables, según el interesado» ([{ condicion, nombre, email }]): el bot elige
+// cuál según la condición; el gateway sólo controla que la copia sea a uno de ellos.
 export function responsable(cfg, k) {
-  if (!cfg || !k) return { nombre: null, email: null };
+  if (!cfg || !k) return { nombre: null, email: null, otros: [] };
   const { valores } = enCampana.efectivos(cfg, k);
   const nombre = valores.responsable_positivos ?? null;
   const email = valores.responsable_email ?? EMAIL_EN_TEXTO.exec(nombre ?? '')?.[0]?.toLowerCase() ?? null;
-  return { nombre, email };
+  const otros = (valores.derivacion ?? []).map(leerRegla).filter(Boolean);
+  return { nombre, email, otros };
 }
 
 // Si una dirección es «del lado del cliente» para esta derivación: la de quien toma a los
@@ -1013,10 +1016,11 @@ async function controlarCopia(c, clientId, cfg, p, cc) {
       'No está cargado el mail de quien toma a los interesados («Mail de quien toma a los interesados», en los ajustes de la ' +
       'campaña): sin eso no se pone a nadie en copia. Mandá la respuesta sin copia o pedile al cliente que lo cargue.', 422);
   }
-  const fuera = cc.filter((x) => !esDelResponsable(x, r.email));
+  const permitidos = [r.email, ...r.otros.map((o) => o.email)];
+  const fuera = cc.filter((x) => !permitidos.some((e) => esDelResponsable(x, e)));
   if (fuera.length) {
     throw new GatewayError('copia_no_permitida',
-      `La copia sólo puede ir a quien toma a los interesados (${r.email}) o a alguien de su dominio; no a ${fuera.join(', ')}.`, 422);
+      `La copia sólo puede ir a quien toma a los interesados (${permitidos.join(', ')}) o a alguien de su dominio; no a ${fuera.join(', ')}.`, 422);
   }
   if (p.email && cc.includes(p.email)) throw new GatewayError('copia_no_permitida', 'El prospecto no va en copia: ya es el destinatario.', 422);
 }

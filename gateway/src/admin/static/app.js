@@ -640,7 +640,7 @@ const valorTexto = (v) => (v === undefined || v === null || v === '' ? '(vacío)
 // valor de Empresa hasta que se cambian para esta campaña. Lo demás es sólo de la campaña.
 function campoCampana(c, valor, d) {
   const empresa = d.empresa[c.clave];
-  const input = campoInput({ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }, valor);
+  const input = campoInput({ ...c, tipo: ['urls', 'derivacion'].includes(c.tipo) ? 'lista' : c.tipo }, valor);
   if (c.hereda) {
     const propio = valor !== undefined;
     const wrap = h('div', { class: 'hereda', 'data-campo': c.clave, 'data-modo': propio ? 'propio' : 'empresa' });
@@ -668,7 +668,7 @@ function leerCampana(form, campos) {
   for (const c of campos) {
     if (!c.editable) continue;
     if (c.hereda && form.querySelector(`[data-campo="${c.clave}"]`)?.dataset.modo === 'empresa') { out[c.clave] = null; continue; }
-    Object.assign(out, leerCampos(form, [{ ...c, tipo: c.tipo === 'urls' ? 'lista' : c.tipo }]));
+    Object.assign(out, leerCampos(form, [{ ...c, tipo: ['urls', 'derivacion'].includes(c.tipo) ? 'lista' : c.tipo }]));
   }
   return out;
 }
@@ -2497,9 +2497,9 @@ const PASOS_CAMPANA = [
   { clave: 'propuesta', titulo: 'Qué ofrecemos', bloques: ['propuesta'],
     guia: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora, y los casos y datos que se pueden citar, con su fuente. Si otra campaña ya los tiene, conviene duplicarla.' },
   { clave: 'mensajes', titulo: 'Mensaje y llamado a la acción', bloques: ['mensajes'],
-    guia: 'En qué idioma y con qué tono se escribe en esta campaña, qué se le pide al prospecto al final del primer mail y qué links pueden ir.' },
+    guia: 'En qué idioma y con qué tono se escribe en esta campaña (el idioma hace falta para activarla), qué se le pide al prospecto al final del primer mail y qué links pueden ir.' },
   { clave: 'respuestas', titulo: 'Respuestas e interesados', bloques: ['respuestas'],
-    guia: 'Qué cuenta como positivo en esta campaña, las objeciones con su respuesta y quién toma a los interesados: su nombre y su casilla del dominio principal, que va en copia (docs/26), y el link de agenda. Cada campaña tiene el suyo (el AM de la vertical, del territorio).' },
+    guia: 'Qué cuenta como positivo en esta campaña, las objeciones con su respuesta y quién toma a los interesados: su nombre y su casilla del dominio principal, que va en copia (docs/26), y el link de agenda. Si depende del interesado (un AM por país, por vertical), cada responsable con su condición en «Otros responsables».' },
   { clave: 'canales', titulo: 'Canales y ritmo', bloques: ['ritmo', 'avanzado'],
     guia: 'Por qué buzones sale, cuántas cuentas nuevas por día y la campaña de Dripify si va también por LinkedIn.' },
 ];

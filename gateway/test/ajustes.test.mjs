@@ -20,7 +20,7 @@ test('ajustes: cada campo vive en su nivel', () => {
   assert.deepEqual(claves(CAMPOS_EMPRESA), ['nombre_comercial', 'descripcion', 'firma', 'acepta_mails_extrapolados']);
   assert.deepEqual(claves(CAMPOS_CAMPANA), ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos',
     'dias_aviso', 'llamado_accion', 'idioma', 'tono', 'links_permitidos', 'positivos', 'objeciones',
-    'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
+    'responsable_positivos', 'responsable_email', 'derivacion', 'link_agenda', 'acepta_mails_extrapolados', 'acepta_mails_del_cliente']);
   for (const k of DE_CAMPANA_DESDE_024) assert.ok(!claves(CAMPOS_EMPRESA).includes(k) && claves(CAMPOS_CAMPANA).includes(k), k);
   assert.deepEqual(HEREDABLES, ['acepta_mails_extrapolados']);
   // La firma es del buzón y de Empresa, nunca de la campaña (decisión 11); el texto libre de
@@ -129,14 +129,14 @@ test('ajustes: lo que falta para activar una campaña', () => {
   const empresa = { nombre_comercial: 'Acme' };
   const vacia = { tipo: 'prospeccion', ajustes: {}, buzones: [], cuentas_por_dia: 0 };
   assert.deepEqual(faltantesParaActivar(vacia, empresa).map((f) => f.clave), ['propuesta', 'icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia',
-    'responsable_positivos', 'responsable_email']);
+    'responsable_positivos', 'responsable_email', 'idioma']);
 
   const lista = { tipo: 'prospeccion', ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'],
-    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@acme.test' },
+    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@acme.test', idioma: 'español' },
     buzones: ['00000000-0000-0000-0000-000000000001'], cuentas_por_dia: 5 };
   assert.deepEqual(faltantesParaActivar(lista, empresa), []);
   // Quién toma a los interesados es de la campaña: el de Empresa ya no cuenta.
-  const sinResponsable = { ...lista, ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'] } };
+  const sinResponsable = { ...lista, ajustes: { propuesta: 'QA', icp: 'Software', roles_objetivo: ['CTO'], idioma: 'inglés' } };
   assert.deepEqual(faltantesParaActivar(sinResponsable, { ...empresa, responsable_positivos: 'Ana', responsable_email: 'ana@acme.test' })
     .map((f) => f.clave), ['responsable_positivos', 'responsable_email']);
   assert.deepEqual(faltantesParaActivar(lista, {}).map((f) => f.clave), ['nombre_comercial']);
@@ -144,7 +144,7 @@ test('ajustes: lo que falta para activar una campaña', () => {
   const evento = { ...lista, tipo: 'evento' };
   assert.deepEqual(faltantesParaActivar(evento, empresa).map((f) => f.clave), ['fin', 'links_permitidos']);
   // La reactivación no necesita audiencia: trabaja sobre prospectos propios.
-  const reac = { ...lista, tipo: 'reactivacion', ajustes: { propuesta: 'Retomar', responsable_positivos: 'Ana', responsable_email: 'ana@acme.test' } };
+  const reac = { ...lista, tipo: 'reactivacion', ajustes: { propuesta: 'Retomar', responsable_positivos: 'Ana', responsable_email: 'ana@acme.test', idioma: 'español' } };
   assert.deepEqual(faltantesParaActivar(reac, empresa), []);
 });
 
