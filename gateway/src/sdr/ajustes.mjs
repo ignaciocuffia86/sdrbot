@@ -242,6 +242,7 @@ function limpiarValor(c, v) {
     case 'derivacion': {
       // «condición: Nombre <mail>», guardado así, normalizado: lo leen los bots y lo controla el gateway.
       const items = [...new Set(renglones(c, v).map((x) => {
+        if (x.length > c.max) throw invalido(`Un renglón de «${c.titulo}» pasa los ${c.max} caracteres.`);
         const r = leerRegla(x);
         if (!r) throw invalido(`«${x.slice(0, 60)}» en «${c.titulo}»: va «condición: Nombre <mail>», por ejemplo «Chile: Ana Pérez <ana@empresa.com>».`);
         const linea = `${r.condicion}: ${r.nombre} <${r.email}>`;
@@ -295,15 +296,26 @@ function limpiarValor(c, v) {
   }
 }
 
-// Un renglón de «Otros responsables»: { condicion, nombre, email } o null si no tiene esa forma.
-// La condición es lo que va antes del último «:» previo al nombre; el mail, entre < >.
+// Un renglón de «Otros responsables»: { condicion, nombre, email } o null si no tiene esa forma
+// («condición: Nombre <mail>»). Sin regex sobre el renglón entero (un texto largo y mal formado no
+// puede trabar el proceso): se corta por el último «<», el «>» del final y el último «:» antes del
+// nombre, con un tope de largo antes de mirar nada.
+export const MAX_REGLA = 300;
 export function leerRegla(x) {
-  const m = /^(.+):\s*([^:<>]+?)\s*<\s*([^<>\s]+)\s*>$/.exec(String(x ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim());
-  if (!m) return null;
-  const email = m[3].toLowerCase();
-  const condicion = m[1].trim();
-  const nombre = m[2].trim();
-  if (!EMAIL.test(email) || email.length > 254 || !condicion || !nombre) return null;
+  const t = String(x ?? '');
+  if (t.length > MAX_REGLA) return null;
+  const limpio = t.replace(/[\u0000-\u001f\u007f]/g, ' ').trim();
+  if (!limpio.endsWith('>')) return null;
+  const abre = limpio.lastIndexOf('<');
+  if (abre < 0) return null;
+  const email = limpio.slice(abre + 1, -1).trim().toLowerCase();
+  const antes = limpio.slice(0, abre);
+  const dos = antes.lastIndexOf(':');
+  if (dos < 0) return null;
+  const condicion = antes.slice(0, dos).trim();
+  const nombre = antes.slice(dos + 1).trim();
+  if (!condicion || !nombre || /[<>]/.test(nombre) || /[<>]/.test(condicion)) return null;
+  if (email.length > 254 || !EMAIL.test(email)) return null;
   return { condicion, nombre, email };
 }
 

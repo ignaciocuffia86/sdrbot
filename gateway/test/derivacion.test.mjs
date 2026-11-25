@@ -112,6 +112,10 @@ test('el mail de quien toma a los interesados: ajuste propio, o el que estaba es
     [{ condicion: 'Chile', nombre: 'Ana Ruiz', email: 'ana@chile.test' }]);
   assert.deepEqual(aplicarCambiosCampana({}, { derivacion: ' Banca y seguros:  Ana Ruiz <Ana@Empresa.test> \n\nChile: Juan <juan@chile.test>' }, BIGUA_).derivacion,
     ['Banca y seguros: Ana Ruiz <ana@empresa.test>', 'Chile: Juan <juan@chile.test>']);
+  // Un renglón largo y mal formado se rechaza por el largo, sin intentar leerlo (Vercel Security Review #30).
+  const t0 = Date.now();
+  assert.throws(() => aplicarCambiosCampana({}, { derivacion: ['a:' + ' '.repeat(100000) + 'x'] }, BIGUA_), /pasa los 300 caracteres/);
+  assert.ok(Date.now() - t0 < 200, 'el rechazo es inmediato');
   for (const mal of ['Chile Ana Ruiz <ana@chile.test>', 'Chile: Ana Ruiz', 'Chile: Ana <no-es-mail>', ': Ana <ana@x.test>']) {
     assert.throws(() => aplicarCambiosCampana({}, { derivacion: [mal] }, BIGUA_), /condición: Nombre <mail>/, mal);
   }
