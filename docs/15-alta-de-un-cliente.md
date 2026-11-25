@@ -115,9 +115,10 @@ Biguá (en un cliente autogestionado, los carga el cliente):
 - **Cuentas nuevas por día:** 5 durante la calibración; después, según el cupo de los buzones.
 - **Acepta mails extrapolados:** «no» salvo que el cliente lo pida.
 
-El resto de los ajustes (oferta, ICP, cargos, tono, firma, casos citables, qué le pedimos al
-prospecto, objeciones, positivos, quién toma a los interesados, link de agenda) y la lista de **no
-contactar** los carga el cliente (`16` §4 y §5). Biguá los revisa antes del primer envío. La
+El resto de los ajustes y la lista de **no contactar** los carga el cliente (`16` §4 y §5): en
+Empresa, quién es y la firma por defecto; en cada campaña, la propuesta, el ICP, los cargos, las
+exclusiones, el idioma y el tono, los casos citables, qué le pedimos al prospecto, las objeciones,
+los positivos, quién toma a los interesados y el link de agenda (migración `024`). Biguá los revisa antes del primer envío. La
 **señal en los avisos** (cómo se le piden los avisos a ASCI) la carga siempre Biguá.
 
 ## 6. Usuario de ASCI para el bot

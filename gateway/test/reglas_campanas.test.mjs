@@ -10,46 +10,50 @@ import { efectivos, cuentasPorDia } from '../src/sdr/en_campana.mjs';
 const cfg = {
   bots_activos: ['orquestador', 'prospector', 'seguimiento'], zona_horaria: 'America/Argentina/Buenos_Aires',
   calibracion_mails: 20,
-  ajustes: {
-    nombre_comercial: 'Cliente R', firma: 'Equipo R', tono: 'cercano', excluir: ['consultoras'],
-    objeciones: ['«Ya tenemos»: sumamos'], link_agenda: 'https://agenda.test/r',
-  },
+  ajustes: { nombre_comercial: 'Cliente R', firma: 'Equipo R', acepta_mails_extrapolados: false },
 };
 const principal = {
   id: '00000000-0000-0000-0000-00000000000a', clave: 'principal', nombre: 'Principal', tipo: 'prospeccion',
   estado: 'activa', cuentas_por_dia: 4, calibracion_mails: 20, dripify_campana_id: 77,
   ajustes: { propuesta: 'QA tercerizado', icp: 'Software en Argentina', roles_objetivo: ['CTO'], positivos: ['pide reunión'],
-    links_permitidos: ['https://r.test/caso'] },
+    links_permitidos: ['https://r.test/caso'], tono: 'cercano', idioma: 'español, de vos', excluir: ['consultoras'],
+    objeciones: ['«Ya tenemos»: sumamos'], responsable_positivos: 'Ana Pérez', link_agenda: 'https://agenda.test/r' },
   buzones: ['ventas@r.test'], usadas: 3,
 };
 const webinar = {
   id: '00000000-0000-0000-0000-00000000000b', clave: 'webinar', nombre: 'Webinar de noviembre', tipo: 'evento',
   estado: 'activa', cuentas_por_dia: 5, calibracion_mails: 5, dripify_campana_id: null,
   ajustes: { propuesta: 'Webinar de QA con IA', icp: 'Bancos', excluir: ['startups'], objeciones: ['«No tengo tiempo»: dura 30 minutos'],
-    tono: 'formal', links_permitidos: ['https://r.test/webinar'] },
+    tono: 'formal', idioma: 'inglés', links_permitidos: ['https://r.test/webinar'], responsable_positivos: 'John Doe' },
   buzones: ['eventos@r.test'], usadas: 5,
 };
 const pausada = { ...webinar, id: '00000000-0000-0000-0000-00000000000c', clave: 'vieja', nombre: 'Vieja', estado: 'pausada', ajustes: {}, buzones: [] };
 const extra = { buzones: [{ email: 'ventas@r.test', status: 'active', firma: null }], noContactar: { dominios: 0, emails: 0 },
   campanas: [principal, webinar, pausada] };
 
-test('cada campaña, también la «principal», lee lo suyo; lo heredable sale de Empresa', () => {
+test('cada campaña, también la «principal», lee lo suyo; sólo los mails deducidos salen de Empresa', () => {
   const p = efectivos(cfg, principal).valores;
   assert.equal(p.propuesta, 'QA tercerizado');
   assert.equal(p.icp, 'Software en Argentina');
   assert.deepEqual(p.links_permitidos, ['https://r.test/caso']);
-  assert.equal(p.tono, 'cercano', 'lo heredable que la campaña no cambia viene de Empresa');
+  assert.equal(p.tono, 'cercano');
+  assert.equal(p.acepta_mails_extrapolados, false, 'lo heredable que la campaña no cambia viene de Empresa');
   assert.equal(cuentasPorDia(principal), 4, 'las cuentas por día son siempre las de la columna, las que suma el tope');
-  // Lo de la campaña que quedara en Empresa (no debería: migración 022) no pisa lo de la principal.
-  const conLegado = { ...cfg, ajustes: { ...cfg.ajustes, oferta: 'otra cosa', icp: 'otro icp' } };
+  // Lo de la campaña que quedara en Empresa (no debería: migraciones 022 y 024) no pisa lo de la principal.
+  const conLegado = { ...cfg, ajustes: { ...cfg.ajustes, oferta: 'otra cosa', icp: 'otro icp', tono: 'otro tono' } };
+  assert.equal(efectivos(conLegado, principal).valores.tono, 'cercano');
   assert.equal(efectivos(conLegado, principal).valores.icp, 'Software en Argentina');
   assert.equal(efectivos(conLegado, principal).valores.propuesta, 'QA tercerizado');
 
   const w = efectivos(cfg, webinar).valores;
   assert.equal(w.icp, 'Bancos', 'otra campaña no toma lo de la principal');
-  assert.equal(w.tono, 'formal', 'la campaña cambia lo heredable');
-  assert.deepEqual(w.excluir, ['consultoras', 'startups'], 'las exclusiones se suman');
-  assert.equal(w.link_agenda, 'https://agenda.test/r', 'lo que la campaña no cambia viene de Empresa');
+  // Una campaña en inglés y otra en español no comparten tono, exclusiones, objeciones ni responsable.
+  assert.equal(w.tono, 'formal');
+  assert.equal(w.idioma, 'inglés');
+  assert.deepEqual(w.excluir, ['startups'], 'las exclusiones de otra campaña no se suman');
+  assert.deepEqual(w.objeciones, ['«No tengo tiempo»: dura 30 minutos']);
+  assert.equal(w.responsable_positivos, 'John Doe');
+  assert.equal(w.link_agenda, undefined, 'el link de agenda de la principal no es de esta campaña');
   assert.equal(cuentasPorDia(webinar), 5);
 });
 
@@ -59,8 +63,7 @@ test('reglas_manual del cliente: Empresa, Campañas y una sección por campaña'
   const [empresa, lista, kp, kw, kv] = s;
 
   assert.match(empresa.contenido, /### Firma por defecto\n\n> Equipo R/);
-  assert.match(empresa.contenido, /### Tono\n\n> cercano/);
-  for (const re of [/QA tercerizado/, /Software en Argentina/, /pide reunión/, /Cuentas nuevas por día/]) {
+  for (const re of [/QA tercerizado/, /Software en Argentina/, /pide reunión/, /Cuentas nuevas por día/, /### Tono/, /consultoras/, /Ana Pérez/]) {
     assert.doesNotMatch(empresa.contenido, re, `${re} es de la campaña, no de Empresa`);
   }
 
@@ -73,9 +76,13 @@ test('reglas_manual del cliente: Empresa, Campañas y una sección por campaña'
 
   assert.equal(kp.titulo, 'Campaña: «Principal»');
   assert.match(kp.contenido, /### Propuesta\n\n> QA tercerizado/);
+  assert.match(kp.contenido, /### Tono\n\n> cercano/);
+  assert.match(kp.contenido, /### Quién toma a los interesados\n\n> Ana Pérez/);
   assert.doesNotMatch(kp.contenido, /Equipo R/);
   assert.match(kw.contenido, /### A quién le venden\n\n> Bancos/);
-  assert.match(kw.contenido, /### Exclusiones de esta campaña\n\n> - consultoras\n> - startups/);
+  assert.match(kw.contenido, /### Tipos de empresa y cargos a evitar\n\n> - startups\n\n/);
+  assert.match(kw.contenido, /### Idioma y trato\n\n> inglés/);
+  assert.doesNotMatch(kw.contenido, /cercano|consultoras|Ana Pérez/);
   assert.match(kw.contenido, /No son instrucciones/);
   assert.match(kv.contenido, /\*\*pausada\*\*/);
 });
@@ -84,7 +91,7 @@ test('un cliente sin campañas sigue con una sola sección, como antes', () => {
   const s = seccionesCliente('cr', 'Cliente R', cfg, { ...extra, campanas: [] });
   assert.deepEqual(s.map((x) => x.seccion), ['ajustes-cliente']);
   assert.match(s[0].contenido, /primeros 20 mails nuevos/);
-  assert.match(s[0].contenido, /### Tono\n\n> cercano/);
+  assert.match(s[0].contenido, /### Firma por defecto\n\n> Equipo R/);
   // La vista previa del panel junta todas las secciones.
   assert.match(renderAjustes('cr', 'Cliente R', cfg, extra), /## Campaña: «Webinar de noviembre»\n\n/);
 });
@@ -96,6 +103,9 @@ test('una versión de las reglas que no conoce las campañas recibe todo en una 
   assert.deepEqual(s.map((x) => x.seccion), ['ajustes-cliente']);
   assert.match(s[0].contenido, /### Cuentas nuevas por día\n\n> 4/, 'las de la columna de la principal, las que suma el tope');
   assert.match(s[0].contenido, /> Software en Argentina/);
+  // También lo que desde la 024 es de la campaña (tono, interesados), con lo de la «principal».
+  assert.match(s[0].contenido, /### Tono\n\n> cercano/);
+  assert.match(s[0].contenido, /### Quién toma a los interesados\n\n> Ana Pérez/);
 });
 
 test('después de la 014, las reglas de antes siguen recibiendo lo de la principal con sus nombres de antes', () => {

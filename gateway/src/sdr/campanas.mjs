@@ -154,8 +154,7 @@ export async function ver(c, clientId, id, { esBigua }) {
   };
 }
 
-// En lo que leen los bots, cada clave con su título general (el de Empresa): las listas que se
-// suman no son «de esta campaña».
+// En lo que leen los bots, cada clave con su título general.
 const conTitulos = (e) => ({ ...e, titulos: Object.fromEntries(Object.keys(e.valores).map((k) => [k, tituloDe(k)])) });
 
 // ---------------------------------------------------------------- escritura
@@ -211,7 +210,7 @@ export async function crear(c, clientId, datos, { user, esBigua }) {
     if (k === 'nombre' || k === 'tipo') continue;
     aplicarColumnasCampana({ estado: 'borrador' }, { [k]: columnas[k] }, permiso, { tope: cfg.tope_cuentas_dia });
   }
-  const ajustes = aplicarCambiosCampana({}, cambiosAjustes, permiso, { empresa: cfg.ajustes });
+  const ajustes = aplicarCambiosCampana({}, cambiosAjustes, permiso);
   const { buzones, ...resto } = cols;
   const clave = await claveNueva(c, clientId, cols.nombre);
   const nombres = columnasSql(resto);
@@ -237,7 +236,7 @@ export async function guardar(c, clientId, id, datos, { user, esBigua }) {
   }
   const tope = { tope: cfg.tope_cuentas_dia, otrasActivas: await otrasActivas(c, clientId, id) };
   const cols = aplicarColumnasCampana(actual, columnas, permiso, { ...tope, controlarTope: false });
-  const ajustes = aplicarCambiosCampana(actual.ajustes, cambiosAjustes, permiso, { empresa: cfg.ajustes });
+  const ajustes = aplicarCambiosCampana(actual.ajustes, cambiosAjustes, permiso);
   const cambiosA = diferencias(actual.ajustes, ajustes);
   const cambiosC = Object.keys(cols);
   if (!cambiosA.length && !cambiosC.length) return { cambios: [] };

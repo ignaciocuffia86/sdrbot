@@ -45,36 +45,39 @@ test('las herramientas que cambian algo se anuncian como cambios', () => {
 });
 
 test('Empresa: la vista previa dice antes y después y no guarda; con confirmar guarda', async () => {
-  const previa = await tool(cli, 'ajustes_editar', { cambios: { nombre_comercial: 'Gest A', tono: 'Directo.' } });
+  const previa = await tool(cli, 'ajustes_editar', { cambios: { nombre_comercial: 'Gest A', descripcion: 'Directo.' } });
   assert.equal(previa.vista_previa, true);
-  assert.deepEqual(previa.cambios.map((x) => x.campo).sort(), ['nombre_comercial', 'tono']);
-  assert.equal(previa.cambios.find((x) => x.campo === 'tono').despues, 'Directo.');
-  assert.equal((await q(`select ajustes->>'tono' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, null);
+  assert.deepEqual(previa.cambios.map((x) => x.campo).sort(), ['descripcion', 'nombre_comercial']);
+  assert.equal(previa.cambios.find((x) => x.campo === 'descripcion').despues, 'Directo.');
+  assert.equal((await q(`select ajustes->>'descripcion' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, null);
   assert.equal(await cuenta(`select count(*)::int as n from sdr.ajustes_historial where client_id = $1`, [C]), 0, 'la vista previa no deja historial');
 
-  const r = await tool(cli, 'ajustes_editar', { cambios: { nombre_comercial: 'Gest A', tono: 'Directo.' }, nota: 'desde Claude', confirmar: true });
-  assert.deepEqual(r.cambios.sort(), ['nombre_comercial', 'tono']);
-  assert.equal((await q(`select ajustes->>'tono' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Directo.');
+  const r = await tool(cli, 'ajustes_editar', { cambios: { nombre_comercial: 'Gest A', descripcion: 'Directo.' }, nota: 'desde Claude', confirmar: true });
+  assert.deepEqual(r.cambios.sort(), ['descripcion', 'nombre_comercial']);
+  assert.equal((await q(`select ajustes->>'descripcion' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Directo.');
   // Lo que el cliente no edita en modo operado (si se aceptan mails extrapolados) se le niega, igual que en el panel.
   await assert.rejects(tool(cli, 'ajustes_editar', { cambios: { acepta_mails_extrapolados: true } }), (e) => e.code === 'forbidden');
   await assert.rejects(tool(cli, 'ajustes_editar', { cambios: { no_existe: 'x' } }), (e) => e.code === 'invalid_request');
+  // El tono es de cada campaña (migración 024): por Empresa no entra.
+  await assert.rejects(tool(cli, 'ajustes_editar', { cambios: { tono: 'Directo.' } }), (e) => e.code === 'invalid_request');
 });
 
 test('Empresa: volver a una versión, con vista previa', async () => {
-  await tool(cli, 'ajustes_editar', { cambios: { tono: 'Cálido.' }, confirmar: true });
-  const versiones = (await q(`select id, ajustes->>'tono' as t from sdr.ajustes_historial where client_id = $1 and campana_id is null order by id`, [C])).rows;
+  await tool(cli, 'ajustes_editar', { cambios: { descripcion: 'Cálido.' }, confirmar: true });
+  const versiones = (await q(`select id, ajustes->>'descripcion' as t from sdr.ajustes_historial where client_id = $1 and campana_id is null order by id`, [C])).rows;
   const primera = versiones.find((v) => v.t === 'Directo.');
   const previa = await tool(cli, 'ajustes_restaurar', { version: Number(primera.id) });
   assert.equal(previa.vista_previa, true);
-  assert.deepEqual(previa.cambios.map((x) => [x.campo, x.antes, x.despues]), [['tono', 'Cálido.', 'Directo.']]);
-  assert.equal((await q(`select ajustes->>'tono' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Cálido.');
+  assert.deepEqual(previa.cambios.map((x) => [x.campo, x.antes, x.despues]), [['descripcion', 'Cálido.', 'Directo.']]);
+  assert.equal((await q(`select ajustes->>'descripcion' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Cálido.');
   await tool(cli, 'ajustes_restaurar', { version: Number(primera.id), confirmar: true });
-  assert.equal((await q(`select ajustes->>'tono' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Directo.');
+  assert.equal((await q(`select ajustes->>'descripcion' as t from sdr.cliente_config where client_id = $1`, [C])).rows[0].t, 'Directo.');
 });
 
 test('campañas: crear con vista previa, por mail de buzón, y no crea nada hasta confirmar', async () => {
   const datos = { cliente: C, nombre: 'Bancos', cuentas_por_dia: 5, buzones: [`hola@${C}.test`],
-    ajustes: { propuesta: 'Testing para bancos.', icp: 'Bancos medianos.', roles_objetivo: ['CTO'] } };
+    ajustes: { propuesta: 'Testing para bancos.', icp: 'Bancos medianos.', roles_objetivo: ['CTO'],
+      responsable_positivos: 'Ana Pérez', responsable_email: 'ana@gest.test' } };
   // En modo operado el volumen y los buzones los elige Biguá, como en el panel.
   await assert.rejects(tool(cli, 'campana_crear', { ...datos, cliente: undefined }), (e) => e.code === 'forbidden');
   const previa = await tool(op, 'campana_crear', datos);
@@ -116,11 +119,13 @@ test('campañas: activar sólo en autogestionado, con lo que falta a la vista y 
   const falta = await tool(auto, 'campana_estado', { campana: 'retail', estado: 'activa' });
   assert.equal(falta.se_puede, false);
   assert.ok(falta.faltantes.some((m) => /buzón/.test(m)) && falta.faltantes.some((m) => /cargos/.test(m)), falta.faltantes.join(' | '));
+  assert.ok(falta.faltantes.some((m) => /quién toma a los interesados/.test(m)), falta.faltantes.join(' | '));
   // Con confirmar tampoco: lo que falta frena antes.
   assert.equal((await tool(auto, 'campana_estado', { campana: 'retail', estado: 'activa', confirmar: true })).se_puede, false);
   assert.equal((await q(`select estado from sdr.campana where client_id = $1 and clave = 'retail'`, [AUTO])).rows[0].estado, 'borrador');
 
-  await tool(auto, 'campana_editar', { campana: 'retail', cambios: { buzones: [`hola@${AUTO}.test`], ajustes: { icp: 'Retail.', roles_objetivo: ['CMO'] } }, confirmar: true });
+  await tool(auto, 'campana_editar', { campana: 'retail', cambios: { buzones: [`hola@${AUTO}.test`], ajustes: { icp: 'Retail.', roles_objetivo: ['CMO'],
+    responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@auto.test' } }, confirmar: true });
   const previa = await tool(auto, 'campana_estado', { campana: 'retail', estado: 'activa' });
   assert.equal(previa.vista_previa, true);
   assert.equal(previa.se_puede, true);
@@ -165,7 +170,7 @@ test('campañas: duplicar, volver a una versión y los pasos del asistente', asy
 });
 
 test('un cliente no toca las campañas ni Empresa de otro', async () => {
-  await assert.rejects(tool(cli, 'ajustes_editar', { cliente: AUTO, cambios: { tono: 'x' } }), (e) => e.code === 'not_found');
+  await assert.rejects(tool(cli, 'ajustes_editar', { cliente: AUTO, cambios: { descripcion: 'x' } }), (e) => e.code === 'not_found');
   await assert.rejects(tool(cli, 'campana_editar', { cliente: AUTO, campana: 'retail', cambios: { cuentas_por_dia: 1 } }), (e) => e.code === 'not_found');
   const idAuto = (await q(`select id from sdr.campana where client_id = $1 and clave = 'retail'`, [AUTO])).rows[0].id;
   await assert.rejects(tool(cli, 'campana_editar', { campana: idAuto, cambios: { cuentas_por_dia: 1 } }), (e) => e.code === 'not_found');

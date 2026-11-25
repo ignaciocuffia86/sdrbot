@@ -56,7 +56,10 @@ before(async () => {
   await q(`insert into sdr.cliente_config (client_id, ajustes) values ($1, $2), ($3, '{"nombre_comercial":"B SA"}')`, [A, {
     nombre_comercial: 'A SA', oferta: 'QA tercerizado', icp: 'Software B2B', roles_objetivo: ['CTO'], cuentas_por_dia: 5,
     prueba_social: ['Banca: 5 días a 6 horas (caso publicado)', 'Retail: 40 % menos de regresión'],
+    responsable_positivos: 'Ana Pérez', responsable_email: 'ana@cp-a.test',
   }, B]);
+  // Un cliente de antes de la 024: lo de cómo habla y quién toma a los interesados pasa a la «principal».
+  await q(`select sdr.migrar_empresa_024($1, true)`, [A]);
   u.bigua = await loggedIn('operador@cp.test', 'bigua_admin');
   u.a = await loggedIn('usuario@cp-a.test', 'client_admin', A);
   u.b = await loggedIn('usuario@cp-b.test', 'client_admin', B);
@@ -85,6 +88,8 @@ test('campañas: la lista arranca con la «principal» migrada', async () => {
 
   const v = ok(await u.a.call('GET', `/clients/${A}/sdr/campanas/${principal.id}`));
   assert.equal(v.campana.ajustes.propuesta, 'QA tercerizado');
+  assert.equal(v.campana.ajustes.responsable_email, 'ana@cp-a.test');
+  assert.deepEqual(v.campana.ajustes.prueba_social, ['Banca: 5 días a 6 horas (caso publicado)', 'Retail: 40 % menos de regresión']);
   assert.equal(v.efectivos.valores.llamado_accion, 'Una charla corta para ver si tiene sentido.');
   assert.equal(v.campos.find((x) => x.clave === 'senal_avisos').editable, false);
   assert.equal(v.columnas.find((x) => x.clave === 'estado').editable, false);
@@ -117,16 +122,20 @@ test('campañas: el cliente operado crea un borrador; el volumen y la activació
   assert.equal(webinar.estado, 'borrador');
   assert.equal(webinar.calibracion_mails, 5);
   assert.deepEqual(d.efectivos.valores.prueba_social, ['Retail: 40 % menos de regresión']);
-  assert.deepEqual(d.faltantes.map((f) => f.clave), ['icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia', 'fin', 'links_permitidos']);
-
-  // Un caso que no está en Empresa no se puede elegir.
-  const inventado = await u.a.call('PUT', `/clients/${A}/sdr/campanas/${webinar.id}`, { ajustes: { prueba_social: ['Un caso inventado'] } });
-  assert.equal(inventado.status, 400);
+  // Quién toma a los interesados es de cada campaña: el de la «principal» no le vale al webinar.
+  assert.deepEqual(d.faltantes.map((f) => f.clave), ['icp', 'roles_objetivo', 'buzones', 'cuentas_por_dia', 'fin', 'links_permitidos',
+    'responsable_positivos', 'responsable_email']);
+  assert.equal(d.efectivos.valores.responsable_email, undefined);
 
   // El orquestador se entera de lo que hace el cliente, en la campaña que corresponde.
   const p = (await q(`select campana_id, que from sdr.pedido where client_id = $1 and para_bot = 'orquestador' order by creado_at desc limit 1`, [A])).rows[0];
   assert.equal(p.campana_id, webinar.id);
   assert.match(p.que, /creó la campaña «Webinar: automatización de pruebas»/);
+
+  // Los casos son de la campaña: no hace falta que estén en otro lado.
+  const propio = ok(await u.a.call('PUT', `/clients/${A}/sdr/campanas/${webinar.id}`, {
+    ajustes: { prueba_social: ['Retail: 40 % menos de regresión', 'Seguros: 3 releases por semana (caso publicado)'] } }));
+  assert.deepEqual(propio.efectivos.valores.prueba_social, ['Retail: 40 % menos de regresión', 'Seguros: 3 releases por semana (caso publicado)']);
 
   const otra = ok(await u.a.call('POST', `/clients/${A}/sdr/campanas`, { nombre: 'Webinar: automatización de pruebas' }));
   assert.equal(otra.campana.clave, 'webinar-automatizacion-de-pruebas-2');
@@ -146,7 +155,8 @@ test('campañas: activar pide todo lo que falta y respeta el tope de cuentas del
 
   ok(await u.bigua.call('PUT', url, {
     buzones: [buzon.a1], cuentas_por_dia: 10, inicio: '2026-11-10', fin: '2026-11-27',
-    ajustes: { icp: 'Equipos de QA', roles_objetivo: ['Líder de QA'], links_permitidos: 'https://cp-a.test/webinar' },
+    ajustes: { icp: 'Equipos de QA', roles_objetivo: ['Líder de QA'], links_permitidos: 'https://cp-a.test/webinar',
+      responsable_positivos: 'Bruno Díaz', responsable_email: 'bruno@cp-a.test' },
   }));
 
   // Con la «principal» activa y sin tope cargado, no puede haber otra activa.
@@ -252,7 +262,8 @@ test('campañas: queda todo en el historial de la campaña y en la auditoría', 
   const h = (await q(`select cambios, por_email from sdr.ajustes_historial where client_id = $1 and campana_id = $2 order by id`, [A, webinar.id])).rows;
   assert.equal(h[0].cambios[0], 'creada');
   assert.ok(h.some((x) => x.cambios.includes('estado') && x.por_email === 'operador@cp.test'));
-  const empresa = (await q(`select count(*)::int n from sdr.ajustes_historial where client_id = $1 and campana_id is null`, [A])).rows[0].n;
+  const empresa = (await q(`select count(*)::int n from sdr.ajustes_historial where client_id = $1 and campana_id is null
+      and coalesce(nota, '') not ilike '%migración 024%'`, [A])).rows[0].n;
   assert.equal(empresa, 0, 'las campañas no ensucian el historial de Empresa');
   // Los títulos son los de la campaña (los buzones elegidos, no el texto libre de Empresa), y lo
   // que leen los bots lleva el título general de cada clave.
@@ -341,6 +352,62 @@ test('migración 014: lo de la campaña pasa a la «principal» y Empresa se que
     assert.ok(!sdr.historial.some((h) => h.id === Number(deCampana)));
     assert.equal((await cli.call('POST', `/clients/${M}/sdr/historial/${deCampana}/restaurar`)).status, 404);
 
+  } finally {
+    await q(`delete from mailgw.client where id = $1`, [M]);
+  }
+});
+
+test('migración 024: el tono, los casos, las objeciones, las exclusiones y quién toma a los interesados pasan a cada campaña', async () => {
+  const M = 'cp-m24';
+  await store.upsertClient(M, 'Campañas M24');
+  await q(`insert into sdr.cliente_config (client_id, ajustes) values ($1, $2)`, [M, {
+    nombre_comercial: 'M24 SA', descripcion: 'QA.', firma: 'Equipo M24', acepta_mails_extrapolados: false,
+    tono: 'formal', idioma: 'español', excluir: ['consultoras'], objeciones: ['«Caro»: se paga solo'],
+    prueba_social: ['Caso 1', 'Caso 2'], responsable_positivos: 'Ana Pérez', responsable_email: 'ana@m24.test',
+    link_agenda: 'https://agenda.test/ana',
+  }]);
+  try {
+    // La «principal» ya cambiaba el tono, sumaba una exclusión y elegía un caso de la biblioteca.
+    await q(`update sdr.campana set ajustes = ajustes || $2 where client_id = $1 and clave = 'principal'`,
+      [M, { tono: 'cercano', excluir: ['estudios', 'consultoras'], prueba_social: ['Caso 2'] }]);
+    await q(`insert into sdr.campana (client_id, clave, nombre, tipo, estado, ajustes) values
+      ($1, 'ingles', 'English', 'prospeccion', 'pausada', '{"idioma": "inglés", "responsable_positivos": "John Doe", "responsable_email": "john@m24.test"}'),
+      ($1, 'vieja', 'Vieja', 'prospeccion', 'pausada', '{"prueba_social": ["Un caso que ya no está"]}')`, [M]);
+
+    assert.equal((await q(`select sdr.migrar_empresa_024($1, true) as hecho`, [M])).rows[0].hecho, true);
+    assert.equal((await q(`select sdr.migrar_empresa_024($1, true) as hecho`, [M])).rows[0].hecho, false, 'una segunda vez no cambia nada');
+
+    const e = (await q(`select ajustes from sdr.cliente_config where client_id = $1`, [M])).rows[0].ajustes;
+    assert.deepEqual(Object.keys(e).sort(), ['acepta_mails_extrapolados', 'descripcion', 'firma', 'nombre_comercial']);
+    const k = Object.fromEntries((await q(`select clave, ajustes from sdr.campana where client_id = $1`, [M])).rows.map((r) => [r.clave, r.ajustes]));
+    // Cada campaña ve lo mismo que veía antes: lo suyo, y lo de Empresa donde no tenía nada.
+    assert.equal(k.principal.tono, 'cercano');
+    assert.equal(k.principal.idioma, 'español');
+    assert.deepEqual(k.principal.excluir, ['consultoras', 'estudios']);
+    assert.deepEqual(k.principal.objeciones, ['«Caro»: se paga solo']);
+    assert.deepEqual(k.principal.prueba_social, ['Caso 2'], 'los casos que había elegido');
+    assert.equal(k.principal.responsable_email, 'ana@m24.test');
+    assert.equal(k.principal.link_agenda, 'https://agenda.test/ana');
+    assert.equal(k.ingles.idioma, 'inglés');
+    assert.equal(k.ingles.tono, 'formal');
+    assert.equal(k.ingles.responsable_email, 'john@m24.test', 'su propio responsable no se pisa');
+    assert.deepEqual(k.ingles.prueba_social, ['Caso 1', 'Caso 2'], 'sin casos elegidos, citaba todos');
+    assert.equal(k.vieja.prueba_social, undefined, 'había elegido uno que ya no estaba: no citaba ninguno');
+    const notas = (await q(`select nota from sdr.ajustes_historial where client_id = $1 order by id`, [M])).rows.map((r) => r.nota);
+    assert.equal(notas[0], 'Antes de la migración 024.');
+    assert.match(notas.at(-1), /^Migración 024: /);
+
+    // Si una versión vieja de Empresa vuelve (Biguá la restaura tal cual), lo de la campaña pasa
+    // otra vez a las campañas sin pisar lo suyo, y Empresa queda sólo con quién es.
+    const bigua = await loggedIn('operador-m24@cp.test', 'bigua_admin');
+    const antes = (await q(`select id from sdr.ajustes_historial where client_id = $1 and nota = 'Antes de la migración 024.'`, [M])).rows[0].id;
+    await q(`update sdr.campana set ajustes = ajustes || '{"prueba_social": ["Caso 3"]}' where client_id = $1 and clave = 'ingles'`, [M]);
+    ok(await bigua.call('POST', `/clients/${M}/sdr/historial/${antes}/restaurar`));
+    const e2 = (await q(`select ajustes from sdr.cliente_config where client_id = $1`, [M])).rows[0].ajustes;
+    assert.deepEqual(Object.keys(e2).sort(), ['acepta_mails_extrapolados', 'descripcion', 'firma', 'nombre_comercial']);
+    const ingles = (await q(`select ajustes from sdr.campana where client_id = $1 and clave = 'ingles'`, [M])).rows[0].ajustes;
+    assert.equal(ingles.idioma, 'inglés');
+    assert.deepEqual(ingles.prueba_social, ['Caso 1', 'Caso 2', 'Caso 3'], 'los casos de Empresa se suman a los de la campaña');
   } finally {
     await q(`delete from mailgw.client where id = $1`, [M]);
   }

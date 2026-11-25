@@ -6,7 +6,7 @@
 
 import { asRole, asOwner } from '../store.mjs';
 import { errors, GatewayError } from '../errors.mjs';
-import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, ordenar, tieneLegado, tituloCampana, tituloDe } from './ajustes.mjs';
+import { CAMPOS, CAMPOS_CAMPANA, CAMPOS_EMPRESA, ordenar, tieneLegado, tieneLegado024, tituloCampana, tituloDe } from './ajustes.mjs';
 import * as noContactar from './no_contactar.mjs';
 import * as enCampana from './en_campana.mjs';
 
@@ -58,7 +58,8 @@ const AVISO_DATOS_CLIENTE = 'Lo que sigue lo cargó el cliente en el panel (lo c
 
 // Lo que es de cada campaña y no de Empresa (docs/21 §6.2): no se repite en la sección de Empresa.
 const SOLO_CAMPANA = new Set(['oferta', 'propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion',
-  'links_permitidos', 'positivos', 'cuentas_por_dia']);
+  'links_permitidos', 'positivos', 'cuentas_por_dia', 'tono', 'idioma', 'excluir', 'prueba_social', 'objeciones',
+  'responsable_positivos', 'responsable_email', 'link_agenda']);
 // Lo de Empresa que no se repite en la sección de cada campaña.
 const SOLO_EMPRESA = new Set(['nombre_comercial', 'descripcion', 'firma']);
 const ESTADOS_CON_SECCION = ['activa', 'pausada', 'terminada'];
@@ -68,7 +69,8 @@ const ESTADOS_CON_SECCION = ['activa', 'pausada', 'terminada'];
 function comoAntes(cfg, principal) {
   const { valores, origen } = enCampana.efectivos(cfg, principal);
   const out = {};
-  for (const k of ['icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'links_permitidos', 'positivos']) {
+  for (const k of ['tono', 'idioma', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos', 'dias_aviso',
+    'links_permitidos', 'objeciones', 'positivos', 'responsable_positivos', 'responsable_email', 'link_agenda']) {
     if (valores[k] !== undefined) out[k] = valores[k];
   }
   if (origen.llamado_accion === 'campana') out.llamado_accion = valores.llamado_accion;
@@ -101,7 +103,7 @@ const textoCalibracion = (total, usadas) => {
 };
 
 // Las secciones del cliente en reglas_manual (docs/21 §7.2, paso 2):
-//   - ajustes-cliente («Ajustes de este cliente: Empresa»): lo común a todas las campañas, los
+//   - ajustes-cliente («Ajustes de este cliente: Empresa»): quién es la empresa, los
 //     buzones y la lista de no contactar;
 //   - campanas: las campañas, con su estado, volumen, calibración y buzones;
 //   - campana-<clave> («Campaña: <nombre>»): lo que vale para las personas de esa campaña.
@@ -112,7 +114,7 @@ const textoCalibracion = (total, usadas) => {
 export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { porCampana = true } = {}) {
   const lineas = [`Cliente: ${nombreCliente} (\`${clientId}\`).`];
   const empresa = { seccion: 'ajustes-cliente', titulo: 'Ajustes de este cliente: Empresa',
-    resumen: 'Lo común a todas las campañas: quién es, cómo habla, a quién no se le escribe, buzones y firmas.' };
+    resumen: 'Quién es la empresa, a quién no se le escribe nunca, buzones y firmas. Cómo habla y lo demás, en cada campaña.' };
   if (!cfg) {
     lineas.push('', 'Este cliente todavía no tiene ajustes cargados. No prospectes ni envíes: avisá al orquestador.');
     return [{ ...empresa, contenido: lineas.join('\n') }];
@@ -175,7 +177,8 @@ export function seccionesCliente(clientId, nombreCliente, cfg, extra = {}, { por
     const { valores } = enCampana.efectivos(cfg, k);
     const propios = Object.fromEntries(Object.entries(valores).filter(([x]) => !SOLO_EMPRESA.has(x)));
     const c = [`Campaña ${enCampana.citaNombre(k.nombre)} (\`${k.clave}\`), ${k.tipo}, **${k.estado}**. Vale para las cuentas y personas de esta ` +
-      'campaña, junto con lo de Empresa (las exclusiones y las objeciones de acá ya suman las de Empresa).',
+      'campaña, junto con quién es la empresa (Empresa). El idioma, el tono, los casos, las objeciones, las exclusiones y ' +
+      'quién toma a los interesados son los de acá: no los busques en Empresa ni en otra campaña.',
     `Calibración: ${textoCalibracion(total(k), k.usadas)}`];
     if (k.tipo === 'lista') {
       c.push('', '**Lista del cliente:** esta campaña no busca cuentas por avisos. Sus cuentas son las que cargó el cliente desde un ' +
@@ -1008,7 +1011,7 @@ async function controlarCopia(c, clientId, cfg, p, cc) {
   if (!r.email) {
     throw new GatewayError('sin_responsable',
       'No está cargado el mail de quien toma a los interesados («Mail de quien toma a los interesados», en los ajustes de la ' +
-      'campaña o de Empresa): sin eso no se pone a nadie en copia. Mandá la respuesta sin copia o pedile al cliente que lo cargue.', 422);
+      'campaña): sin eso no se pone a nadie en copia. Mandá la respuesta sin copia o pedile al cliente que lo cargue.', 422);
   }
   const fuera = cc.filter((x) => !esDelResponsable(x, r.email));
   if (fuera.length) {
@@ -1295,10 +1298,12 @@ export async function setConfig(clientId, cfg) {
         [clientId, JSON.stringify(rows[0].ajustes), Object.keys(cfg.ajustes)]);
       // Empresa no guarda lo de la campaña: si la CLI lo trae (icp, oferta, cuentas por día…), pasa a
       // la «principal» como en la migración 014.
-      if (tieneLegado(rows[0].ajustes)) {
-        await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
-        return (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0];
-      }
+      // Lo mismo con lo que desde la 024 es de cada campaña (tono, casos, responsable…): a todas.
+      const legado = tieneLegado(rows[0].ajustes);
+      const legado024 = tieneLegado024(rows[0].ajustes);
+      if (legado) await c.query(`select sdr.migrar_empresa_014($1)`, [clientId]);
+      if (legado024) await c.query(`select sdr.migrar_empresa_024($1)`, [clientId]);
+      if (legado || legado024) return (await c.query(`select * from sdr.cliente_config where client_id = $1`, [clientId])).rows[0];
     }
     return rows[0];
   });

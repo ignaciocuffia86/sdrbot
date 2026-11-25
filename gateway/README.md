@@ -141,7 +141,7 @@ Las herramientas MCP reciben `campana` (la clave, opcional) y el gateway hace cu
 - **Calibración:** se cuenta por campaña.
 - **Buzones nuevos:** entran solos en la «principal» (migración `013`).
 
-Las reglas leen la campaña y la pestaña la ven Biguá y el cliente. Empresa tiene un solo formulario, con lo común a todas las campañas: lo de cada campaña (a quién, la propuesta, qué es positivo, el volumen) se carga en su campaña. Si lo de una campaña llega a Empresa por otro camino (la CLI, volver a una versión de antes de la `014`), pasa a la «principal» (migración `022`).
+Las reglas leen la campaña y la pestaña la ven Biguá y el cliente. Empresa tiene un solo formulario, sólo con quién es la empresa (nombre comercial, qué hace, firma por defecto, mails deducidos): lo de cada campaña (a quién y a quién no, la propuesta y sus casos, el idioma y el tono, qué es positivo, las objeciones, quién toma a los interesados, el volumen) se carga en su campaña (migración `024`). Si lo de una campaña llega a Empresa por otro camino (la CLI, volver a una versión vieja), pasa a la «principal» (migración `022`) o, lo de la `024`, a todas las campañas.
 
 Lo prueban:
 - `test/campanas.test.mjs`: la base.

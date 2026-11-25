@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import * as store from '../src/store.mjs';
 import * as sdr from '../src/sdr/store.mjs';
 import { replyFields } from '../src/mail/compose.mjs';
-import { aplicarCambiosEmpresa } from '../src/sdr/ajustes.mjs';
+import { aplicarCambiosCampana } from '../src/sdr/ajustes.mjs';
 import { newToken, aadFor, encryptSecret } from '../src/crypto.mjs';
 import { startServer } from '../src/server.mjs';
 import { startSmtp, gw, appendTo, rfc822, HOST, PORTS, USERS } from './helpers.mjs';
@@ -56,7 +56,12 @@ before(async () => {
     smtp_host: HOST, smtp_port: PORTS.smtps, smtp_security: 'tls',
     timezone: 'America/Argentina/Buenos_Aires', daily_send_cap: 40, append_sent: false,
   });
+  // Quién toma a los interesados es de la campaña (migración 024): si la CLI lo carga en Empresa,
+  // pasa a las campañas, acá la «principal».
   await sdr.setConfig(C, { calibracion_mails: 0, bots_activos: ['orquestador', 'prospector', 'seguimiento'], ajustes: AJUSTES });
+  const principal = (await store.asOwner((c) => c.query(`select ajustes from sdr.campana where client_id = $1 and clave = 'principal'`, [C]))).rows[0];
+  assert.equal(principal.ajustes.responsable_email, RESPONSABLE);
+  assert.equal((await sdr.config(C)).ajustes.responsable_email, undefined);
   tok.c = await token(C, ['read', 'send', 'sdr']);
 
   juan = (await ok(tok.c, 'registro_guardar_prospecto', { nombre: 'Juan Lead', email: 'juan@lead.test', bot: 'prospector' })).prospecto;
@@ -94,18 +99,18 @@ test('quién puede ir en copia: el responsable o su dominio, nunca un dominio p�
 });
 
 test('el mail de quien toma a los interesados: ajuste propio, o el que estaba escrito en el nombre', () => {
-  const k = { tipo: 'prospeccion', clave: 'principal', ajustes: {} };
-  assert.deepEqual(sdr.responsable({ ajustes: AJUSTES }, k), { nombre: 'Augusto Pérez', email: RESPONSABLE });
-  assert.deepEqual(sdr.responsable({ ajustes: { responsable_positivos: 'Ana Pérez, Ana@Empresa.test' } }, k),
+  const k = (ajustes) => ({ tipo: 'prospeccion', clave: 'principal', ajustes });
+  assert.deepEqual(sdr.responsable({ ajustes: {} }, k(AJUSTES)), { nombre: 'Augusto Pérez', email: RESPONSABLE });
+  assert.deepEqual(sdr.responsable({ ajustes: {} }, k({ responsable_positivos: 'Ana Pérez, Ana@Empresa.test' })),
     { nombre: 'Ana Pérez, Ana@Empresa.test', email: 'ana@empresa.test' });
-  assert.equal(sdr.responsable({ ajustes: { responsable_positivos: 'Ana Pérez' } }, k).email, null);
-  // La campaña puede tener su propio responsable.
-  const kAna = { ...k, ajustes: { responsable_email: 'ana@principal.test' } };
-  assert.equal(sdr.responsable({ ajustes: AJUSTES }, kAna).email, 'ana@principal.test');
+  assert.equal(sdr.responsable({ ajustes: {} }, k({ responsable_positivos: 'Ana Pérez' })).email, null);
+  // Es de cada campaña: lo que quede en Empresa (de antes de la 024) no cuenta.
+  assert.deepEqual(sdr.responsable({ ajustes: AJUSTES }, k({})), { nombre: null, email: null });
+  assert.equal(sdr.responsable({ ajustes: AJUSTES }, k({ responsable_email: 'ana@principal.test' })).email, 'ana@principal.test');
 
   const BIGUA = { esBigua: true };
-  assert.equal(aplicarCambiosEmpresa({}, { responsable_email: ' Ana@Empresa.test ' }, BIGUA).responsable_email, 'ana@empresa.test');
-  assert.throws(() => aplicarCambiosEmpresa({}, { responsable_email: 'ana arroba empresa' }, BIGUA), /tiene que ser un mail/);
+  assert.equal(aplicarCambiosCampana({}, { responsable_email: ' Ana@Empresa.test ' }, BIGUA).responsable_email, 'ana@empresa.test');
+  assert.throws(() => aplicarCambiosCampana({}, { responsable_email: 'ana arroba empresa' }, BIGUA), /tiene que ser un mail/);
 });
 
 test('replyFields: la copia pedida se suma sin repetir al destinatario ni al buzón', () => {
@@ -213,13 +218,16 @@ test('sin el mail del responsable no hay copia; el mail escrito en el nombre sir
   await ok(tok.c, 'registro_evento', { tipo: 'positivo', canal: 'mail', prospecto_id: otra.id, ...SEG });
   const pedir = (cc) => call(tok.c, 'registro_pedir_aprobacion', { ...SEG, tipo: 'respuesta_positivo', prospecto_id: otra.id,
     contenido: { buzon: BUZON, texto: 'Te sumo a Augusto.', cc } });
+  const campana = (ajustes) => store.asOwner((c) => c.query(
+    `update sdr.campana set ajustes = $2 where client_id = $1 and clave = 'principal'`, [C, ajustes]));
   try {
-    await sdr.setConfig(C, { ajustes: { responsable_positivos: 'Augusto Pérez' } });
+    await campana({ responsable_positivos: 'Augusto Pérez' });
     const sin = await pedir([RESPONSABLE]);
     assert.equal(sin.error.code, 'sin_responsable');
-    await sdr.setConfig(C, { ajustes: { responsable_positivos: 'Augusto Pérez, augusto@principal.test' } });
+    assert.match(sin.error.message, /en los ajustes de la campaña/);
+    await campana({ responsable_positivos: 'Augusto Pérez, augusto@principal.test' });
     assert.equal((await pedir([RESPONSABLE])).status, 200);
   } finally {
-    await sdr.setConfig(C, { ajustes: AJUSTES });
+    await campana(AJUSTES);
   }
 });

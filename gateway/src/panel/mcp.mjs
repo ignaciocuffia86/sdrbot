@@ -137,7 +137,7 @@ const TOOLS = [
   },
   {
     name: 'alta_ver', soloBigua: true,
-    description: 'El asistente de alta de un cliente (docs/29): los 16 pasos con su estado (listo, por hacer, esperando una definición, '
+    description: 'El asistente de alta de un cliente (docs/29): los pasos con su estado (listo, por hacer, esperando una definición, '
       + 'no aplica), qué le falta a cada uno y lo pendiente. Para seguir un alta o ver qué queda después de alta_cargar.',
     inputSchema: obj({ cliente: CLIENTE }),
     run: async (user, a) => S.altaVer(await ctxDe(user, a)),
@@ -349,7 +349,8 @@ const TOOLS = [
   },
   {
     name: 'campana_crear', escribe: true,
-    description: 'Crea una campaña en borrador, como «Nueva campaña» en el panel. Lo que no diga, lo hereda de Empresa. '
+    description: 'Crea una campaña en borrador, como «Nueva campaña» en el panel. El idioma, el tono, los casos, las objeciones, las '
+      + 'exclusiones y quién toma a los interesados son de cada campaña: no se heredan de Empresa (para reusarlos, campana_duplicar). '
       + `Tipos: ${TIPOS_TEXTO}. Primero llamala sin confirmar: devuelve cómo queda y qué le faltaría para activarla, sin crear `
       + 'nada; mostráselo a la persona y recién con su OK repetí con confirmar: true. Se activa después con campana_estado.',
     get inputSchema() {
@@ -464,7 +465,8 @@ const TOOLS = [
   },
   {
     name: 'ajustes_ver',
-    description: 'Los ajustes de Empresa del cliente (oferta, tono, firma, objeciones…), cómo los leen los bots y los últimos cambios.',
+    description: 'Los ajustes de Empresa del cliente (nombre comercial, qué hace, firma por defecto, mails deducidos), cómo los leen los bots y los últimos cambios. '
+      + 'El tono, los casos, las objeciones, las exclusiones y quién toma a los interesados son de cada campaña (campana_ver).',
     inputSchema: obj({ cliente: CLIENTE }),
     run: async (user, a) => {
       const { campos: _c, bloques: _b, historial, ...r } = await S.sdrVer(await ctxDe(user, a));
@@ -473,7 +475,8 @@ const TOOLS = [
   },
   {
     name: 'ajustes_editar', escribe: true,
-    description: 'Cambia ajustes de Empresa (lo que vale para todas las campañas: oferta, tono, firma, casos, objeciones, interesados…), '
+    description: 'Cambia ajustes de Empresa (quién es la empresa, igual para todas las campañas: nombre comercial, qué hace, firma por defecto, mails deducidos; '
+      + 'el tono, los casos, las objeciones, las exclusiones y quién toma a los interesados se cambian en cada campaña con campana_editar), '
       + 'con los mismos permisos que el panel. Pasá sólo lo que cambia; null borra un campo. Primero llamala sin confirmar: devuelve '
       + 'cada cambio con el valor de antes y el de después, sin guardar; mostráselo a la persona y recién con su OK repetí con '
       + 'confirmar: true. Si lo cambia un cliente, Biguá se entera.',

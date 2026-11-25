@@ -75,49 +75,49 @@ verificar. Un cambio de DNS puede tardar desde minutos hasta unas horas en verse
 
 ## 4. Los ajustes de tu SDR
 
-Pestaña **Empresa**. Es lo que los bots leen sobre tu empresa antes de cada tarea. Los cambios valen
-desde la próxima corrida de cada bot (en el día), y Biguá recibe un aviso de qué cambiaste.
+Se cargan en dos lugares: **Empresa** (quién es tu empresa, igual para todas las campañas) y **cada
+campaña** (todo lo demás: a quién, qué se ofrece, en qué idioma y con qué tono, qué casos se citan,
+qué objeciones se contestan y quién toma a los interesados). Así una campaña en inglés y otra en
+español, o una por vertical con su propio responsable, no se pisan. Para usar lo mismo en otra
+campaña, **Duplicar** la copia como un borrador nuevo.
 
-A la derecha, **«Así lo leen los bots»** muestra el resultado tal cual.
+Los cambios valen desde la próxima corrida de cada bot (en el día), y Biguá recibe un aviso de qué
+cambiaste. A la derecha, **«Así lo leen los bots»** muestra el resultado tal cual.
 
-**Identidad y voz**
+**Empresa**
 
 | Campo | Qué poner | Ejemplo |
 |---|---|---|
 | Nombre comercial | Cómo se presenta tu empresa | BairesQA |
-| Oferta | Qué ofrecen y para qué sirve, en dos o tres líneas | «QA funcional y automatizado como servicio: equipos de testing que se suman al equipo del cliente, para web, mobile y API.» |
-| Tono | Cómo escriben | «Directo y técnico, sin superlativos ni signos de exclamación.» |
-| Idioma y trato | Idioma y si va de vos o de usted | «Español; de vos en Argentina, de usted en Chile.» |
+| Qué hace la empresa | La descripción general, en dos o tres líneas | «QA funcional y automatizado como servicio, para web, mobile y API.» |
 | Firma por defecto | Para los buzones sin firma propia (cada buzón tiene la suya en Canales) | «Equipo comercial · TuEmpresa» |
-| Casos y datos que se pueden citar | Uno por renglón, con su fuente. Es lo único que los bots citan como resultado | «Banca: regresión de 5 días a 6 horas (caso publicado)» |
 
-**A quién y con qué señal**
+**Cada campaña** (pestaña **Campañas**, con su asistente)
 
 | Campo | Qué poner | Ejemplo |
 |---|---|---|
-| A quién le venden | País, industrias, tamaño y las señales que importan | «Empresas de Argentina de más de 200 empleados, en banca, seguros y software, con avisos de QA abiertos.» |
+| Propuesta | Qué se ofrece en esta campaña, para qué sirve y por qué ahora | «Regresión automatizada para core bancario.» |
+| Casos y datos que se pueden citar | Uno por renglón, con su fuente. Es lo único que los bots citan como resultado | «Banca: regresión de 5 días a 6 horas (caso publicado)» |
+| A quién le venden | País, industrias, tamaño y las señales que importan | «Bancos medianos de Argentina con avisos de QA abiertos.» |
 | Cargos a los que se escribe | Uno por renglón. Es a quién se revela el contacto | Head of QA · QA Manager · CTO |
 | Tipos de empresa y cargos a evitar | Uno por renglón. Las empresas puntuales van en «No contactar» (§5) | Consultoras y staffing · Cargos junior |
-
-**Conversación**
-
-| Campo | Qué poner | Ejemplo |
-|---|---|---|
+| Idioma y trato | Idioma y si va de vos o de usted | «Español; de vos en Argentina, de usted en Chile.» o «Inglés» |
+| Tono | Cómo escriben en esta campaña | «Directo y técnico, sin superlativos ni signos de exclamación.» |
 | Qué le pedimos al prospecto | El pedido del final del primer mail | «Una charla de 20 minutos esta semana» |
 | Objeciones y cómo responderlas | Una por renglón: lo que dicen y cómo se responde | «"Ya tenemos QA": ofrecemos cubrir picos o automatizar lo repetitivo.» |
 | Qué cuenta como respuesta positiva | Uno por renglón | Interesado · Pide reunión · Pide información |
-| Quién toma a los interesados | El nombre de quien sigue la conversación | «Ana Pérez» |
-| Mail de quien toma a los interesados | Su casilla del **dominio principal**. Va en copia en la respuesta a un interesado (§7) | `ana@tuempresa.com` |
+| Quién toma a los interesados | El nombre de quien sigue la conversación (por ejemplo, el AM de la vertical o del territorio) | «Ana Pérez» |
+| Mail de quien toma a los interesados | Su casilla del **dominio principal**. Va en copia en la respuesta a un interesado (§7). Sin esto la campaña no se activa | `ana@tuempresa.com` |
 | Link de agenda | Para que un interesado elija horario. Va sólo en la respuesta a un positivo | `https://calendly.com/tuempresa/20min` |
 
-**Operación:** cuántas empresas nuevas por día, qué buzón usar para qué y si se escribe a mails
-deducidos. Los decide Biguá, salvo que tu cuenta sea autogestionada: entonces los cambiás vos (las
-empresas por día, hasta el tope que acordaste con Biguá).
+**Operación:** cuántas empresas nuevas por día, por qué buzones sale cada campaña y si se escribe a
+mails deducidos. Los decide Biguá, salvo que tu cuenta sea autogestionada: entonces los cambiás vos
+(las empresas por día, hasta el tope que acordaste con Biguá).
 
 Algunos consejos:
 
 - **Sin promesas que no puedas cumplir.** Los bots no inventan precios, plazos ni casos de éxito,
-  pero repiten lo que diga la oferta y lo que cargues en los casos. Si ponés «en 2 semanas», van a
+  pero repiten lo que diga la propuesta y lo que cargues en los casos. Si ponés «en 2 semanas», van a
   decir «en 2 semanas».
 - **Corto y concreto.** Una oferta de tres líneas funciona mejor que un folleto.
 - **Los cargos mandan el gasto:** cada contacto revelado cuesta. Poné sólo los cargos a los que de

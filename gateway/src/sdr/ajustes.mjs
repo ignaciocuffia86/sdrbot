@@ -2,8 +2,11 @@
 // (Empresa o campaña, docs/21 §6.2), quién puede tocar cada uno y cómo se validan.
 //
 // Dos esquemas sobre el mismo validador:
-//   - EMPRESA: lo común a todas las campañas (sdr.cliente_config.ajustes).
-//   - CAMPAÑA: lo de cada campaña (sdr.campana.ajustes) y sus columnas (estado, fechas, volumen…).
+//   - EMPRESA: quién es la empresa, igual para todas las campañas (sdr.cliente_config.ajustes).
+//   - CAMPAÑA: todo lo demás, de cada campaña (sdr.campana.ajustes) y sus columnas (estado, fechas,
+//     volumen…). Desde la migración 024 el tono, el idioma, los casos, las objeciones, las
+//     exclusiones y quién toma a los interesados son sólo de la campaña: una campaña en inglés y
+//     otra en español no comparten nada de eso (docs/21 §6.2).
 // Más CAMPOS, las claves con las que las reglas de antes de las campañas leen a un cliente (Empresa y
 // la «principal» juntas): sólo para armar esa sección de las reglas, ya no se editan así (migración 022).
 
@@ -29,19 +32,19 @@ const DEF = {
   propuesta: { titulo: 'Propuesta', tipo: 'parrafo', max: 1500, cliente: true,
     ayuda: 'Qué se ofrece en esta campaña, para qué sirve y por qué ahora. Sin precios, plazos ni resultados que no estén confirmados: los bots no los inventan, pero repiten lo que diga acá.' },
   tono: { titulo: 'Tono', tipo: 'parrafo', max: 600, cliente: true,
-    ayuda: 'Cómo escriben: formal o cercano, técnico o comercial, qué evitar.' },
+    ayuda: 'Cómo se escribe en esta campaña: formal o cercano, técnico o comercial, qué evitar.' },
   idioma: { titulo: 'Idioma y trato', tipo: 'texto', max: 200, cliente: true,
-    ayuda: 'Por ejemplo: español, de vos en Argentina y de usted en Chile.' },
+    ayuda: 'En qué idioma se escribe en esta campaña y cómo se trata al prospecto. Por ejemplo: español, de vos en Argentina y de usted en Chile; o inglés. Vacío: español neutro.' },
   firma: { titulo: 'Firma por defecto', tipo: 'parrafo', max: 400, cliente: true,
     ayuda: 'Para los buzones que no tienen firma propia (la firma de cada buzón se carga en Canales → Correo).' },
   prueba_social: { titulo: 'Casos y datos que se pueden citar', tipo: 'lista', max: 300, maxItems: 15, cliente: true,
-    ayuda: 'Uno por renglón, con su fuente: «Banca: regresión de 5 días a 6 horas (caso publicado)». Es lo único que los bots citan como resultado.' },
+    ayuda: 'Los de esta campaña, uno por renglón, con su fuente: «Banca: regresión de 5 días a 6 horas (caso publicado)». Es lo único que los bots citan como resultado. Para usar los mismos en otra campaña, duplicala.' },
   icp: { titulo: 'A quién le venden', tipo: 'parrafo', max: 1500, cliente: true,
     ayuda: 'País, industrias, tamaño y las señales que importan (por ejemplo, avisos de empleo abiertos).' },
   roles_objetivo: { titulo: 'Cargos a los que se escribe', tipo: 'lista', max: 120, maxItems: 25, cliente: true,
     ayuda: 'Uno por línea. Es la elección de a quién revelar en ASCI.' },
   excluir: { titulo: 'Tipos de empresa y cargos a evitar', tipo: 'lista', max: 300, maxItems: 25, cliente: true,
-    ayuda: 'Uno por línea: tipos de empresa, rubros, cargos. Las empresas y personas puntuales van en «No contactar», abajo.' },
+    ayuda: 'Los de esta campaña, uno por línea: tipos de empresa, rubros, cargos. Las empresas y personas puntuales a las que no se les escribe nunca, desde ninguna campaña, van en «No contactar» (Empresa).' },
   dias_aviso: { titulo: 'Antigüedad máxima del aviso (días)', tipo: 'numero', min: 3, max: 60, autogestion: true,
     ayuda: 'Sólo se prospecta una cuenta con un aviso publicado en estos últimos días. Vacío: 14.' },
   senal_avisos: { titulo: 'Señal en los avisos', tipo: 'parrafo', max: 500, cliente: false,
@@ -51,11 +54,11 @@ const DEF = {
   links_permitidos: { titulo: 'Links que pueden ir en los mails', tipo: 'urls', max: 300, maxItems: 3, cliente: true,
     ayuda: 'Hasta 3, uno por línea, empezando con https://. Fuera de estos, los mails no llevan links (por ejemplo, el de inscripción a un webinar).' },
   objeciones: { titulo: 'Objeciones y cómo responderlas', tipo: 'lista', max: 600, maxItems: 20, cliente: true,
-    ayuda: 'Una por línea: «lo que dicen»: cómo se responde.' },
+    ayuda: 'Las de esta campaña, una por línea: «lo que dicen»: cómo se responde.' },
   positivos: { titulo: 'Qué cuenta como respuesta positiva', tipo: 'lista', max: 120, maxItems: 15, cliente: true,
     ayuda: 'Uno por línea. Una respuesta positiva se contesta sólo con aprobación del operador.' },
   responsable_positivos: { titulo: 'Quién toma a los interesados', tipo: 'texto', max: 200, cliente: true,
-    ayuda: 'El nombre de quien sigue con un interesado, por ejemplo «Ana Pérez». Los bots lo nombran al proponer la reunión.' },
+    ayuda: 'El nombre de quien sigue con un interesado de esta campaña, por ejemplo «Ana Pérez» (el AM de la vertical o del territorio). Los bots lo nombran al proponer la reunión.' },
   responsable_email: { titulo: 'Mail de quien toma a los interesados', tipo: 'email', max: 254, cliente: true,
     ayuda: 'La casilla del dominio principal de quien toma a los interesados, por ejemplo ana@empresa.com. Va en copia en la respuesta a un interesado: desde ahí la conversación sigue con esa persona.' },
   link_agenda: { titulo: 'Link de agenda', tipo: 'url', max: 300, cliente: true,
@@ -74,29 +77,26 @@ const armar = (lista) => lista.map(([clave, bloque, extra = {}]) => ({ clave, bl
 
 // ---------------------------------------------------------------- Empresa
 
+// Sólo quién es la empresa y lo que vale para todas las campañas. Cómo habla, qué casos cita, qué
+// objeciones contesta, a quién evita y quién toma a los interesados es de cada campaña.
 export const BLOQUES_EMPRESA = [
-  { clave: 'identidad', titulo: 'Identidad', ayuda: 'Quién es la empresa.' },
-  { clave: 'voz', titulo: 'Voz', ayuda: 'Cómo escribe. Una campaña puede cambiar el tono y el idioma.' },
-  { clave: 'exclusiones', titulo: 'Exclusiones de siempre', ayuda: 'A quién no se le escribe desde ninguna campaña. Cada campaña puede sumar las suyas.' },
-  { clave: 'prueba', titulo: 'Casos y datos', ayuda: 'La biblioteca: cada campaña elige cuáles cita.' },
-  { clave: 'conversacion', titulo: 'Conversación', ayuda: 'Las objeciones de siempre y qué pasa con un interesado. Cada campaña suma sus objeciones y puede cambiar lo demás.' },
+  { clave: 'identidad', titulo: 'Identidad', ayuda: 'Quién es la empresa. Cómo habla, sus casos, sus objeciones y quién toma a los interesados van en cada campaña.' },
+  { clave: 'voz', titulo: 'Firma', ayuda: 'La de los buzones que no tienen una propia.' },
   { clave: 'operacion', titulo: 'Operación', ayuda: 'Lo que vale para las campañas que no digan otra cosa.' },
 ];
 
 export const CAMPOS_EMPRESA = armar([
   ['nombre_comercial', 'identidad'],
   ['descripcion', 'identidad'],
-  ['tono', 'voz'],
-  ['idioma', 'voz'],
   ['firma', 'voz'],
-  ['excluir', 'exclusiones'],
-  ['prueba_social', 'prueba'],
-  ['objeciones', 'conversacion', { titulo: 'Objeciones de siempre y cómo responderlas' }],
-  ['responsable_positivos', 'conversacion'],
-  ['responsable_email', 'conversacion'],
-  ['link_agenda', 'conversacion'],
   ['acepta_mails_extrapolados', 'operacion'],
 ]);
+
+// Lo que era de Empresa y desde la migración 024 es sólo de la campaña. Si llega a Empresa por otro
+// camino (la CLI, o volver a una versión de antes de la 024), sdr.migrar_empresa_024 lo pasa a
+// todas las campañas del cliente.
+export const DE_CAMPANA_DESDE_024 = ['tono', 'idioma', 'excluir', 'prueba_social', 'objeciones',
+  'responsable_positivos', 'responsable_email', 'link_agenda'];
 
 // ---------------------------------------------------------------- campaña
 
@@ -104,36 +104,32 @@ export const CAMPOS_EMPRESA = armar([
 export const BLOQUES_CAMPANA = [
   { clave: 'objetivo', titulo: 'Objetivo', ayuda: 'Tipo, estado y fechas.' },
   { clave: 'propuesta', titulo: 'Propuesta', ayuda: 'Qué se ofrece en esta campaña y qué casos se citan.' },
-  { clave: 'audiencia', titulo: 'Audiencia', ayuda: 'A quién se le escribe, a quién no (además de las exclusiones de Empresa) y qué dispara el primer contacto.' },
-  { clave: 'mensajes', titulo: 'Mensajes', ayuda: 'Qué se le pide al prospecto, qué links pueden ir y cómo se escribe.' },
-  { clave: 'respuestas', titulo: 'Respuestas', ayuda: 'Qué es positivo, las objeciones propias (además de las de Empresa) y quién toma a los interesados.' },
+  { clave: 'audiencia', titulo: 'Audiencia', ayuda: 'A quién se le escribe, a quién no y qué dispara el primer contacto. «No contactar», en Empresa, vale además para todas las campañas.' },
+  { clave: 'mensajes', titulo: 'Mensajes', ayuda: 'En qué idioma y con qué tono se escribe, qué se le pide al prospecto y qué links pueden ir.' },
+  { clave: 'respuestas', titulo: 'Respuestas', ayuda: 'Qué es positivo, las objeciones y quién toma a los interesados.' },
   { clave: 'ritmo', titulo: 'Canales y ritmo', ayuda: 'Buzones, volumen y LinkedIn.' },
   { clave: 'avanzado', titulo: 'Avanzado', ayuda: 'Lo que ajusta Biguá.' },
 ];
 
 // Lo que la campaña cambia de Empresa: si la campaña no lo tiene, vale el de Empresa (decisión 9 y
-// §6.2). La firma no: es del buzón (decisión 11).
-export const HEREDABLES = ['tono', 'idioma', 'acepta_mails_extrapolados', 'responsable_positivos', 'responsable_email', 'link_agenda'];
-
-// Las listas que están en los dos niveles se suman: el bot ve las de Empresa y las de la campaña.
-export const SE_SUMAN = ['excluir', 'objeciones'];
+// §6.2). La firma no: es del buzón (decisión 11). Desde la migración 024 es sólo esto: lo demás que
+// se heredaba o se sumaba (tono, idioma, exclusiones, objeciones, interesados) es de la campaña.
+export const HEREDABLES = ['acepta_mails_extrapolados'];
 
 export const CAMPOS_CAMPANA = armar([
   ['propuesta', 'propuesta'],
-  ['prueba_social', 'propuesta', { titulo: 'Casos que cita esta campaña', tipo: 'seleccion', de: 'prueba_social',
-    ayuda: 'Los de «Casos y datos» de Empresa que se pueden citar en esta campaña. Ninguno elegido: todos.' }],
+  ['prueba_social', 'propuesta'],
   ['icp', 'audiencia'],
   ['roles_objetivo', 'audiencia'],
-  ['excluir', 'audiencia', { titulo: 'Exclusiones de esta campaña',
-    ayuda: 'Además de las de Empresa. Uno por línea: tipos de empresa, rubros, cargos.' }],
+  ['excluir', 'audiencia'],
   ['senal_avisos', 'audiencia', { ayuda: 'Cómo le pide el prospector los avisos a ASCI (avisos_recientes). Por ejemplo: «texto: qa | tester | testing, solo_titulo: sí» o «fabricante: SAP». Vacío: lo arma con la propuesta.' }],
   ['dias_aviso', 'audiencia'],
   ['llamado_accion', 'mensajes', { ayuda: 'El pedido del final del primer mail. Vacío: el de su tipo de campaña.' }],
-  ['links_permitidos', 'mensajes'],
-  ['tono', 'mensajes'],
   ['idioma', 'mensajes'],
+  ['tono', 'mensajes'],
+  ['links_permitidos', 'mensajes'],
   ['positivos', 'respuestas'],
-  ['objeciones', 'respuestas', { titulo: 'Objeciones de esta campaña', ayuda: 'Además de las de Empresa. Una por línea: «lo que dicen»: cómo se responde.' }],
+  ['objeciones', 'respuestas'],
   ['responsable_positivos', 'respuestas'],
   ['responsable_email', 'respuestas'],
   ['link_agenda', 'respuestas'],
@@ -217,8 +213,7 @@ function renglones(c, v) {
   return items;
 }
 
-// contexto.empresa: los ajustes de Empresa, para validar lo que se elige de ellos.
-function limpiarValor(c, v, contexto = {}) {
+function limpiarValor(c, v) {
   if (v === null || v === undefined) return undefined;
   switch (c.tipo) {
     case 'texto':
@@ -239,14 +234,6 @@ function limpiarValor(c, v, contexto = {}) {
     }
     case 'urls': {
       const items = [...new Set(renglones(c, v).map((t) => urlValida(c, t)))];
-      return items.length ? items : undefined;
-    }
-    case 'seleccion': {
-      const items = [...new Set(renglones(c, v))];
-      const de = contexto.empresa?.[c.de] ?? [];
-      for (const x of items) {
-        if (!de.includes(x)) throw invalido(`«${x.slice(0, 60)}» no está en «${DEF[c.de].titulo}» de Empresa.`);
-      }
       return items.length ? items : undefined;
     }
     case 'email': {
@@ -304,7 +291,7 @@ const igual = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 // campo que el usuario no puede tocar, o que no existe, se rechaza (mandar el mismo valor que ya
 // tiene no cuenta como cambio). Las claves que no son del esquema (cargadas por la CLI) se
 // conservan tal cual, al final.
-function aplicar(campos, actuales, cambios, permiso, contexto = {}) {
+function aplicar(campos, actuales, cambios, permiso) {
   if (!cambios || typeof cambios !== 'object' || Array.isArray(cambios)) throw invalido('Faltan los ajustes.');
   const porClave = new Map(campos.map((c) => [c.clave, c]));
   const nuevo = { ...(actuales ?? {}) };
@@ -315,7 +302,7 @@ function aplicar(campos, actuales, cambios, permiso, contexto = {}) {
       if (igual(v, nuevo[k])) continue;
       throw prohibido(`«${c.titulo}» lo cambia Biguá.`);
     }
-    const limpio = limpiarValor(c, v, contexto);
+    const limpio = limpiarValor(c, v);
     if (k === 'cuentas_por_dia' && !permiso.esBigua && permiso.tope != null && limpio !== nuevo[k]) {
       // Vacío, el orquestador usa su valor por defecto (10, playbooks/orquestador/diaria.md), que
       // puede pasar el tope: el cliente no lo puede dejar vacío.
@@ -346,6 +333,7 @@ export const aplicarCambiosEmpresa = (actuales, cambios, permiso) => aplicar(CAM
 export const LEGADO_EMPRESA = ['oferta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'llamado_accion', 'links_permitidos',
   'positivos', 'cuentas_por_dia', 'buzones'];
 export const tieneLegado = (ajustes) => LEGADO_EMPRESA.some((k) => ajustes?.[k] !== undefined);
+export const tieneLegado024 = (ajustes) => DE_CAMPANA_DESDE_024.some((k) => ajustes?.[k] !== undefined);
 
 // El formulario de Empresa del panel: lo común a todas las campañas; lo de cada campaña, en su
 // campaña. Desde la migración 022 es uno solo (antes había uno de transición que editaba también lo
@@ -353,9 +341,8 @@ export const tieneLegado = (ajustes) => LEGADO_EMPRESA.some((k) => ajustes?.[k] 
 export const FORMULARIO_EMPRESA = { bloques: BLOQUES_EMPRESA, campos: CAMPOS_EMPRESA, aplicar: aplicarCambiosEmpresa };
 export const ordenarEmpresa = (a) => ordenarSegun(CAMPOS_EMPRESA, a);
 
-// Los ajustes de una campaña. empresa: los ajustes de Empresa (para elegir los casos).
-export const aplicarCambiosCampana = (actuales, cambios, permiso, { empresa = {} } = {}) =>
-  aplicar(CAMPOS_CAMPANA, actuales, cambios, permiso, { empresa });
+// Los ajustes de una campaña.
+export const aplicarCambiosCampana = (actuales, cambios, permiso) => aplicar(CAMPOS_CAMPANA, actuales, cambios, permiso);
 export const ordenarCampana = (a) => ordenarSegun(CAMPOS_CAMPANA, a);
 
 // Las columnas de una campaña (nombre, tipo, estado, fechas, buzones, volumen, Dripify,
@@ -448,6 +435,10 @@ export function faltantesParaActivar(campana, empresa = {}) {
   if (!campana.cuentas_por_dia) falta('ritmo', 'cuentas_por_dia', 'Faltan las cuentas nuevas por día.');
   if (tipo.fechas && (!campana.inicio || !campana.fin)) falta('objetivo', 'fin', 'Una campaña de evento necesita inicio y fin.');
   if (tipo.links && !a.links_permitidos?.length) falta('mensajes', 'links_permitidos', 'Falta el link de inscripción.');
+  // Un interesado se deriva en copia a quien lo toma (docs/26): sin su nombre y su mail, la respuesta
+  // a un positivo no puede salir. Es de cada campaña (el AM de la vertical, del territorio…).
+  if (!a.responsable_positivos) falta('respuestas', 'responsable_positivos', 'Falta quién toma a los interesados.');
+  if (!a.responsable_email) falta('respuestas', 'responsable_email', 'Falta el mail de quien toma a los interesados.');
   if (!empresa.nombre_comercial) falta('empresa', 'nombre_comercial', 'Falta el nombre comercial en Empresa.');
   return faltan;
 }
@@ -455,8 +446,8 @@ export function faltantesParaActivar(campana, empresa = {}) {
 // ---------------------------------------------------------------- lo que leen los bots
 
 // Los ajustes con los que trabaja una campaña: los de Empresa con los de la campaña encima.
-// Devuelve { valores, origen }: origen dice de dónde salió cada clave ('empresa', 'campana',
-// 'ambas' para las listas que se suman, o 'tipo' para el valor por defecto del tipo).
+// Devuelve { valores, origen }: origen dice de dónde salió cada clave ('empresa', 'campana' o 'tipo'
+// para el valor por defecto del tipo).
 export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion') {
   const e = empresa ?? {};
   const c = campana ?? {};
@@ -465,18 +456,11 @@ export function ajustesEfectivos(empresa = {}, campana = {}, tipo = 'prospeccion
   const poner = (k, v, o) => { if (v !== undefined) { valores[k] = v; origen[k] = o; } };
 
   for (const k of ['nombre_comercial', 'descripcion', 'firma']) poner(k, e[k], 'empresa');
-  for (const k of ['propuesta', 'icp', 'roles_objetivo', 'senal_avisos', 'dias_aviso', 'links_permitidos', 'positivos', 'acepta_mails_del_cliente']) {
+  for (const k of ['propuesta', 'prueba_social', 'icp', 'roles_objetivo', 'excluir', 'senal_avisos', 'dias_aviso', 'idioma', 'tono',
+    'links_permitidos', 'positivos', 'objeciones', 'responsable_positivos', 'responsable_email', 'link_agenda', 'acepta_mails_del_cliente']) {
     poner(k, c[k], 'campana');
   }
   for (const k of HEREDABLES) poner(k, c[k] ?? e[k], c[k] !== undefined ? 'campana' : 'empresa');
-  for (const k of SE_SUMAN) {
-    const suma = [...new Set([...(e[k] ?? []), ...(c[k] ?? [])])];
-    if (suma.length) poner(k, suma, e[k]?.length && c[k]?.length ? 'ambas' : e[k]?.length ? 'empresa' : 'campana');
-  }
-  if (e.prueba_social?.length) {
-    const elegidos = c.prueba_social?.length ? e.prueba_social.filter((x) => c.prueba_social.includes(x)) : e.prueba_social;
-    if (elegidos.length) poner('prueba_social', elegidos, c.prueba_social?.length ? 'campana' : 'empresa');
-  }
   if (c.llamado_accion) poner('llamado_accion', c.llamado_accion, 'campana');
   else poner('llamado_accion', (TIPOS[tipo] ?? TIPOS.prospeccion).llamado_accion, 'tipo');
 

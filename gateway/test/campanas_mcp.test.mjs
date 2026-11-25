@@ -44,7 +44,6 @@ before(async () => {
   await buzon(DARIO);
   await q(`insert into sdr.cliente_config (client_id, calibracion_mails, ajustes, tope_cuentas_dia) values ($1, 0, $2, 20)`, [C, {
     nombre_comercial: 'Cliente C', firma: 'Equipo C · https://www.cliente-c.test',
-    link_agenda: 'https://agenda.test/cliente-c',
   }]);
   k.principal = (await q(`select * from sdr.campana where client_id = $1 and clave = 'principal'`, [C])).rows[0];
   // Un buzón que llega después de la «principal» entra en ella solo (migración 013).
@@ -52,7 +51,7 @@ before(async () => {
   k.webinar = (await q(
     `insert into sdr.campana (client_id, clave, nombre, tipo, estado, cuentas_por_dia, calibracion_mails, ajustes)
      values ($1, 'webinar', 'Webinar', 'evento', 'activa', 5, 1, $2) returning *`,
-    [C, { propuesta: 'Webinar', links_permitidos: ['https://cliente-c.test/webinar'] }])).rows[0];
+    [C, { propuesta: 'Webinar', links_permitidos: ['https://cliente-c.test/webinar'], link_agenda: 'https://agenda.test/cliente-c' }])).rows[0];
   await q(`insert into sdr.campana_buzon (client_id, campana_id, account_id)
            select $1, $2, id from mailgw.account where client_id = $1 and email = $3`, [C, k.webinar.id, BETO]);
   k.otra = (await q(

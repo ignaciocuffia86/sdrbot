@@ -19,7 +19,7 @@ el hilo sigue entero y el dominio principal sólo le escribe a quien ya contest�
 
 | Regla | Dónde |
 |---|---|
-| La copia sólo va a quien toma a los interesados (`responsable_email` de la campaña o de Empresa; si no está, el mail escrito en `responsable_positivos`) o a alguien de su mismo dominio. Con un dominio público (gmail.com…), sólo esa dirección. El prospecto no va en copia | `controlarCopia` (`copia_no_permitida`, `sin_responsable`) |
+| La copia sólo va a quien toma a los interesados (`responsable_email` de la campaña; si no está, el mail escrito en `responsable_positivos`) o a alguien de su mismo dominio. Con un dominio público (gmail.com…), sólo esa dirección. El prospecto no va en copia | `controlarCopia` (`copia_no_permitida`, `sin_responsable`) |
 | La copia va sólo en una respuesta a un positivo por mail, y sólo con una aprobación que la lleve igual: ni una dirección de más ni de menos | `pedirAprobacion`, `controlarEnvio` (`aprobacion_no_coincide`) |
 | El cliente y el operador ven la copia antes de aprobar y no la cambian: si no es la persona, se rechaza con una nota | panel (`contenidoAprobacion`), MCP del panel, reglas del orquestador |
 | A un derivado no le sale ningún mail nuevo del SDR, y lo que se le conteste pide aprobación aunque ya no figure como positivo (mail, LinkedIn y WhatsApp) | `controlarDestinatarios` (`prospecto_derivado`), `pideAprobacionComoPositivo` |
@@ -38,5 +38,6 @@ copia aprobada.
 - Que la web del dominio secundario redirija a la del principal.
 - Nada de `Reply-To` del dominio principal en los mails fríos: es señal de spam y el gateway
   dejaría de ver las respuestas.
-- Con más de un responsable (por país, por producto), cada campaña tiene el suyo
-  («Mail de quien toma a los interesados» en la campaña).
+- Quién toma a los interesados es de cada campaña (migración `024`): con más de un responsable (por
+  país, por vertical, por producto), cada campaña tiene el suyo («Mail de quien toma a los
+  interesados» en la campaña). Una campaña no se activa sin él.
