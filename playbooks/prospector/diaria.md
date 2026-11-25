@@ -117,7 +117,9 @@ persona. Va cualquiera con URL de LinkedIn en el registro, tenga o no mail.
 
 Cada mail sale por un buzón **de la campaña** de la persona (los de «Campañas de este cliente»;
 el gateway rechaza otro con `buzon_fuera_de_campana`), y sólo con los links que permite la campaña
-(`link_no_permitido`).
+(`link_no_permitido`). En una campaña de envíos a EE.UU. (CAN-SPAM) el gateway agrega el pie solo; si
+Empresa no tiene la dirección postal, rechaza el mail con `sin_direccion_postal`: no lo reintentes
+y avisale al orquestador.
 
 **Si la campaña está en calibración** (lo dice «Campañas de este cliente»):
 

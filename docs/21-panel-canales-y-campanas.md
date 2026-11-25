@@ -450,7 +450,8 @@ vertical), cada uno va con su condición en `derivacion` («condición: Nombre <
 texto del bot la dirección postal (con el nombre legal) y cómo darse de baja («reply "unsubscribe"» o
 «responda «baja»», según el idioma de la campaña), y la cabecera `List-Unsubscribe` con ese asunto.
 Se agrega después de controlar lo aprobado (la aprobación compara el texto del bot), por eso lleva sólo
-lo que carga Biguá: la dirección la edita Biguá, sin links (Vercel Security Review #31). La memoria del
+lo que carga Biguá: la dirección la edita Biguá, sin links (Vercel Security Review #31). Si la dirección se borra con la campaña ya activa (o vuelve una versión de Empresa sin
+ella), el gateway no manda ningún mail de esa campaña (`sin_direccion_postal`) hasta que se cargue. La memoria del
 correo toma como baja «baja», «unsubscribe», «STOP», «opt out» y «remove me». La cita del original
 en una respuesta también va en el idioma de la campaña («On …, X wrote:»).
 

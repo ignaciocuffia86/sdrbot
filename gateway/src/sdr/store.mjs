@@ -1192,6 +1192,13 @@ export async function controlarEnvio(clientId, args, kind) {
     // Lo que el gateway agrega al mail según la campaña: el pie de CAN-SPAM y el idioma de la cita.
     // Va después de lo aprobado: el bot y quien aprueba ven el texto del mail; el pie es siempre igual.
     const valores = cfg && k ? enCampana.efectivos(cfg, k).valores : {};
+    // Una campaña con CAN-SPAM no manda nada sin el pie: si la dirección se borró después de
+    // activarla (o volvió una versión de Empresa sin ella), el mail no sale.
+    if (valores.can_spam && !valores.direccion_postal) {
+      throw new GatewayError('sin_direccion_postal',
+        `La campaña ${enCampana.citaNombre(k.nombre)} es de envíos a EE.UU. (CAN-SPAM) y Empresa no tiene la dirección postal: ` +
+        'sin ella el mail no puede llevar el pie que exige la ley, así que no sale. Avisale al orquestador para que Biguá la cargue.', 422);
+    }
     const agregado = { idioma: idiomaCorto(valores.idioma), pie: pieDelMail(valores) };
     if (!necesita && !args.aprobacion_id) return { aprobacion: null, campanaId, cc, agregado };
     if (!args.aprobacion_id) {

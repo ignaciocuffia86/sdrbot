@@ -97,7 +97,7 @@ deriva a otra persona, seguí la derivación.
   LinkedIn: `canal: "linkedin"`, `texto`, `contexto` y `datos` con `linkedin` (el id de
   `linkedin_revisar`).
 - Si el gateway frena (`destinatario_suprimido`, `aprobacion_requerida`, `cap_reached`,
-  `dripify_sin_conversacion`, `copia_no_permitida`, `sin_responsable`, `prospecto_derivado`), no
+  `dripify_sin_conversacion`, `copia_no_permitida`, `sin_responsable`, `sin_direccion_postal`, `prospecto_derivado`), no
   busques otro camino: registralo y seguí.
 
 ## Cerrar cada correo

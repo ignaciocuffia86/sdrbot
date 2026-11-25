@@ -212,6 +212,11 @@ test('campañas MCP: CAN-SPAM, el pie y la baja en el idioma de la campaña', as
     const { esBaja } = await import('../src/sdr/correo.mjs');
     for (const t of ['STOP', 'Opt out', 'please remove me', 'Unsubscribe me.']) assert.ok(esBaja({ subject: 'Re: QA webinar', reply_text: t }), t);
     assert.ok(!esBaja({ subject: 'Re: QA webinar', reply_text: 'Stop by our booth!' }));
+    // Si la dirección se borra con la campaña ya activa, no sale nada sin el pie.
+    await q(`update sdr.cliente_config set ajustes = ajustes - 'direccion_postal' where client_id = $1`, [C]);
+    const sinDireccion = await call('send', MAIL({ text: 'Hi Ana', subject: 'QA webinar', idempotency_key: 'ana:mail-sin-direccion' }));
+    assert.equal(sinDireccion.error?.code, 'sin_direccion_postal', JSON.stringify(sinDireccion));
+    assert.equal(smtp.received.length, n + 1, 'no salió');
   } finally {
     await q(`update sdr.campana set ajustes = $2 where id = $1`, [k.webinar.id, antes]);
     await q(`update sdr.cliente_config set ajustes = ajustes - 'direccion_postal' where client_id = $1`, [C]);
